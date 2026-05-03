@@ -182,6 +182,50 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
+        public void ComputeChannelListHash_NumChange_DifferentHash()
+        {
+            // Channel reordered at the provider (Num changed) must invalidate the hash
+            // so dependent caches (M3U/EPG/per-channel) are wiped on the next sync.
+            var a = new List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+            {
+                new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC One", EpgChannelId = "bbc1", CategoryId = 10, Num = 1 },
+            };
+            var b = new List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+            {
+                new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC One", EpgChannelId = "bbc1", CategoryId = 10, Num = 2 },
+            };
+            Assert.NotEqual(StrmSyncService.ComputeChannelListHash(a), StrmSyncService.ComputeChannelListHash(b));
+        }
+
+        [Fact]
+        public void ComputeChannelListHash_StreamIconChange_DifferentHash()
+        {
+            // Logo swap at the provider must invalidate the hash so the cached M3U
+            // (which embeds tvg-logo) is regenerated.
+            var a = new List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+            {
+                new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC One", StreamIcon = "https://logos/bbc-old.png" },
+            };
+            var b = new List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+            {
+                new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC One", StreamIcon = "https://logos/bbc-new.png" },
+            };
+            Assert.NotEqual(StrmSyncService.ComputeChannelListHash(a), StrmSyncService.ComputeChannelListHash(b));
+        }
+
+        [Fact]
+        public void ComputeChannelListHash_NullStreamIcon_StableAcrossCalls()
+        {
+            // Defensive: null StreamIcon must not throw and must produce a stable hash
+            // (regression guard for the Num + StreamIcon extension).
+            var channels = new List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+            {
+                new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "X", StreamIcon = null, Num = 0 },
+            };
+            Assert.Equal(StrmSyncService.ComputeChannelListHash(channels), StrmSyncService.ComputeChannelListHash(channels));
+        }
+
+        [Fact]
         public void ComputeChannelListHash_DifferentChannels_DifferentHash()
         {
             var a = new List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
