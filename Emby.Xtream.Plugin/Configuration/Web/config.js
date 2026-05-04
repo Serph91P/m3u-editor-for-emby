@@ -335,16 +335,22 @@ function (BaseView, loading) {
 
     View.prototype.onResume = function (options) {
         BaseView.prototype.onResume.apply(this, arguments);
-        loadConfig(this);
-        loadDashboard(this.view);
-        checkForUpdate(this.view);
+        var self = this;
+        // Sequence matters: dashboard renders the empty-state banner from the
+        // config snapshot loaded in loadConfig. Running them in parallel made
+        // the banner flash "not configured" on every reopen until loadConfig
+        // resolved (issue: post-1.1.3 reopen race).
+        loadConfig(this).then(function () {
+            loadDashboard(self.view);
+            checkForUpdate(self.view);
+        });
     };
 
     View.prototype.onPause = function () {};
 
     function loadConfig(instance) {
         loading.show();
-        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             var view = instance.view;
 
             view.querySelector('.txtBaseUrl').value = config.BaseUrl || '';
