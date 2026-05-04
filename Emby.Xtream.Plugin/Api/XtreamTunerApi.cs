@@ -1279,11 +1279,6 @@ namespace Emby.Xtream.Plugin.Api
                 result.Success = false;
                 result.Message = "Unexpected error: " + ex.Message;
             }
-            catch (NullReferenceException ex)
-            {
-                result.Success = false;
-                result.Message = "Unexpected error: " + ex.Message;
-            }
 
             return result;
         }

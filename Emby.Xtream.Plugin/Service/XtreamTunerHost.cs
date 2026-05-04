@@ -422,9 +422,8 @@ namespace Emby.Xtream.Plugin.Service
             int backendStatsCount = 0;
             if (channels != null)
             {
-                foreach (var ch in channels.Where(c => c.StreamStats != null))
+                foreach (var ch in channels.Where(c => c.StreamStats != null && !newStats.ContainsKey(c.StreamId)))
                 {
-                    if (newStats.ContainsKey(ch.StreamId)) continue;
                     newStats[ch.StreamId] = ch.StreamStats;
                     backendStatsCount++;
                 }
