@@ -136,6 +136,91 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.True(result.UpdateAvailable);
         }
 
+        // ---- Beta channel: unreliable current version override ----
+        //
+        // When the installed plugin reports a 4-part System.Version like
+        // "1.2.1.0" (because that build did not surface
+        // AssemblyInformationalVersion and Emby strips pre-release suffixes),
+        // we cannot tell apart "1.2.1" stable from "1.2.1-beta.X". Strict
+        // SemVer would say stable > pre-release, leaving a stuck beta install
+        // without an update path. On the beta channel we offer the update.
+
+        [Fact]
+        public void BetaChannel_UnreliableCurrent_OffersBetaSameCore()
+        {
+            // Installed reports "1.2.1.0" (unreliable, could be beta.1).
+            // Latest beta is 1.2.1-beta.4. Beta channel: offer it.
+            var result = UpdateChecker.CompareVersions(
+                "1.2.1.0", "v1.2.1-beta.4", "", "", "",
+                useBeta: true, currentVersionUnreliable: true);
+            Assert.True(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void BetaChannel_UnreliableCurrent_DifferentCore_FallsBackToSemver()
+        {
+            // Installed "1.2.1.0", latest beta "1.3.0-beta.1": SemVer already
+            // says update available, override is irrelevant.
+            var result = UpdateChecker.CompareVersions(
+                "1.2.1.0", "v1.3.0-beta.1", "", "", "",
+                useBeta: true, currentVersionUnreliable: true);
+            Assert.True(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void BetaChannel_UnreliableCurrent_OlderBetaCore_NoUpdate()
+        {
+            // Installed "1.3.0.0", latest beta "1.2.1-beta.4": don't downgrade.
+            var result = UpdateChecker.CompareVersions(
+                "1.3.0.0", "v1.2.1-beta.4", "", "", "",
+                useBeta: true, currentVersionUnreliable: true);
+            Assert.False(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void StableChannel_UnreliableCurrent_DoesNotOfferBeta()
+        {
+            // Same situation but user is NOT on beta channel: keep strict
+            // SemVer, do not offer the pre-release.
+            var result = UpdateChecker.CompareVersions(
+                "1.2.1.0", "v1.2.1-beta.4", "", "", "",
+                useBeta: false, currentVersionUnreliable: true);
+            Assert.False(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void BetaChannel_ReliableCurrent_KeepsSemverSemantics()
+        {
+            // Helper had a real InformationalVersion: trust it. Stable 1.2.1
+            // is genuinely stable, so 1.2.1-beta.4 is older.
+            var result = UpdateChecker.CompareVersions(
+                "1.2.1", "v1.2.1-beta.4", "", "", "",
+                useBeta: true, currentVersionUnreliable: false);
+            Assert.False(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void BetaChannel_UnreliableCurrent_StableLatest_StrictSemver()
+        {
+            // Latest is stable; nothing to override (current also has no
+            // pre-release tag so SemVer says they are equal numeric core,
+            // no update). Don't accidentally offer the same version.
+            var result = UpdateChecker.CompareVersions(
+                "1.2.1.0", "v1.2.1", "", "", "",
+                useBeta: true, currentVersionUnreliable: true);
+            Assert.False(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void OldOverload_KeepsExistingBehavior()
+        {
+            // Backward compat: the 5-arg overload must still apply strict
+            // SemVer (no override path).
+            var result = UpdateChecker.CompareVersions(
+                "1.2.1.0", "v1.2.1-beta.4", "", "", "");
+            Assert.False(result.UpdateAvailable);
+        }
+
         // ---- SemVer pre-release tests ----
 
         [Fact]

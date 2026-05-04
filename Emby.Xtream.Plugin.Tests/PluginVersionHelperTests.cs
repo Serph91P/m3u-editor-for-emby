@@ -38,5 +38,25 @@ namespace Emby.Xtream.Plugin.Tests
                 Assert.Equal(asm.GetName().Version?.ToString() ?? "0.0.0", helper);
             }
         }
+        [Fact]
+        public void HasInformationalVersion_ReflectsPresenceOfSemverInfo()
+        {
+            // Mirrors the resolver logic: HasInformationalVersion is true iff
+            // the helper actually used a SemVer InformationalVersion that
+            // carries pre-release info ("X.Y.Z-suffix"). A bare 4-part version
+            // (whether from AssemblyName.Version or a plain numeric
+            // InformationalVersion) must read as unreliable (false).
+            var asm = typeof(Plugin).Assembly;
+            var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            var resolved = PluginVersionHelper.CurrentVersion;
+
+            var expected = false;
+            if (!string.IsNullOrWhiteSpace(info) && resolved.IndexOf('-') >= 0)
+            {
+                expected = true;
+            }
+
+            Assert.Equal(expected, PluginVersionHelper.HasInformationalVersion);
+        }
     }
 }
