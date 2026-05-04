@@ -269,7 +269,7 @@ namespace Emby.Xtream.Plugin.Service
                 IsLive = p.IsLive,
                 IsRepeat = p.IsPreviouslyShown,
                 IsPremiere = p.IsNew || p.IsPremiere,
-                ImageUrl = IsValidHttpUrl(p.ImageUrl) ? p.ImageUrl : null,
+                ImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl),
                 Genres = cats ?? new List<string>(),
                 IsSports = isSports,
                 IsNews = cats != null && cats.Exists(c =>
@@ -514,7 +514,7 @@ namespace Emby.Xtream.Plugin.Service
                     Name = cleanName,
                     Number = channelNumber,
                     CallSign = callSign,
-                    ImageUrl = string.IsNullOrEmpty(channel.StreamIcon) ? null : channel.StreamIcon,
+                    ImageUrl = Util.UrlValidator.SanitizeHttpUrl(channel.StreamIcon),
                     ChannelType = ChannelType.TV,
                     TunerHostId = tuner.Id,
                     Tags = tags,
@@ -1546,14 +1546,6 @@ namespace Emby.Xtream.Plugin.Service
             if (int.TryParse(lower, NumberStyles.None, CultureInfo.InvariantCulture, out int plain))
                 return plain;
             return null;
-        }
-
-        private static bool IsValidHttpUrl(string url)
-        {
-            if (string.IsNullOrEmpty(url)) return false;
-            Uri uri;
-            return Uri.TryCreate(url, UriKind.Absolute, out uri)
-                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
         }
 
         private static string MapVideoCodec(string dispatcharrCodec)
