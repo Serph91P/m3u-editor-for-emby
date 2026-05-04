@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 
@@ -84,7 +85,7 @@ namespace Emby.Xtream.Plugin.Service
                     if (useBeta)
                     {
                         var allJson = await httpClient.GetStringAsync(GitHubAllReleasesUrl).ConfigureAwait(false);
-                        releaseJson = ExtractFirstRelease(allJson);
+                        releaseJson = SelectHighestRelease(allJson) ?? ExtractFirstRelease(allJson);
                     }
                     else
                     {
@@ -152,32 +153,131 @@ namespace Emby.Xtream.Plugin.Service
             var versionStr = tagName.TrimStart('v', 'V');
             result.LatestVersion = versionStr;
 
-            Version current;
-            Version latest;
+            SemVer current;
+            SemVer latest;
 
-            if (!Version.TryParse(NormalizeVersion(currentVersion), out current))
+            if (!SemVer.TryParse(currentVersion, out current))
             {
                 result.Error = "Could not parse current version: " + currentVersion;
                 return result;
             }
 
-            if (!Version.TryParse(NormalizeVersion(versionStr), out latest))
+            if (!SemVer.TryParse(versionStr, out latest))
             {
                 result.Error = "Could not parse release tag: " + tagName;
                 return result;
             }
 
-            result.UpdateAvailable = latest > current;
+            result.UpdateAvailable = SemVer.Compare(latest, current) > 0;
             return result;
         }
 
-        private static string NormalizeVersion(string version)
+        /// <summary>
+        /// Lightweight SemVer parser/comparer that handles pre-release suffixes
+        /// like "1.2.0-beta.1" or "2.0.0-rc.3". Build metadata (after '+') is ignored.
+        /// Comparison follows SemVer 2.0 precedence rules: numeric core compared
+        /// numerically, then a version WITHOUT pre-release outranks one WITH; when
+        /// both have pre-release, identifiers are compared dot-by-dot (numeric ids
+        /// numerically, alphanumeric lexically, numeric &lt; alphanumeric).
+        /// </summary>
+        internal class SemVer
         {
-            // Version.Parse requires at least major.minor; pad if needed
-            if (version == null) return "0.0";
-            var parts = version.Split('.');
-            if (parts.Length == 1) return version + ".0";
-            return version;
+            public int Major;
+            public int Minor;
+            public int Patch;
+            public int Revision; // optional 4th segment, defaults to 0
+            public string[] PreRelease; // null = stable release
+
+            public static bool TryParse(string version, out SemVer result)
+            {
+                result = null;
+                if (string.IsNullOrEmpty(version)) return false;
+
+                // Strip leading v / V
+                if (version[0] == 'v' || version[0] == 'V')
+                    version = version.Substring(1);
+
+                // Strip build metadata (+...)
+                var plusIdx = version.IndexOf('+');
+                if (plusIdx >= 0)
+                    version = version.Substring(0, plusIdx);
+
+                // Split off pre-release suffix
+                string core;
+                string[] pre = null;
+                var dashIdx = version.IndexOf('-');
+                if (dashIdx >= 0)
+                {
+                    core = version.Substring(0, dashIdx);
+                    var preStr = version.Substring(dashIdx + 1);
+                    if (string.IsNullOrEmpty(preStr)) return false;
+                    pre = preStr.Split('.');
+                    if (pre.Any(string.IsNullOrEmpty)) return false;
+                }
+                else
+                {
+                    core = version;
+                }
+
+                var parts = core.Split('.');
+                if (parts.Length < 1 || parts.Length > 4) return false;
+
+                int major = 0, minor = 0, patch = 0, revision = 0;
+                if (!int.TryParse(parts[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out major))
+                    return false;
+                if (parts.Length > 1 && !int.TryParse(parts[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out minor))
+                    return false;
+                if (parts.Length > 2 && !int.TryParse(parts[2], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out patch))
+                    return false;
+                if (parts.Length > 3 && !int.TryParse(parts[3], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out revision))
+                    return false;
+
+                result = new SemVer
+                {
+                    Major = major,
+                    Minor = minor,
+                    Patch = patch,
+                    Revision = revision,
+                    PreRelease = pre,
+                };
+                return true;
+            }
+
+            public static int Compare(SemVer a, SemVer b)
+            {
+                if (a.Major != b.Major) return a.Major.CompareTo(b.Major);
+                if (a.Minor != b.Minor) return a.Minor.CompareTo(b.Minor);
+                if (a.Patch != b.Patch) return a.Patch.CompareTo(b.Patch);
+                if (a.Revision != b.Revision) return a.Revision.CompareTo(b.Revision);
+
+                // Equal numeric core: stable > pre-release
+                var aPre = a.PreRelease;
+                var bPre = b.PreRelease;
+                if (aPre == null && bPre == null) return 0;
+                if (aPre == null) return 1;  // a is stable, b is pre-release => a > b
+                if (bPre == null) return -1; // b is stable, a is pre-release => a < b
+
+                var len = Math.Min(aPre.Length, bPre.Length);
+                for (var i = 0; i < len; i++)
+                {
+                    var cmp = CompareIdentifier(aPre[i], bPre[i]);
+                    if (cmp != 0) return cmp;
+                }
+                // Longer pre-release identifier list wins when prefix is equal
+                return aPre.Length.CompareTo(bPre.Length);
+            }
+
+            private static int CompareIdentifier(string a, string b)
+            {
+                int ai, bi;
+                var aIsNum = int.TryParse(a, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out ai);
+                var bIsNum = int.TryParse(b, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out bi);
+
+                if (aIsNum && bIsNum) return ai.CompareTo(bi);
+                if (aIsNum) return -1; // numeric identifiers always have lower precedence than alphanumeric
+                if (bIsNum) return 1;
+                return string.CompareOrdinal(a, b);
+            }
         }
 
         private static string ExtractJsonString(string json, string key)
@@ -311,6 +411,59 @@ namespace Emby.Xtream.Plugin.Service
                 else if (json[i] == '}') { depth--; if (depth == 0) return i; }
             }
             return -1;
+        }
+
+        /// <summary>
+        /// Scans a GitHub /releases array and returns the JSON object with the
+        /// highest SemVer-precedence tag_name. Skips drafts. Used by the beta
+        /// channel so the newest release wins regardless of array ordering, and
+        /// so a stable hotfix released after a beta still outranks the beta when
+        /// SemVer says it should.
+        /// </summary>
+        public static string SelectHighestRelease(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return null;
+
+            // Walk top-level objects in the array. We rely on FindMatchingBrace
+            // to skip over nested objects (e.g. assets/uploader) safely.
+            var arrayStart = json.IndexOf('[');
+            if (arrayStart < 0) return null;
+            var arrayEnd = FindMatchingBracket(json, arrayStart);
+            if (arrayEnd < 0) return null;
+
+            string bestJson = null;
+            SemVer bestVer = null;
+
+            var i = arrayStart + 1;
+            while (i < arrayEnd)
+            {
+                // Find next top-level '{'
+                while (i < arrayEnd && json[i] != '{') i++;
+                if (i >= arrayEnd) break;
+
+                var objEnd = FindMatchingBrace(json, i);
+                if (objEnd < 0 || objEnd > arrayEnd) break;
+
+                var obj = json.Substring(i, objEnd - i + 1);
+                i = objEnd + 1;
+
+                // Skip drafts
+                if (ExtractJsonBool(obj, "draft")) continue;
+
+                var tag = ExtractJsonString(obj, "tag_name");
+                if (string.IsNullOrEmpty(tag)) continue;
+
+                SemVer ver;
+                if (!SemVer.TryParse(tag, out ver)) continue;
+
+                if (bestVer == null || SemVer.Compare(ver, bestVer) > 0)
+                {
+                    bestVer = ver;
+                    bestJson = obj;
+                }
+            }
+
+            return bestJson;
         }
 
         /// <summary>

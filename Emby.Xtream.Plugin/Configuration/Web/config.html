@@ -376,9 +376,9 @@
                     <!-- System Health Bar -->
                     <div class="dashboardHealthBar" style="display:flex; gap:1.5em; align-items:center; padding:0.6em 0.8em; margin-bottom:1em; background:rgba(128,128,128,0.05); border:1px solid rgba(128,128,128,0.1); border-radius:6px; flex-wrap:wrap; font-size:0.88em;">
                         <span class="pluginVersion" style="opacity:0.5;"></span>
-                        <span class="healthItemXtream" style="display:flex; align-items:center;"><span class="healthDot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#888; margin-right:0.45em; flex-shrink:0;"></span><span class="healthLabel">Xtream: Not configured</span></span>
-                        <span class="healthItemDispatcharr" style="display:flex; align-items:center;"><span class="healthDot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#888; margin-right:0.45em; flex-shrink:0;"></span><span class="healthLabel">Dispatcharr: Disabled</span></span>
-                        <span class="healthItemLastSync" style="display:flex; align-items:center;"><span class="healthDot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#888; margin-right:0.45em; flex-shrink:0;"></span><span class="healthLabel">Last Sync: Never</span></span>
+                        <span class="healthItemXtream" style="display:flex; align-items:center;"><span class="healthDot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#888; margin-right:0.45em; flex-shrink:0;"></span><span class="healthLabel">Xtream: Loading&#x2026;</span></span>
+                        <span class="healthItemDispatcharr" style="display:flex; align-items:center;"><span class="healthDot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#888; margin-right:0.45em; flex-shrink:0;"></span><span class="healthLabel">Dispatcharr: Loading&#x2026;</span></span>
+                        <span class="healthItemLastSync" style="display:flex; align-items:center;"><span class="healthDot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#888; margin-right:0.45em; flex-shrink:0;"></span><span class="healthLabel">Last Sync: Loading&#x2026;</span></span>
                     </div>
 
                     <!-- First-run empty states -->
@@ -666,18 +666,40 @@
 
                 <hr style="border:none; border-top:1px solid rgba(128,128,128,0.2); margin:0.25em 0 1.25em;" />
 
-                <details class="settings-collapsible" data-collapse-key="settings.dispatcharr">
-                    <summary>Dispatcharr Integration</summary>
+                <details class="settings-collapsible" data-collapse-key="settings.streamprobe">
+                    <summary>Stream Probe Data &amp; FFprobe Bypass</summary>
                 <div class="verticalSection">
                     <div class="fieldDescription" style="margin-bottom:0.8em;">
-                        <a href="https://github.com/Dispatcharr/Dispatcharr" target="_blank" rel="noopener" style="color:#52B54B;">Dispatcharr</a>
-                        is an open-source IPTV stream proxy. When enabled, it applies to Live TV, VOD movies, and series:
-                        faster channel switching via FFprobe bypass, stream proxying, reconnect handling, and multiple
-                        quality versions per movie (when multiple provider streams exist).
+                        Some Xtream-compatible backends already probe each channel and ship the
+                        codec / resolution / bitrate metadata in their <code>get_live_streams</code>
+                        response. When that data is present, this plugin feeds it directly into Emby
+                        so the first playback skips the FFprobe pass and starts much faster.
                         <br /><br />
-                        <a href="https://github.com/krinkuto11/streamflow" target="_blank" rel="noopener" style="color:#52B54B;">Streamflow</a> advantage: Per-channel codec and resolution metadata is only
-                        available when Streamflow is enabled and configured inside Dispatcharr.
-                        Without it, stream stats will not be populated and FFprobe bypass will not apply.
+                        <strong>Backends that supply probe data out of the box:</strong>
+                        <a href="https://github.com/sparkison/m3u-editor" target="_blank" rel="noopener" style="color:#52B54B;">m3u-editor</a>
+                        (when stream probing is enabled) and
+                        <a href="https://github.com/Dispatcharr/Dispatcharr" target="_blank" rel="noopener" style="color:#52B54B;">Dispatcharr</a>
+                        with
+                        <a href="https://github.com/krinkuto11/streamflow" target="_blank" rel="noopener" style="color:#52B54B;">Streamflow</a>.
+                        For other Xtream servers the data is normally absent and Emby falls back to
+                        FFprobe automatically. No configuration is required for the m3u-editor path,
+                        the plugin reads <code>stream_stats</code> if the backend sends it.
+                    </div>
+                    <div style="margin-bottom:0.75em;">
+                        <button class="btnCheckProbeCoverage raised button-secondary" is="emby-button" type="button">
+                            <span>Check Probe Data Coverage</span>
+                        </button>
+                        <div class="probeCoverageResult" style="margin-top:0.5em;"></div>
+                    </div>
+
+                    <hr style="border:none; border-top:1px solid rgba(128,128,128,0.15); margin:1em 0;" />
+
+                    <h3 class="sectionTitle" style="margin-top:0; font-size:1em;">Dispatcharr (optional)</h3>
+                    <div class="fieldDescription" style="margin-bottom:0.8em;">
+                        Enable Dispatcharr to also route Live TV, VOD movies, and series through it
+                        for stream proxying, reconnect handling, and multiple quality versions per
+                        movie (when multiple provider streams exist). Probe data from Dispatcharr
+                        (with Streamflow) overrides any data already supplied by the Xtream backend.
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label>

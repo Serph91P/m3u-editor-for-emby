@@ -131,6 +131,13 @@ function (BaseView, loading) {
             testDispatcharrConnection(self);
         });
 
+        var btnProbeCoverage = view.querySelector('.btnCheckProbeCoverage');
+        if (btnProbeCoverage) {
+            btnProbeCoverage.addEventListener('click', function () {
+                checkProbeDataCoverage(self);
+            });
+        }
+
         view.querySelector('.btnRefreshProfiles').addEventListener('click', function () {
             loadDispatcharrProfiles(self);
         });
@@ -335,16 +342,22 @@ function (BaseView, loading) {
 
     View.prototype.onResume = function (options) {
         BaseView.prototype.onResume.apply(this, arguments);
-        loadConfig(this);
-        loadDashboard(this.view);
-        checkForUpdate(this.view);
+        var self = this;
+        // Sequence matters: dashboard renders the empty-state banner from the
+        // config snapshot loaded in loadConfig. Running them in parallel made
+        // the banner flash "not configured" on every reopen until loadConfig
+        // resolved (issue: post-1.1.3 reopen race).
+        loadConfig(this).then(function () {
+            loadDashboard(self.view);
+            checkForUpdate(self.view);
+        });
     };
 
     View.prototype.onPause = function () {};
 
     function loadConfig(instance) {
         loading.show();
-        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             var view = instance.view;
 
             view.querySelector('.txtBaseUrl').value = config.BaseUrl || '';
@@ -1111,6 +1124,31 @@ function (BaseView, loading) {
             }
         }).catch(function () {
             setPillResult(resultEl, false, 'Test request failed. Check server logs.');
+        });
+    }
+
+    function checkProbeDataCoverage(instance) {
+        var view = instance.view;
+        var resultEl = view.querySelector('.probeCoverageResult');
+        if (!resultEl) return;
+        resultEl.innerHTML = '<span style="opacity:0.5;">Checking probe data coverage&hellip;</span>';
+
+        ApiClient.ajax({
+            type: 'GET',
+            url: ApiClient.getUrl('XtreamTuner/ProbeDataCoverage'),
+            dataType: 'json'
+        }).then(function (result) {
+            if (!result) {
+                setPillResult(resultEl, false, 'Empty response from server.');
+                return;
+            }
+            var msg = result.Message || '';
+            if (result.Success && result.BackendType) {
+                msg = '[' + result.BackendType + '] ' + msg;
+            }
+            setPillResult(resultEl, result.Success !== false, msg);
+        }).catch(function () {
+            setPillResult(resultEl, false, 'Probe coverage request failed. Check server logs.');
         });
     }
 
