@@ -4,11 +4,16 @@ on:
   push:
     branches:
       - main
+      - develop
 
 permissions:
   contents: write
   issues: write
   pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -23,21 +28,18 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 'lts/*'
 
-      - name: Install semantic-release dependencies
-        run: |
-          npm install --save-dev \
-            semantic-release \
-            @semantic-release/commit-analyzer \
-            @semantic-release/release-notes-generator \
-            @semantic-release/exec \
-            @semantic-release/github
+      - name: Install npm dependencies
+        run: npm ci || npm install
+
+      - name: Make release scripts executable
+        run: chmod +x scripts/release/*.sh
 
       - name: Release
         env:

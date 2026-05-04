@@ -1,0 +1,18 @@
+{
+  "name": "emby-xtream-release",
+  "version": "0.0.0-managed-by-semantic-release",
+  "private": true,
+  "description": "Release tooling only — Emby plugin code is C#",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Serph91P/emby-xtream.git"
+  },
+  "devDependencies": {
+    "semantic-release": "^24.2.0",
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/release-notes-generator": "^14.0.1",
+    "@semantic-release/exec": "^7.0.3",
+    "@semantic-release/github": "^11.0.1",
+    "conventional-changelog-conventionalcommits": "^8.0.0"
+  }
+}
