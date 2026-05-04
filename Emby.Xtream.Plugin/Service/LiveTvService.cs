@@ -326,11 +326,9 @@ namespace Emby.Xtream.Plugin.Service
         {
             if (cache == null || cache.Count == 0) return 0;
             if (liveStreamIds == null) liveStreamIds = new HashSet<int>();
-            var stale = new List<int>();
-            foreach (var key in cache.Keys)
-            {
-                if (!liveStreamIds.Contains(key)) stale.Add(key);
-            }
+            // Materialize the keys snapshot first so we can mutate the dictionary
+            // afterwards without invalidating an active enumerator.
+            var stale = cache.Keys.Where(key => !liveStreamIds.Contains(key)).ToList();
             foreach (var key in stale) cache.Remove(key);
             return stale.Count;
         }

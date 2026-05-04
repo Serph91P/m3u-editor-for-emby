@@ -626,8 +626,9 @@ namespace Emby.Xtream.Plugin.Service
         {
             _cachedChannels = null;
             _cacheTime = DateTime.MinValue;
-            try { Logger?.Info("Tuner channel cache invalidated due to upstream channel-list change"); }
-            catch { /* logger not available (e.g. early init / unit tests) */ }
+            // Logger?. handles the early-init / unit-test case (Logger may be null)
+            // and ILogger.Info itself does not throw, so no try/catch is needed.
+            Logger?.Info("Tuner channel cache invalidated due to upstream channel-list change");
         }
 
         public new void ClearCaches()
@@ -642,8 +643,9 @@ namespace Emby.Xtream.Plugin.Service
             _tunerChannelIdToStreamId = new Dictionary<string, int>();
             _allowedStreamIds = null;
             _dispatcharrDataLoaded = false;
-            try { Logger?.Info("Xtream tuner caches cleared"); }
-            catch { /* logger not available */ }
+            // Logger?. covers the case where Logger has not been wired up yet
+            // (early init / unit tests). ILogger.Info itself does not throw.
+            Logger?.Info("Xtream tuner caches cleared");
         }
 
         /// <summary>
