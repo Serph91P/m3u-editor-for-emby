@@ -71,7 +71,7 @@ namespace Emby.Xtream.Plugin.Service
                 }
             }
 
-            var currentVersion = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+            var currentVersion = PluginVersionHelper.CurrentVersion;
 
             UpdateCheckResult result;
             try

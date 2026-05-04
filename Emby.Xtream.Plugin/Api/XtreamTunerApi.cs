@@ -671,7 +671,7 @@ namespace Emby.Xtream.Plugin.Api
 
             return new DashboardResult
             {
-                PluginVersion = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "0.0.0",
+                PluginVersion = Emby.Xtream.Plugin.Service.PluginVersionHelper.CurrentVersion,
                 LastSync = history.Count > 0 ? history[0] : null,
                 History = history,
                 IsRunning = syncService.MovieProgress.IsRunning || syncService.SeriesProgress.IsRunning,
