@@ -89,7 +89,24 @@ A configuration UI embedded in Emby's plugin settings with five tabs.
 
 ## Installation
 
-### Step 1: Download the Plugin
+### Option A — Plugin Repository (recommended, auto-updates)
+
+Add one (or both) of the following URLs in Emby under
+**Dashboard → Plugins → Repositories → Add Repository**, then install
+*Xtream Live TV* from the Catalog.
+
+| Channel | URL                                                              |
+| ------- | ---------------------------------------------------------------- |
+| Stable  | `https://serph91p.github.io/emby-xtream/manifest.json`           |
+| Beta    | `https://serph91p.github.io/emby-xtream/manifest-beta.json`      |
+
+Stable releases come from the `main` branch, beta releases from `develop`.
+Add the beta URL **in addition** to the stable URL if you want both
+channels to compete (Emby always offers the highest version available).
+
+### Option B — Manual download
+
+#### Step 1: Download the Plugin
 
 Download `Emby.Xtream.Plugin.dll` from the [latest release](../../releases/latest).
 
@@ -110,7 +127,7 @@ The compiled DLL will be at `Emby.Xtream.Plugin/out/Emby.Xtream.Plugin.dll`.
 
 </details>
 
-### Step 2: Install the Plugin
+#### Step 2: Install the Plugin
 
 Copy the DLL to your Emby Server's plugins directory and restart.
 

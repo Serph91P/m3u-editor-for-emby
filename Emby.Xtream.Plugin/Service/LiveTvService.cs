@@ -66,6 +66,15 @@ namespace Emby.Xtream.Plugin.Service
         /// <summary>Exposed for unit testing only: whether the EPG XML cache is populated.</summary>
         internal bool HasCachedEpgXml => _cachedEpgXml != null;
 
+        /// <summary>Exposed for unit testing only: number of entries in the per-channel EPG cache.</summary>
+        internal int PerChannelEpgCacheCount
+        {
+            get { lock (_perChannelEpgLock) { return _perChannelEpgCache.Count; } }
+        }
+
+        /// <summary>Exposed for unit testing only: whether the bulk XMLTV cache is populated.</summary>
+        internal bool HasXmltvCache => _xmltvCache != null;
+
         /// <summary>
         /// Gets the M3U playlist for Live TV channels.
         /// </summary>
@@ -204,23 +213,30 @@ namespace Emby.Xtream.Plugin.Service
             {
                 allChannels = new List<LiveStreamInfo>();
                 var semaphore = new SemaphoreSlim(5);
-                var tasks = config.SelectedLiveCategoryIds.Select(async categoryId =>
+                try
                 {
-                    await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    try
+                    var tasks = config.SelectedLiveCategoryIds.Select(async categoryId =>
                     {
-                        return await FetchChannelsByCategoryAsync(categoryId, cancellationToken).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        semaphore.Release();
-                    }
-                });
+                        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                        try
+                        {
+                            return await FetchChannelsByCategoryAsync(categoryId, cancellationToken).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    });
 
-                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-                foreach (var result in results)
+                    var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+                    foreach (var result in results)
+                    {
+                        allChannels.AddRange(result);
+                    }
+                }
+                finally
                 {
-                    allChannels.AddRange(result);
+                    semaphore.Dispose();
                 }
 
                 // Remove duplicates by StreamId
@@ -237,15 +253,57 @@ namespace Emby.Xtream.Plugin.Service
                 allChannels = allChannels.Where(c => !c.IsAdultChannel).ToList();
             }
 
-            // Channel hash: detect changes and log accordingly
+            // Channel hash: detect changes and invalidate dependent caches.
+            // This is the canonical drift-detection point; ALL Live-TV cache layers
+            // (M3U, EPG XML, bulk XMLTV, per-channel EPG, tuner channel cache) must
+            // be wiped here, otherwise renamed/added/deleted channels at the Xtream
+            // provider remain invisible until each layer's TTL expires independently.
             var newHash = StrmSyncService.ComputeChannelListHash(allChannels);
             if (newHash != config.LastChannelListHash)
             {
-                _logger.Info("Channel list changed (hash {0} → {1}), invalidating cache",
+                _logger.Info("Channel list changed (hash {0} → {1}), invalidating dependent caches",
                     string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
                     newHash.Substring(0, 8));
                 config.LastChannelListHash = newHash;
                 Plugin.Instance.SaveConfiguration();
+
+                // Wipe M3U, EPG XML, and bulk XMLTV caches so the next request rebuilds
+                // them against the fresh channel list. Note: we do NOT take _m3uLock /
+                // _epgLock / _xmltvLock here because GetFilteredChannelsAsync may be
+                // called from inside those locked sections; simple field assignment is
+                // safe (volatile fields, time-stamp pair).
+                _cachedM3U = null;
+                _m3uCacheTime = DateTime.MinValue;
+                _cachedEpgXml = null;
+                _epgCacheTime = DateTime.MinValue;
+                _xmltvCache = null;
+                _xmltvCacheTime = DateTime.MinValue;
+                _xmltvFailed = false;
+                _xmltvFailedTime = DateTime.MinValue;
+                _epgChannelIdByStreamId = new Dictionary<int, string>();
+
+                // Selectively prune the per-channel EPG cache: keep entries whose
+                // StreamId is still in the new channel set (preserves perf when only
+                // a few channels were added/removed), drop entries for channels that
+                // no longer exist (prevents stale EPG when a StreamId is recycled by
+                // the provider for a different channel).
+                var liveStreamIds = new HashSet<int>();
+                foreach (var ch in allChannels) liveStreamIds.Add(ch.StreamId);
+                lock (_perChannelEpgLock)
+                {
+                    int pruned = PruneStaleEpgEntries(_perChannelEpgCache, liveStreamIds);
+                    if (pruned > 0)
+                        _logger.Debug("Pruned {0} stale entries from per-channel EPG cache", pruned);
+                }
+
+                // Drop the tuner host channel cache so Emby's next ChannelScan picks
+                // up the fresh channel set immediately rather than after the 5-minute
+                // tuner cache expires. We deliberately do NOT touch _streamStats /
+                // _tvgIdMap / _stationIdMap here — those are Dispatcharr-side maps
+                // and clearing them would temporarily break EPG mapping; the next
+                // GetChannelsInternal pass will refresh them via EnsureStatsLoadedAsync
+                // and dispatcharrFetch().
+                XtreamTunerHost.Instance?.OnChannelListChanged();
             }
             else
             {
@@ -254,6 +312,25 @@ namespace Emby.Xtream.Plugin.Service
 
             _logger.Info("Fetched {0} Live TV channels", allChannels.Count);
             return allChannels;
+        }
+
+        /// <summary>
+        /// Removes per-channel EPG entries whose StreamId is no longer in the live
+        /// channel set. Pulled out so unit tests can exercise the drift-prune
+        /// behaviour without standing up a full HTTP/Xtream environment. Returns
+        /// the number of entries removed.
+        /// </summary>
+        internal static int PruneStaleEpgEntries(
+            Dictionary<int, (List<EpgProgram> Programs, DateTime CacheTime)> cache,
+            HashSet<int> liveStreamIds)
+        {
+            if (cache == null || cache.Count == 0) return 0;
+            if (liveStreamIds == null) liveStreamIds = new HashSet<int>();
+            // Materialize the keys snapshot first so we can mutate the dictionary
+            // afterwards without invalidating an active enumerator.
+            var stale = cache.Keys.Where(key => !liveStreamIds.Contains(key)).ToList();
+            foreach (var key in stale) cache.Remove(key);
+            return stale.Count;
         }
 
         private async Task<List<LiveStreamInfo>> FetchAllChannelsAsync(CancellationToken cancellationToken)
@@ -306,6 +383,7 @@ namespace Emby.Xtream.Plugin.Service
             var sb = new StringBuilder();
             sb.AppendLine("#EXTM3U");
 
+            var extinf = new StringBuilder();
             foreach (var channel in channels.OrderBy(c => c.Num))
             {
                 var cleanName = ChannelNameCleaner.CleanChannelName(
@@ -326,7 +404,7 @@ namespace Emby.Xtream.Plugin.Service
                         ? channel.EpgChannelId
                         : channel.StreamId.ToString(CultureInfo.InvariantCulture);
 
-                var extinf = new StringBuilder();
+                extinf.Clear();
                 extinf.Append("#EXTINF:-1");
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-id=\"{0}\"", EscapeAttribute(epgId));
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-name=\"{0}\"", EscapeAttribute(cleanName));
@@ -352,7 +430,7 @@ namespace Emby.Xtream.Plugin.Service
 
                 extinf.AppendFormat(CultureInfo.InvariantCulture, ",{0}", cleanName);
 
-                sb.AppendLine(extinf.ToString());
+                sb.Append(extinf).AppendLine();
                 sb.AppendLine(BuildStreamUrl(config, channel));
             }
 
@@ -442,57 +520,80 @@ namespace Emby.Xtream.Plugin.Service
             var now = DateTimeOffset.UtcNow;
             var endTime = now.AddDays(config.EpgDaysToFetch);
 
-            var tasks = channels.Select(async channel =>
+            try
             {
-                await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
+                var tasks = channels.Select(async channel =>
                 {
-                    var epgListings = await FetchEpgForChannelAsync(channel.StreamId, cancellationToken).ConfigureAwait(false);
-
-                    if (epgListings == null || epgListings.Listings == null)
+                    await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
                     {
-                        return new List<EpgProgram>();
-                    }
+                        var epgListings = await FetchEpgForChannelAsync(channel.StreamId, cancellationToken).ConfigureAwait(false);
 
-                    // Warm the per-channel cache so GetProgramsInternal finds hits without re-fetching.
-                    lock (_perChannelEpgLock)
-                    {
-                        _perChannelEpgCache[channel.StreamId] = (epgListings.Listings, DateTime.UtcNow);
-                    }
+                        if (epgListings == null || epgListings.Listings == null)
+                        {
+                            return new List<EpgProgram>();
+                        }
 
-                    var channelId = !string.IsNullOrEmpty(channel.EpgChannelId)
-                        ? channel.EpgChannelId
-                        : channel.StreamId.ToString(CultureInfo.InvariantCulture);
+                        // Warm the per-channel cache so GetProgramsInternal finds hits without re-fetching.
+                        lock (_perChannelEpgLock)
+                        {
+                            _perChannelEpgCache[channel.StreamId] = (epgListings.Listings, DateTime.UtcNow);
+                        }
 
-                    foreach (var program in epgListings.Listings)
-                    {
-                        if (string.IsNullOrEmpty(program.ChannelId))
+                        var channelId = !string.IsNullOrEmpty(channel.EpgChannelId)
+                            ? channel.EpgChannelId
+                            : channel.StreamId.ToString(CultureInfo.InvariantCulture);
+
+                        foreach (var program in epgListings.Listings.Where(p => string.IsNullOrEmpty(p.ChannelId)))
                         {
                             program.ChannelId = channelId;
                         }
+
+                        var nowUnix = now.ToUnixTimeSeconds();
+                        var endUnix = endTime.ToUnixTimeSeconds();
+                        return epgListings.Listings
+                            .Where(p => p.StopTimestamp > nowUnix && p.StartTimestamp < endUnix)
+                            .ToList();
                     }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
+                        return new List<EpgProgram>();
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
+                        return new List<EpgProgram>();
+                    }
+                    catch (STJ.JsonException ex)
+                    {
+                        _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
+                        return new List<EpgProgram>();
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
+                        return new List<EpgProgram>();
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                });
 
-                    var nowUnix = now.ToUnixTimeSeconds();
-                    var endUnix = endTime.ToUnixTimeSeconds();
-                    return epgListings.Listings
-                        .Where(p => p.StopTimestamp > nowUnix && p.StartTimestamp < endUnix)
-                        .ToList();
-                }
-                catch (Exception ex)
+                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+                foreach (var result in results)
                 {
-                    _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
-                    return new List<EpgProgram>();
+                    allPrograms.AddRange(result);
                 }
-                finally
-                {
-                    semaphore.Release();
-                }
-            });
-
-            var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-            foreach (var result in results)
+            }
+            finally
             {
-                allPrograms.AddRange(result);
+                semaphore.Dispose();
             }
 
             _logger.Info("Fetched {0} EPG programs for {1} channels", allPrograms.Count, channels.Count);

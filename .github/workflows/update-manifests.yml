@@ -1,0 +1,77 @@
+name: Update Plugin Manifests
+
+# Regenerates manifest.json (stable) and manifest-beta.json (stable+prerelease)
+# on the gh-pages branch every time a GitHub release is published.
+# Emby users add either URL under Dashboard -> Plugins -> Repositories.
+
+on:
+  release:
+    types: [published, edited, deleted, unpublished]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-manifests
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main (for the script)
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          path: source
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@v6
+        with:
+          ref: gh-pages
+          path: pages
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Bootstrap gh-pages branch if missing
+        run: |
+          if [ ! -d pages/.git ]; then
+            mkdir -p pages
+            cd pages
+            git init -b gh-pages
+            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            echo "# emby-xtream plugin repository manifests" > README.md
+            git add README.md
+            git -c user.email="github-actions[bot]@users.noreply.github.com" \
+                -c user.name="github-actions[bot]" \
+                commit -m "chore: bootstrap gh-pages"
+            git push -u origin gh-pages
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Generate manifests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python source/scripts/release/update-manifest.py --out pages
+
+      - name: Commit & push if changed
+        working-directory: pages
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add manifest.json manifest-beta.json
+            git commit -m "chore: refresh plugin manifests [skip ci]"
+            git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            git push origin gh-pages
+          else
+            echo "No manifest changes."
+          fi
