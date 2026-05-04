@@ -1723,7 +1723,12 @@ namespace Emby.Xtream.Plugin.Service
                         dir = Path.GetDirectoryName(dir);
                     }
                 }
-                catch (Exception ex)
+                catch (IOException ex)
+                {
+                    // Covers DirectoryNotFoundException, FileNotFoundException, PathTooLongException
+                    _logger.Debug("Failed to cleanup orphan '{0}': {1}", strmFile, ex.Message);
+                }
+                catch (UnauthorizedAccessException ex)
                 {
                     _logger.Debug("Failed to cleanup orphan '{0}': {1}", strmFile, ex.Message);
                 }
