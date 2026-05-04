@@ -102,7 +102,7 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.Equal("12345", after[1]);
         }
 
-        // ── ClearCaches: hard reset (still wipes Dispatcharr maps) ─────────────
+        // ── ClearCaches: wipes volatile state, preserves stabilizer maps ────────
 
         [Fact]
         public void ClearCaches_DropsStreamStats()
@@ -116,6 +116,41 @@ namespace Emby.Xtream.Plugin.Tests
             host.ClearCaches();
 
             Assert.Empty(GetField<Dictionary<int, StreamStatsInfo>>(host, "_streamStats"));
+        }
+
+        [Fact]
+        public void ClearCaches_PreservesStabilizerMaps()
+        {
+            // Regression: ClearCaches used to wipe these lookup tables, which left a
+            // transient empty-map window during the next channel scan. If that scan
+            // ran without Dispatcharr (disabled or fetch failure caught) the
+            // TunerChannelId fell back from the stable Gracenote station ID to the
+            // raw stream ID — Emby treated channels as new and dropped logos.
+            var host = MakeBareHost();
+            SetField(host, "_channelUuidMap", new Dictionary<int, string> { { 1, "uuid-1" } });
+            SetField(host, "_tvgIdMap", new Dictionary<int, string> { { 1, "tvg.1" } });
+            SetField(host, "_stationIdMap", new Dictionary<int, string> { { 1, "12345" } });
+            SetField(host, "_channelNumberMap", new Dictionary<int, double> { { 1, 5.0 } });
+            SetField(host, "_tunerChannelIdToStreamId", new Dictionary<string, int> { { "12345", 1 } });
+
+            host.ClearCaches();
+
+            Assert.Equal("uuid-1", GetField<Dictionary<int, string>>(host, "_channelUuidMap")[1]);
+            Assert.Equal("tvg.1",  GetField<Dictionary<int, string>>(host, "_tvgIdMap")[1]);
+            Assert.Equal("12345",  GetField<Dictionary<int, string>>(host, "_stationIdMap")[1]);
+            Assert.Equal(5.0,      GetField<Dictionary<int, double>>(host, "_channelNumberMap")[1]);
+            Assert.Equal(1,        GetField<Dictionary<string, int>>(host, "_tunerChannelIdToStreamId")["12345"]);
+        }
+
+        [Fact]
+        public void ClearCaches_ResetsDispatcharrDataLoadedFlag()
+        {
+            var host = MakeBareHost();
+            SetField(host, "_dispatcharrDataLoaded", true);
+
+            host.ClearCaches();
+
+            Assert.False(GetField<bool>(host, "_dispatcharrDataLoaded"));
         }
 
         // ── Helpers ────────────────────────────────────────────────────────────
