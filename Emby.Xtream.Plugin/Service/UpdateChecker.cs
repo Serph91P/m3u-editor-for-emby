@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 
@@ -211,10 +212,7 @@ namespace Emby.Xtream.Plugin.Service
                     var preStr = version.Substring(dashIdx + 1);
                     if (string.IsNullOrEmpty(preStr)) return false;
                     pre = preStr.Split('.');
-                    foreach (var id in pre)
-                    {
-                        if (string.IsNullOrEmpty(id)) return false;
-                    }
+                    if (pre.Any(string.IsNullOrEmpty)) return false;
                 }
                 else
                 {
