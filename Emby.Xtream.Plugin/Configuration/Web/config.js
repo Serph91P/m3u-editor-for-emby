@@ -351,10 +351,22 @@ function (BaseView, loading) {
         // config snapshot loaded in loadConfig. Running them in parallel made
         // the banner flash "not configured" on every reopen until loadConfig
         // resolved (issue: post-1.1.3 reopen race).
-        loadConfig(this).then(function () {
-            loadDashboard(self.view);
-            checkForUpdate(self.view);
-        });
+        //
+        // BUT: if loadConfig rejects (server hiccup, network blip, error in
+        // the rendering pipeline), the dashboard would be stuck on the
+        // initial "Loading..." placeholders forever until the user switched
+        // tabs and triggered a re-mount. Always run the dashboard +
+        // update-check follow-ups, even on rejection, so the dashboard
+        // self-heals on the next render cycle.
+        var followUp = function () {
+            try { loadDashboard(self.view); } catch (e) {
+                console.error('Xtream: loadDashboard failed in onResume', e);
+            }
+            try { checkForUpdate(self.view); } catch (e) {
+                console.error('Xtream: checkForUpdate failed in onResume', e);
+            }
+        };
+        loadConfig(this).then(followUp, followUp);
     };
 
     View.prototype.onPause = function () {};
@@ -363,6 +375,16 @@ function (BaseView, loading) {
         loading.show();
         return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             var view = instance.view;
+
+            // Paint the health bar FIRST so the dashboard never stays stuck on
+            // "Loading..." if a later field assignment throws. renderHealthBar
+            // only depends on a few config fields and does not touch unrelated
+            // DOM nodes, so this is safe to call before the rest of loadConfig
+            // runs. The trailing renderHealthBar call below stays as a no-op
+            // refresh once everything else is wired up.
+            try { renderHealthBar(view, config); } catch (e) {
+                console.error('Xtream: renderHealthBar (early) failed', e);
+            }
 
             view.querySelector('.txtBaseUrl').value = config.BaseUrl || '';
             view.querySelector('.txtUsername').value = config.Username || '';
@@ -490,6 +512,18 @@ function (BaseView, loading) {
         }).catch(function (err) {
             loading.hide();
             console.error('Xtream: failed to load plugin configuration', err);
+            // Don't leave the health bar stuck on "Loading..." -- render a
+            // best-effort fallback from an empty config so the user sees a
+            // grey "Not configured / Disabled / Never" line instead of the
+            // initial placeholder.
+            try {
+                var view = instance && instance.view;
+                if (view) {
+                    renderHealthBar(view, {});
+                }
+            } catch (e2) {
+                console.error('Xtream: renderHealthBar (fallback) failed', e2);
+            }
         });
     }
 
@@ -1946,9 +1980,29 @@ function (BaseView, loading) {
                 stopDashboardProgressPolling();
                 view.querySelector('.dashboardLiveProgress').style.display = 'none';
             }
-        }).catch(function () {
-            if ((loadDashboard._retries = (loadDashboard._retries || 0) + 1) <= 5) {
+        }).catch(function (err) {
+            console.warn('Xtream: dashboard load failed', err);
+            var attempts = (loadDashboard._retries = (loadDashboard._retries || 0) + 1);
+            if (attempts <= 5) {
                 setTimeout(function () { loadDashboard(view); }, 4000);
+                return;
+            }
+            // Final fallback: don't leave the dashboard stuck on the
+            // "Loading..." placeholder forever. Render a clear error state
+            // with a retry hint so the user knows what happened.
+            try {
+                var statusEl = view.querySelector('.dashboardStatusContent');
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="status-badge failed">Unavailable</span>' +
+                        '<span style="margin-left:0.8em; opacity:0.6; font-size:0.9em;">' +
+                        'Could not load dashboard data. Reopen this page to retry.</span>';
+                }
+                var statsEl = view.querySelector('.dashboardStatusStats');
+                if (statsEl) statsEl.style.display = 'none';
+                var liveEl = view.querySelector('.dashboardLiveProgress');
+                if (liveEl) liveEl.style.display = 'none';
+            } catch (e) {
+                console.error('Xtream: dashboard fallback render failed', e);
             }
         });
 
