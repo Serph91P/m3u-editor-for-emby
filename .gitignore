@@ -56,3 +56,9 @@ tests/e2e/playwright-report/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Release tooling
+node_modules/
+package-lock.json
+artifacts/
+.hermes/
