@@ -631,21 +631,39 @@ namespace Emby.Xtream.Plugin.Service
             Logger?.Info("Tuner channel cache invalidated due to upstream channel-list change");
         }
 
+        /// <summary>
+        /// User-triggered cache invalidation (Live TV tab → "Clear caches" button).
+        ///
+        /// Wipes only VOLATILE data — channel list snapshot, stream stats,
+        /// allowed-stream-id set and the dispatcharr-loaded flag — so the next
+        /// channel scan re-fetches everything from upstream.
+        ///
+        /// STABILIZER maps (_channelUuidMap, _tvgIdMap, _stationIdMap,
+        /// _channelNumberMap, _tunerChannelIdToStreamId) are intentionally
+        /// PRESERVED. They are pure lookup tables: every successful
+        /// dispatcharrFetch() inside GetChannelsInternal overwrites them
+        /// atomically. Wiping them up-front created a transient empty-map
+        /// window during which a channel scan could run without them — for
+        /// example when Dispatcharr is disabled, when the Dispatcharr fetch
+        /// failed (caught and logged), or when the next scan reused an EPG-only
+        /// path. In those windows TunerChannelId fell back from the stable
+        /// Gracenote station ID to the raw stream ID, which Emby then treated
+        /// as a brand-new channel and dropped the cached logo association.
+        ///
+        /// Keeping the maps means the worst case after ClearCaches is "logos
+        /// stay attached, stats refetch on next stream open" instead of "all
+        /// logos vanish until Emby re-downloads them".
+        /// </summary>
         public new void ClearCaches()
         {
             _cachedChannels = null;
             _cacheTime = DateTime.MinValue;
             _streamStats = new Dictionary<int, StreamStatsInfo>();
-            _channelUuidMap = new Dictionary<int, string>();
-            _tvgIdMap = new Dictionary<int, string>();
-            _stationIdMap = new Dictionary<int, string>();
-            _channelNumberMap = new Dictionary<int, double>();
-            _tunerChannelIdToStreamId = new Dictionary<string, int>();
             _allowedStreamIds = null;
             _dispatcharrDataLoaded = false;
             // Logger?. covers the case where Logger has not been wired up yet
             // (early init / unit tests). ILogger.Info itself does not throw.
-            Logger?.Info("Xtream tuner caches cleared");
+            Logger?.Info("Xtream tuner caches cleared (stabilizer maps preserved)");
         }
 
         /// <summary>
