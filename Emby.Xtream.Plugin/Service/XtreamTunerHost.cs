@@ -44,6 +44,7 @@ namespace Emby.Xtream.Plugin.Service
         private volatile Dictionary<int, double> _channelNumberMap = new Dictionary<int, double>();
         private volatile Dictionary<string, int> _tunerChannelIdToStreamId = new Dictionary<string, int>();
         private volatile bool _dispatcharrDataLoaded;
+        private readonly System.Threading.SemaphoreSlim _ensureStatsLock = new System.Threading.SemaphoreSlim(1, 1);
         private volatile HashSet<int> _allowedStreamIds;
         private List<ChannelInfo> _cachedChannels;
         private DateTime _cacheTime = DateTime.MinValue;
@@ -610,6 +611,26 @@ namespace Emby.Xtream.Plugin.Service
             return liveStream;
         }
 
+        /// <summary>
+        /// Lightweight cache invalidation invoked by <see cref="LiveTvService"/> when
+        /// the upstream Xtream channel list has changed (rename / add / delete).
+        /// Drops the tuner channel cache only — Dispatcharr-side maps (_streamStats,
+        /// _tvgIdMap, _stationIdMap, _channelNumberMap, _tunerChannelIdToStreamId)
+        /// are intentionally preserved so the next GetChannelsInternal pass keeps
+        /// working EPG/station-id mappings while it refetches; they are refreshed
+        /// in-place by dispatcharrFetch() during the next channel scan.
+        /// Safe to call concurrently — assignment of these fields is atomic and
+        /// they are only read by GetChannelsInternal under its own cache check.
+        /// </summary>
+        public void OnChannelListChanged()
+        {
+            _cachedChannels = null;
+            _cacheTime = DateTime.MinValue;
+            // Logger?. handles the early-init / unit-test case (Logger may be null)
+            // and ILogger.Info itself does not throw, so no try/catch is needed.
+            Logger?.Info("Tuner channel cache invalidated due to upstream channel-list change");
+        }
+
         public new void ClearCaches()
         {
             _cachedChannels = null;
@@ -622,7 +643,9 @@ namespace Emby.Xtream.Plugin.Service
             _tunerChannelIdToStreamId = new Dictionary<string, int>();
             _allowedStreamIds = null;
             _dispatcharrDataLoaded = false;
-            Logger.Info("Xtream tuner caches cleared");
+            // Logger?. covers the case where Logger has not been wired up yet
+            // (early init / unit tests). ILogger.Info itself does not throw.
+            Logger?.Info("Xtream tuner caches cleared");
         }
 
         /// <summary>
@@ -1102,11 +1125,21 @@ namespace Emby.Xtream.Plugin.Service
                 return;
             }
 
-            Logger.Info("Dispatcharr data missing at playback time, fetching on-demand");
-            _dispatcharrClient.Configure(config.DispatcharrUser, config.DispatcharrPass);
-
+            // Single-flight guard: when N concurrent playbacks hit a cold cache they
+            // would otherwise each fire a full Dispatcharr round-trip (profiles +
+            // channels + stats). Serialize through a SemaphoreSlim and re-check the
+            // loaded flag inside the critical section so only the first caller fetches.
+            await _ensureStatsLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                if (_dispatcharrDataLoaded)
+                {
+                    return;
+                }
+
+                Logger.Info("Dispatcharr data missing at playback time, fetching on-demand");
+                _dispatcharrClient.Configure(config.DispatcharrUser, config.DispatcharrPass);
+
                 // Profile filtering on-demand: re-compute the enabled channel set if profiles are selected.
                 HashSet<int> enabledChannelIds = null;
                 if (config.SelectedDispatcharrProfileIds != null && config.SelectedDispatcharrProfileIds.Length > 0)
@@ -1137,9 +1170,18 @@ namespace Emby.Xtream.Plugin.Service
                 Logger.Info("Loaded {0} UUIDs and {1} stream stats from Dispatcharr on-demand",
                     uuidMap.Count, statsMap.Count);
             }
+            catch (OperationCanceledException)
+            {
+                // Caller cancelled; do not mark as failed so a later request can retry.
+                throw;
+            }
             catch (Exception ex)
             {
                 Logger.Warn("On-demand Dispatcharr data fetch failed: {0}", ex.Message);
+            }
+            finally
+            {
+                _ensureStatsLock.Release();
             }
         }
 

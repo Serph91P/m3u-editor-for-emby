@@ -66,6 +66,15 @@ namespace Emby.Xtream.Plugin.Service
         /// <summary>Exposed for unit testing only: whether the EPG XML cache is populated.</summary>
         internal bool HasCachedEpgXml => _cachedEpgXml != null;
 
+        /// <summary>Exposed for unit testing only: number of entries in the per-channel EPG cache.</summary>
+        internal int PerChannelEpgCacheCount
+        {
+            get { lock (_perChannelEpgLock) { return _perChannelEpgCache.Count; } }
+        }
+
+        /// <summary>Exposed for unit testing only: whether the bulk XMLTV cache is populated.</summary>
+        internal bool HasXmltvCache => _xmltvCache != null;
+
         /// <summary>
         /// Gets the M3U playlist for Live TV channels.
         /// </summary>
@@ -244,15 +253,57 @@ namespace Emby.Xtream.Plugin.Service
                 allChannels = allChannels.Where(c => !c.IsAdultChannel).ToList();
             }
 
-            // Channel hash: detect changes and log accordingly
+            // Channel hash: detect changes and invalidate dependent caches.
+            // This is the canonical drift-detection point; ALL Live-TV cache layers
+            // (M3U, EPG XML, bulk XMLTV, per-channel EPG, tuner channel cache) must
+            // be wiped here, otherwise renamed/added/deleted channels at the Xtream
+            // provider remain invisible until each layer's TTL expires independently.
             var newHash = StrmSyncService.ComputeChannelListHash(allChannels);
             if (newHash != config.LastChannelListHash)
             {
-                _logger.Info("Channel list changed (hash {0} → {1}), invalidating cache",
+                _logger.Info("Channel list changed (hash {0} → {1}), invalidating dependent caches",
                     string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
                     newHash.Substring(0, 8));
                 config.LastChannelListHash = newHash;
                 Plugin.Instance.SaveConfiguration();
+
+                // Wipe M3U, EPG XML, and bulk XMLTV caches so the next request rebuilds
+                // them against the fresh channel list. Note: we do NOT take _m3uLock /
+                // _epgLock / _xmltvLock here because GetFilteredChannelsAsync may be
+                // called from inside those locked sections; simple field assignment is
+                // safe (volatile fields, time-stamp pair).
+                _cachedM3U = null;
+                _m3uCacheTime = DateTime.MinValue;
+                _cachedEpgXml = null;
+                _epgCacheTime = DateTime.MinValue;
+                _xmltvCache = null;
+                _xmltvCacheTime = DateTime.MinValue;
+                _xmltvFailed = false;
+                _xmltvFailedTime = DateTime.MinValue;
+                _epgChannelIdByStreamId = new Dictionary<int, string>();
+
+                // Selectively prune the per-channel EPG cache: keep entries whose
+                // StreamId is still in the new channel set (preserves perf when only
+                // a few channels were added/removed), drop entries for channels that
+                // no longer exist (prevents stale EPG when a StreamId is recycled by
+                // the provider for a different channel).
+                var liveStreamIds = new HashSet<int>();
+                foreach (var ch in allChannels) liveStreamIds.Add(ch.StreamId);
+                lock (_perChannelEpgLock)
+                {
+                    int pruned = PruneStaleEpgEntries(_perChannelEpgCache, liveStreamIds);
+                    if (pruned > 0)
+                        _logger.Debug("Pruned {0} stale entries from per-channel EPG cache", pruned);
+                }
+
+                // Drop the tuner host channel cache so Emby's next ChannelScan picks
+                // up the fresh channel set immediately rather than after the 5-minute
+                // tuner cache expires. We deliberately do NOT touch _streamStats /
+                // _tvgIdMap / _stationIdMap here — those are Dispatcharr-side maps
+                // and clearing them would temporarily break EPG mapping; the next
+                // GetChannelsInternal pass will refresh them via EnsureStatsLoadedAsync
+                // and dispatcharrFetch().
+                XtreamTunerHost.Instance?.OnChannelListChanged();
             }
             else
             {
@@ -261,6 +312,25 @@ namespace Emby.Xtream.Plugin.Service
 
             _logger.Info("Fetched {0} Live TV channels", allChannels.Count);
             return allChannels;
+        }
+
+        /// <summary>
+        /// Removes per-channel EPG entries whose StreamId is no longer in the live
+        /// channel set. Pulled out so unit tests can exercise the drift-prune
+        /// behaviour without standing up a full HTTP/Xtream environment. Returns
+        /// the number of entries removed.
+        /// </summary>
+        internal static int PruneStaleEpgEntries(
+            Dictionary<int, (List<EpgProgram> Programs, DateTime CacheTime)> cache,
+            HashSet<int> liveStreamIds)
+        {
+            if (cache == null || cache.Count == 0) return 0;
+            if (liveStreamIds == null) liveStreamIds = new HashSet<int>();
+            // Materialize the keys snapshot first so we can mutate the dictionary
+            // afterwards without invalidating an active enumerator.
+            var stale = cache.Keys.Where(key => !liveStreamIds.Contains(key)).ToList();
+            foreach (var key in stale) cache.Remove(key);
+            return stale.Count;
         }
 
         private async Task<List<LiveStreamInfo>> FetchAllChannelsAsync(CancellationToken cancellationToken)
