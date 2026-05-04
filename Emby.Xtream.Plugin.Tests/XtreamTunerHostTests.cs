@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Runtime.Serialization;
+using System.Runtime.CompilerServices;
 using Emby.Xtream.Plugin.Client.Models;
 using Emby.Xtream.Plugin.Service;
 using MediaBrowser.Controller.LiveTv;
@@ -14,16 +14,18 @@ namespace Emby.Xtream.Plugin.Tests
     ///
     /// We can't run the full constructor (needs IServerApplicationHost + a live
     /// MediaBrowser host environment), so the cache-state tests use
-    /// FormatterServices.GetUninitializedObject + reflection — same pattern as
-    /// LiveTvCacheTests. This is fine because OnChannelListChanged() and the
+    /// RuntimeHelpers.GetUninitializedObject + reflection (same pattern as
+    /// LiveTvCacheTests). This is fine because OnChannelListChanged() and the
     /// stats single-flight only touch instance fields.
     /// </summary>
     public class XtreamTunerHostTests
     {
         private static XtreamTunerHost MakeBareHost()
         {
-            // Skip the constructor — we are only exercising in-memory cache state.
-            var host = (XtreamTunerHost)FormatterServices.GetUninitializedObject(typeof(XtreamTunerHost));
+            // Skip the constructor; we are only exercising in-memory cache state.
+            // RuntimeHelpers.GetUninitializedObject replaces the obsolete
+            // FormatterServices.GetUninitializedObject (SYSLIB0050).
+            var host = (XtreamTunerHost)RuntimeHelpers.GetUninitializedObject(typeof(XtreamTunerHost));
             // _ensureStatsLock is readonly; FormatterServices doesn't run field initializers,
             // so we have to set it manually for any test that exercises EnsureStatsLoadedAsync.
             // Tests that only call OnChannelListChanged don't need it.
