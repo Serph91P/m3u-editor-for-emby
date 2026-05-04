@@ -1212,7 +1212,7 @@ namespace Emby.Xtream.Plugin.Api
             return result;
         }
 
-        public object Get(CheckProbeDataCoverage request)
+        public async Task<object> Get(CheckProbeDataCoverage request)
         {
             var result = new ProbeDataCoverageResult();
             try
@@ -1230,6 +1230,26 @@ namespace Emby.Xtream.Plugin.Api
                 int backend = host.BackendStreamStatsCount;
                 int dispatcharr = host.DispatcharrStreamStatsCount;
 
+                // The diagnostics page is the single most common spot the user
+                // hits right after a restart, before any guide refresh has had
+                // a chance to populate the channel cache. Rather than telling
+                // them to bounce to Live TV and refresh, do it for them once.
+                bool autoLoaded = false;
+                if (total == 0)
+                {
+                    using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
+                    {
+                        autoLoaded = await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
+                    }
+                    if (autoLoaded)
+                    {
+                        total = host.CachedChannelCount;
+                        withStats = host.CachedStreamStatsCount;
+                        backend = host.BackendStreamStatsCount;
+                        dispatcharr = host.DispatcharrStreamStatsCount;
+                    }
+                }
+
                 result.TotalChannels = total;
                 result.ChannelsWithProbeData = withStats;
 
@@ -1244,16 +1264,19 @@ namespace Emby.Xtream.Plugin.Api
                 if (total == 0)
                 {
                     result.Success = false;
-                    result.Message = "Channel cache is empty. Refresh the channel list first (Live TV \u2192 Refresh Guide), then try again.";
+                    result.Message = "Channel cache is empty and an on-demand load returned no channels. " +
+                        "Verify the Xtream credentials, then try Live TV \u2192 Refresh Guide.";
                     result.Source = "none";
                     return result;
                 }
+
+                string autoPrefix = autoLoaded ? "(auto-loaded " + total + " channels) " : string.Empty;
 
                 if (withStats == 0)
                 {
                     result.Source = "none";
                     result.Success = true;
-                    result.Message = "No probe data available. " + total + " channels cached but none carry stream_stats. " +
+                    result.Message = autoPrefix + "No probe data available. " + total + " channels cached but none carry stream_stats. " +
                         "Emby will FFprobe each stream on first playback. " +
                         (result.BackendType != null && result.BackendType.IndexOf("m3u-editor", StringComparison.OrdinalIgnoreCase) >= 0
                             ? "(m3u-editor detected; verify probing is enabled in m3u-editor for these channels.)"
@@ -1266,7 +1289,7 @@ namespace Emby.Xtream.Plugin.Api
                 else result.Source = "dispatcharr";
 
                 result.Success = true;
-                result.Message = string.Format(
+                result.Message = autoPrefix + string.Format(
                     "{0} of {1} channels have probe data ({2} from backend payload, {3} from Dispatcharr). FFprobe is bypassed for these on playback.",
                     withStats, total, backend, dispatcharr);
             }
