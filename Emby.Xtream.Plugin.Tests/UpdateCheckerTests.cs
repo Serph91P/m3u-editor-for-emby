@@ -136,6 +136,111 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.True(result.UpdateAvailable);
         }
 
+        // ---- SemVer pre-release tests ----
+
+        [Fact]
+        public void PreReleaseIsLowerThanStableSameCore()
+        {
+            // Installed stable 1.2.0 should NOT be offered 1.2.0-beta.1
+            var result = UpdateChecker.CompareVersions("1.2.0", "v1.2.0-beta.1", "", "", "");
+            Assert.False(result.UpdateAvailable);
+            Assert.Null(result.Error);
+        }
+
+        [Fact]
+        public void StableHigherThanPreReleaseOfPriorCore()
+        {
+            // Installed 1.0.0-beta.4 should be offered stable 1.1.3
+            var result = UpdateChecker.CompareVersions("1.0.0-beta.4", "v1.1.3", "", "", "");
+            Assert.True(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void OldStableNotOfferedOlderBeta()
+        {
+            // Installed stable 1.1.3 should NOT be offered older 1.0.0-beta.4
+            var result = UpdateChecker.CompareVersions("1.1.3", "v1.0.0-beta.4", "", "", "");
+            Assert.False(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void NewerBetaCoreOutranksOlderStable()
+        {
+            // Installed stable 1.1.3 should be offered 1.2.0-beta.1
+            var result = UpdateChecker.CompareVersions("1.1.3", "v1.2.0-beta.1", "", "", "");
+            Assert.True(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void HigherBetaNumberWins()
+        {
+            var result = UpdateChecker.CompareVersions("1.2.0-beta.1", "v1.2.0-beta.2", "", "", "");
+            Assert.True(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void RcRanksHigherThanBetaSameCore()
+        {
+            // alphanumeric identifier comparison: "beta" < "rc"
+            var result = UpdateChecker.CompareVersions("1.2.0-beta.5", "v1.2.0-rc.1", "", "", "");
+            Assert.True(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void EqualPreReleaseNoUpdate()
+        {
+            var result = UpdateChecker.CompareVersions("1.2.0-beta.1", "v1.2.0-beta.1", "", "", "");
+            Assert.False(result.UpdateAvailable);
+        }
+
+        [Fact]
+        public void SemverParsesEmbyFourPartAssemblyVersion()
+        {
+            // Emby reports plugin version as 4-part System.Version (e.g. 1.1.3.0)
+            // Comparing it against a tag "v1.1.3" must NOT report an update.
+            var result = UpdateChecker.CompareVersions("1.1.3.0", "v1.1.3", "", "", "");
+            Assert.False(result.UpdateAvailable);
+            Assert.Null(result.Error);
+        }
+
+        [Fact]
+        public void SelectHighestRelease_PicksHighestSemverNotFirst()
+        {
+            // GitHub returns releases sorted by published_at desc, but a stable
+            // hotfix released after a beta may have a LOWER tag (e.g. 1.1.3
+            // after 1.2.0-beta.1). On the beta channel we still want the highest
+            // SemVer-precedence release as the "latest".
+            var json = @"[
+                {""tag_name"":""v1.1.3"",""prerelease"":false,""draft"":false,""assets"":[]},
+                {""tag_name"":""v1.2.0-beta.1"",""prerelease"":true,""draft"":false,""assets"":[]},
+                {""tag_name"":""v1.0.0-beta.4"",""prerelease"":true,""draft"":false,""assets"":[]}
+            ]";
+
+            var picked = UpdateChecker.SelectHighestRelease(json);
+            Assert.NotNull(picked);
+            Assert.Contains("v1.2.0-beta.1", picked);
+        }
+
+        [Fact]
+        public void SelectHighestRelease_SkipsDrafts()
+        {
+            var json = @"[
+                {""tag_name"":""v9.9.9"",""prerelease"":false,""draft"":true,""assets"":[]},
+                {""tag_name"":""v1.2.0"",""prerelease"":false,""draft"":false,""assets"":[]}
+            ]";
+
+            var picked = UpdateChecker.SelectHighestRelease(json);
+            Assert.NotNull(picked);
+            Assert.Contains("v1.2.0", picked);
+            Assert.DoesNotContain("v9.9.9", picked);
+        }
+
+        [Fact]
+        public void SelectHighestRelease_ReturnsNullForEmptyArray()
+        {
+            Assert.Null(UpdateChecker.SelectHighestRelease("[]"));
+        }
+
         // ---- ExtractDllDownloadUrl tests ----
 
         [Fact]
