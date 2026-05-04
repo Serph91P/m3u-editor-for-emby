@@ -38,6 +38,10 @@ function (BaseView, loading) {
             updateNameCleaningVisibility(view);
         });
 
+        view.querySelector('.chkEnableChannelNameCleaning').addEventListener('change', function () {
+            updateChannelNameCleaningVisibility(view);
+        });
+
         view.querySelector('.chkEnableTmdbFolderNaming').addEventListener('change', function () {
             updateTmdbVisibility(view);
         });
@@ -381,14 +385,20 @@ function (BaseView, loading) {
 
             instance.selectedCategoryIds = config.SelectedLiveCategoryIds || [];
 
-            // Unified name cleaning (drives both content + channel cleaning)
-            var nameCleaningEnabled = !!config.EnableContentNameCleaning || !!config.EnableChannelNameCleaning;
-            view.querySelector('.chkEnableNameCleaning').checked = nameCleaningEnabled;
-            var removeTerms = config.ContentRemoveTerms || '';
-            if (!removeTerms && config.ChannelRemoveTerms) {
-                removeTerms = config.ChannelRemoveTerms.split(',').map(function (t) { return t.trim(); }).filter(function (t) { return t; }).join('\n');
+            // STRM content name cleaning (movies + series only)
+            view.querySelector('.chkEnableNameCleaning').checked = !!config.EnableContentNameCleaning;
+            view.querySelector('.txtRemoveTerms').value = config.ContentRemoveTerms || '';
+
+            // Live TV channel name cleaning (independent toggle)
+            view.querySelector('.chkEnableChannelNameCleaning').checked = !!config.EnableChannelNameCleaning;
+            var channelTerms = '';
+            if (config.ChannelRemoveTerms) {
+                channelTerms = config.ChannelRemoveTerms.split(',')
+                    .map(function (t) { return t.trim(); })
+                    .filter(function (t) { return t; })
+                    .join('\n');
             }
-            view.querySelector('.txtRemoveTerms').value = removeTerms;
+            view.querySelector('.txtChannelRemoveTerms').value = channelTerms;
 
             view.querySelector('.chkEnableDispatcharr').checked = !!config.EnableDispatcharr;
             view.querySelector('.txtDispatcharrUrl').value = config.DispatcharrUrl || '';
@@ -456,6 +466,7 @@ function (BaseView, loading) {
 
             updateTmdbVisibility(view);
             updateNameCleaningVisibility(view);
+            updateChannelNameCleaningVisibility(view);
             updateDispatcharrVisibility(view);
             updateEpgVisibility(view);
             updateVodMovieVisibility(view);
@@ -505,13 +516,17 @@ function (BaseView, loading) {
 
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
 
-            // Unified name cleaning → both backend properties
-            var nameCleaningOn = view.querySelector('.chkEnableNameCleaning').checked;
-            var removeTermsVal = view.querySelector('.txtRemoveTerms').value;
-            config.EnableContentNameCleaning = nameCleaningOn;
-            config.EnableChannelNameCleaning = nameCleaningOn;
-            config.ContentRemoveTerms = removeTermsVal;
-            config.ChannelRemoveTerms = removeTermsVal.split('\n').map(function (t) { return t.trim(); }).filter(function (t) { return t; }).join(',');
+            // STRM content name cleaning (movies + series)
+            config.EnableContentNameCleaning = view.querySelector('.chkEnableNameCleaning').checked;
+            config.ContentRemoveTerms = view.querySelector('.txtRemoveTerms').value;
+
+            // Live TV channel name cleaning (independent toggle, see PluginConfiguration.cs)
+            config.EnableChannelNameCleaning = view.querySelector('.chkEnableChannelNameCleaning').checked;
+            config.ChannelRemoveTerms = view.querySelector('.txtChannelRemoveTerms').value
+                .split('\n')
+                .map(function (t) { return t.trim(); })
+                .filter(function (t) { return t; })
+                .join(',');
 
             config.EnableDispatcharr = view.querySelector('.chkEnableDispatcharr').checked;
             config.DispatcharrUrl = view.querySelector('.txtDispatcharrUrl').value.replace(/\/+$/, '');
@@ -631,6 +646,14 @@ function (BaseView, loading) {
     function updateNameCleaningVisibility(view) {
         var enabled = view.querySelector('.chkEnableNameCleaning').checked;
         view.querySelector('.nameCleaningSettings').style.display = enabled ? '' : 'none';
+    }
+
+    function updateChannelNameCleaningVisibility(view) {
+        var el = view.querySelector('.chkEnableChannelNameCleaning');
+        if (!el) return;
+        var enabled = el.checked;
+        var section = view.querySelector('.channelNameCleaningSettings');
+        if (section) section.style.display = enabled ? '' : 'none';
     }
 
     function updateVodMovieVisibility(view) {

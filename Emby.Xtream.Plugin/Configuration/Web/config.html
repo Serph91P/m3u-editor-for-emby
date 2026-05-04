@@ -599,8 +599,10 @@
                             <span>Enable Name Cleaning</span>
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
-                            Clean movie, series, and channel names by removing country-code
-                            prefix tags (e.g. ┃UK┃, │EN│, |FR|) and custom terms.
+                            Clean movie and series names by removing country-code
+                            prefix tags (e.g. ┃UK┃, │EN│, |FR|) and custom terms
+                            from STRM file/folder names. Does not affect Live TV channel
+                            names (see the dedicated toggle in the Live TV section).
                         </div>
                     </div>
                     <div class="nameCleaningSettings">
@@ -1188,6 +1190,33 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
                             When enabled, adult-flagged channels will be included in the channel list.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:1.2em;">
+                        <label>
+                            <input class="chkEnableChannelNameCleaning" type="checkbox" is="emby-checkbox" />
+                            <span>Clean Channel Names (advanced)</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Strip provider tags (country prefixes like UK:, |HD|, [FHD], trailing
+                            HD/UHD/4K, codec markers) from Live TV channel display names.
+                            <strong>Off by default</strong> because channels like
+                            "BBC One HD" or "Das Erste HD" are distinct broadcasts with their
+                            own EPG IDs; enabling this can merge separate channels and break
+                            EPG matching. Only enable if your provider returns very noisy names.
+                        </div>
+                    </div>
+                    <div class="channelNameCleaningSettings" style="display:none;">
+                        <div class="inputContainer">
+                            <textarea class="txtChannelRemoveTerms" is="emby-input"
+                                      label="Additional Channel Terms to Remove (one per line)"
+                                      rows="4" style="resize:vertical;"
+                                      placeholder="VIP&#10;PREMIUM&#10;BACKUP"></textarea>
+                            <div class="fieldDescription">
+                                Extra terms to strip from channel names, one per line.
+                                Built-in patterns already handle country prefixes and quality tags.
+                            </div>
                         </div>
                     </div>
                 </div>
