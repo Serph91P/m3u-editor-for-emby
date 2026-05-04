@@ -560,13 +560,26 @@ function (BaseView, loading) {
             config.TvdbFolderIdOverrides = view.querySelector('.txtTvdbFolderIdOverrides').value;
 
             ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
+                // Dashboard.processPluginConfigurationUpdateResult internally calls
+                // loading.hide() and shows the success toast. Do NOT call loading.hide()
+                // again here or it desyncs the spinner counter and the next save shows
+                // a stale failure toast on the first click.
                 Dashboard.processPluginConfigurationUpdateResult();
-                applyScheduleToTasks(view, config, ApiClient);
-                if (typeof callback === 'function') callback();
+                try { applyScheduleToTasks(view, config, ApiClient); } catch (e) {}
+                if (typeof callback === 'function') {
+                    try { callback(); } catch (e) {}
+                }
+            }, function (err) {
+                // Explicit reject handler so the rejection never bubbles up as
+                // "unhandled" and the spinner is always cleared.
+                loading.hide();
+                var detail = (err && (err.statusText || err.message)) || '';
+                Dashboard.alert('Failed to save configuration.' + (detail ? ' (' + detail + ')' : ''));
             });
-        }).catch(function () {
+        }, function (err) {
             loading.hide();
-            Dashboard.alert('Failed to save configuration.');
+            var detail = (err && (err.statusText || err.message)) || '';
+            Dashboard.alert('Failed to load current configuration before saving.' + (detail ? ' (' + detail + ')' : ''));
         });
     }
 

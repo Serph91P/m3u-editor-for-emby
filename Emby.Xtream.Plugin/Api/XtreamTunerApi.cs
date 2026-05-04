@@ -109,7 +109,7 @@ namespace Emby.Xtream.Plugin.Api
         public string Password { get; set; }
     }
 
-    [Route("/XtreamTuner/CheckProbeDataCoverage", "GET", Summary = "Reports how many channels carry probe data (resolution/codec) and where it came from")]
+    [Route("/XtreamTuner/ProbeDataCoverage", "GET", Summary = "Reports how many channels carry probe data (resolution/codec) and where it came from")]
     public class CheckProbeDataCoverage : IReturn<ProbeDataCoverageResult>
     {
     }
