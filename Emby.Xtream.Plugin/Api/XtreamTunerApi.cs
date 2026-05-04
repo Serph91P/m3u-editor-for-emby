@@ -109,6 +109,21 @@ namespace Emby.Xtream.Plugin.Api
         public string Password { get; set; }
     }
 
+    [Route("/XtreamTuner/CheckProbeDataCoverage", "GET", Summary = "Reports how many channels carry probe data (resolution/codec) and where it came from")]
+    public class CheckProbeDataCoverage : IReturn<ProbeDataCoverageResult>
+    {
+    }
+
+    public class ProbeDataCoverageResult
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int TotalChannels { get; set; }
+        public int ChannelsWithProbeData { get; set; }
+        public string Source { get; set; } // "backend" | "dispatcharr" | "mixed" | "none"
+        public string BackendType { get; set; } // detected backend identifier (e.g. "M3uEditor")
+    }
+
     [Route("/XtreamTuner/DispatcharrProfiles", "GET", Summary = "Gets Channel Profiles from Dispatcharr")]
     public class GetDispatcharrProfiles : IReturn<DispatcharrProfilesResult>
     {
@@ -1186,6 +1201,73 @@ namespace Emby.Xtream.Plugin.Api
 
                 result.Success = success;
                 result.Message = message;
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Message = "Unexpected error: " + ex.Message;
+            }
+
+            return result;
+        }
+
+        public object Get(CheckProbeDataCoverage request)
+        {
+            var result = new ProbeDataCoverageResult();
+            try
+            {
+                var host = XtreamTunerHost.Instance;
+                if (host == null)
+                {
+                    result.Success = false;
+                    result.Message = "Tuner host not initialized.";
+                    return result;
+                }
+
+                int total = host.CachedChannelCount;
+                int withStats = host.CachedStreamStatsCount;
+                int backend = host.BackendStreamStatsCount;
+                int dispatcharr = host.DispatcharrStreamStatsCount;
+
+                result.TotalChannels = total;
+                result.ChannelsWithProbeData = withStats;
+
+                var cfg = Plugin.Instance?.Configuration;
+                var detected = cfg?.DetectedBackendType;
+                if (string.IsNullOrEmpty(detected) && cfg != null && !string.IsNullOrEmpty(cfg.BaseUrl))
+                {
+                    detected = BackendDetector.DetectFromBaseUrl(cfg.BaseUrl);
+                }
+                result.BackendType = BackendTypes.ToDisplayName(string.IsNullOrEmpty(detected) ? BackendTypes.Unknown : detected);
+
+                if (total == 0)
+                {
+                    result.Success = false;
+                    result.Message = "Channel cache is empty. Refresh the channel list first (Live TV \u2192 Refresh Guide), then try again.";
+                    result.Source = "none";
+                    return result;
+                }
+
+                if (withStats == 0)
+                {
+                    result.Source = "none";
+                    result.Success = true;
+                    result.Message = "No probe data available. " + total + " channels cached but none carry stream_stats. " +
+                        "Emby will FFprobe each stream on first playback. " +
+                        (result.BackendType != null && result.BackendType.IndexOf("m3u-editor", StringComparison.OrdinalIgnoreCase) >= 0
+                            ? "(m3u-editor detected; verify probing is enabled in m3u-editor for these channels.)"
+                            : "Enable Dispatcharr or use a backend like m3u-editor that probes streams to skip FFprobe.");
+                    return result;
+                }
+
+                if (backend > 0 && dispatcharr > 0) result.Source = "mixed";
+                else if (backend > 0) result.Source = "backend";
+                else result.Source = "dispatcharr";
+
+                result.Success = true;
+                result.Message = string.Format(
+                    "{0} of {1} channels have probe data ({2} from backend payload, {3} from Dispatcharr). FFprobe is bypassed for these on playback.",
+                    withStats, total, backend, dispatcharr);
             }
             catch (Exception ex)
             {

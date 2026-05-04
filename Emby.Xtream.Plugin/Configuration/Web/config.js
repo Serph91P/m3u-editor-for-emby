@@ -131,6 +131,13 @@ function (BaseView, loading) {
             testDispatcharrConnection(self);
         });
 
+        var btnProbeCoverage = view.querySelector('.btnCheckProbeCoverage');
+        if (btnProbeCoverage) {
+            btnProbeCoverage.addEventListener('click', function () {
+                checkProbeDataCoverage(self);
+            });
+        }
+
         view.querySelector('.btnRefreshProfiles').addEventListener('click', function () {
             loadDispatcharrProfiles(self);
         });
@@ -1117,6 +1124,31 @@ function (BaseView, loading) {
             }
         }).catch(function () {
             setPillResult(resultEl, false, 'Test request failed. Check server logs.');
+        });
+    }
+
+    function checkProbeDataCoverage(instance) {
+        var view = instance.view;
+        var resultEl = view.querySelector('.probeCoverageResult');
+        if (!resultEl) return;
+        resultEl.innerHTML = '<span style="opacity:0.5;">Checking probe data coverage&hellip;</span>';
+
+        ApiClient.ajax({
+            type: 'GET',
+            url: ApiClient.getUrl('XtreamTuner/ProbeDataCoverage'),
+            dataType: 'json'
+        }).then(function (result) {
+            if (!result) {
+                setPillResult(resultEl, false, 'Empty response from server.');
+                return;
+            }
+            var msg = result.Message || '';
+            if (result.Success && result.BackendType) {
+                msg = '[' + result.BackendType + '] ' + msg;
+            }
+            setPillResult(resultEl, result.Success !== false, msg);
+        }).catch(function () {
+            setPillResult(resultEl, false, 'Probe coverage request failed. Check server logs.');
         });
     }
 

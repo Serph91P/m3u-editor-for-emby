@@ -52,6 +52,19 @@ namespace Emby.Xtream.Plugin.Service
 
         public int CachedChannelCount => _cachedChannels?.Count ?? 0;
 
+        /// <summary>
+        /// Snapshot of the current probe-data cache, exposed for diagnostics
+        /// (e.g. the "Check Probe Data Coverage" button in config). Returns
+        /// the count of channels that currently carry stream stats.
+        /// </summary>
+        public int CachedStreamStatsCount => _streamStats?.Count ?? 0;
+
+        /// <summary>Channels whose stream_stats came from the Xtream backend payload (e.g. m3u-editor).</summary>
+        public int BackendStreamStatsCount { get; private set; }
+
+        /// <summary>Channels whose stream_stats came from Dispatcharr's REST API.</summary>
+        public int DispatcharrStreamStatsCount { get; private set; }
+
         public IReadOnlyDictionary<int, string> TvgIdMap => _tvgIdMap;
         public IReadOnlyDictionary<int, string> StationIdMap => _stationIdMap;
 
@@ -399,6 +412,24 @@ namespace Emby.Xtream.Plugin.Service
 
             var channels = channelsTask.Result;
             var categoryMap = categoriesTask.Result;
+
+            // Merge probe data carried by the Xtream backend itself (notably
+            // m3u-editor exposes a stream_stats block on each channel that maps
+            // 1:1 onto StreamStatsInfo). This lets Emby skip the FFprobe pass
+            // even when Dispatcharr is not configured. Dispatcharr-supplied
+            // entries win when both are present, since dispatcharrFetch is the
+            // authoritative source whenever it is enabled.
+            int backendStatsCount = 0;
+            if (channels != null)
+            {
+                foreach (var ch in channels)
+                {
+                    if (ch.StreamStats == null) continue;
+                    if (newStats.ContainsKey(ch.StreamId)) continue;
+                    newStats[ch.StreamId] = ch.StreamStats;
+                    backendStatsCount++;
+                }
+            }
             int statsCount = newStats.Count;
 
             // Profile filtering: if a profile filter is active, restrict the Xtream channel list
@@ -496,12 +527,14 @@ namespace Emby.Xtream.Plugin.Service
             }).ToList();
 
             _streamStats = newStats;
+            BackendStreamStatsCount = backendStatsCount;
+            DispatcharrStreamStatsCount = statsCount - backendStatsCount;
             _tunerChannelIdToStreamId = newTunerChannelIdToStreamId;
             _cachedChannels = result;
             _cacheTime = DateTime.UtcNow;
             var gracenoteCount = result.Count(c => c.ListingsChannelId != null);
-            Logger.Info("Channel list cached with {0} channels ({1} with stream stats, {2} with Gracenote station ID)",
-                result.Count, statsCount, gracenoteCount);
+            Logger.Info("Channel list cached with {0} channels ({1} with stream stats: {2} from backend, {3} from Dispatcharr; {4} with Gracenote station ID)",
+                result.Count, statsCount, backendStatsCount, statsCount - backendStatsCount, gracenoteCount);
 
             if (config.DeferEpgToGuideData && gracenoteCount > 0)
             {
@@ -1178,7 +1211,22 @@ namespace Emby.Xtream.Plugin.Service
                 var (uuidMap, statsMap, tvgIdMap, stationIdMap, allowedStreamIds, channelNumberMap) =
                     await _dispatcharrClient.GetChannelDataAsync(
                         config.DispatcharrUrl, cancellationToken, enabledChannelIds).ConfigureAwait(false);
-                if (statsMap.Count > 0) _streamStats = statsMap;
+                if (statsMap.Count > 0)
+                {
+                    // Merge into existing map so backend-supplied stats (e.g. m3u-editor
+                    // payload) survive for channels Dispatcharr doesn't track. Dispatcharr
+                    // takes precedence on overlap because its profile/probe data is the
+                    // canonical source when both backends are wired up.
+                    var existing = _streamStats ?? new Dictionary<int, Client.Models.StreamStatsInfo>();
+                    var merged = new Dictionary<int, Client.Models.StreamStatsInfo>(existing);
+                    foreach (var kv in statsMap)
+                    {
+                        merged[kv.Key] = kv.Value;
+                    }
+                    _streamStats = merged;
+                    DispatcharrStreamStatsCount = statsMap.Count;
+                    BackendStreamStatsCount = merged.Count - statsMap.Count;
+                }
                 if (uuidMap.Count > 0) _channelUuidMap = uuidMap;
                 if (tvgIdMap.Count > 0) _tvgIdMap = tvgIdMap;
                 if (stationIdMap.Count > 0) _stationIdMap = stationIdMap;
