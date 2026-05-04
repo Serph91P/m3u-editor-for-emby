@@ -467,7 +467,11 @@ namespace Emby.Xtream.Plugin.Service
                 sb.AppendFormat(CultureInfo.InvariantCulture, "    <display-name>{0}</display-name>\n", EscapeXml(cleanName));
                 if (!string.IsNullOrEmpty(channel.StreamIcon))
                 {
-                    sb.AppendFormat(CultureInfo.InvariantCulture, "    <icon src=\"{0}\" />\n", EscapeXml(channel.StreamIcon));
+                    var sanitizedIcon = Util.UrlValidator.SanitizeHttpUrl(channel.StreamIcon);
+                    if (sanitizedIcon != null)
+                    {
+                        sb.AppendFormat(CultureInfo.InvariantCulture, "    <icon src=\"{0}\" />\n", EscapeXml(sanitizedIcon));
+                    }
                 }
                 sb.AppendLine("  </channel>");
             }
