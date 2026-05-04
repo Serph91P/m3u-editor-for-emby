@@ -1013,16 +1013,15 @@ namespace Emby.Xtream.Plugin.Service
             }
         }
 
-        private List<ChannelInfo> GetChannelsForArtworkCleanup()
+        /// <summary>
+        /// Locates the configured Xtream tuner host inside Emby's LiveTV
+        /// configuration. Returns <c>null</c> when no tuner is registered
+        /// (e.g. fresh install or the user removed it). Centralised so callers
+        /// that need to "trigger a channel load if nothing is cached" do not
+        /// each duplicate the LiveTvOptions lookup.
+        /// </summary>
+        private TunerHostInfo FindRegisteredTunerHost(string callerLogContext)
         {
-            var cachedChannels = _cachedChannels;
-            if (cachedChannels != null && cachedChannels.Count > 0)
-            {
-                return cachedChannels;
-            }
-
-            Logger.Info("ClearWrongChannelArtwork: no cached channels, attempting one-time reload for cleanup");
-
             try
             {
                 var configManager = _applicationHost.Resolve<IConfigurationManager>();
@@ -1036,9 +1035,90 @@ namespace Emby.Xtream.Plugin.Service
                     string.Equals(t.Type, TunerType, StringComparison.OrdinalIgnoreCase)
                     && !string.IsNullOrEmpty(t.Id));
 
+                if (xtreamTuner == null && !string.IsNullOrEmpty(callerLogContext))
+                {
+                    Logger.Info("{0}: no Xtream tuner host found in LiveTvOptions", callerLogContext);
+                }
+
+                return xtreamTuner;
+            }
+            catch (InvalidOperationException ex)
+            {
+                Logger.Warn("FindRegisteredTunerHost ({0}) failed: {1}", callerLogContext, ex.Message);
+                return null;
+            }
+            catch (ArgumentException ex)
+            {
+                Logger.Warn("FindRegisteredTunerHost ({0}) failed: {1}", callerLogContext, ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Best-effort: makes sure <see cref="_cachedChannels"/> is populated.
+        /// Used by diagnostics endpoints that would otherwise have to tell the
+        /// user "go to Live TV and refresh first" when the cache simply has not
+        /// been warmed yet (e.g. immediately after restart). Returns <c>true</c>
+        /// when channels are available afterwards.
+        /// </summary>
+        public async Task<bool> EnsureChannelsLoadedAsync(CancellationToken cancellationToken)
+        {
+            var existing = _cachedChannels;
+            if (existing != null && existing.Count > 0)
+            {
+                return true;
+            }
+
+            var tuner = FindRegisteredTunerHost("EnsureChannelsLoadedAsync");
+            if (tuner == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var loaded = await GetChannelsInternal(tuner, cancellationToken).ConfigureAwait(false);
+                return loaded != null && loaded.Count > 0;
+            }
+            catch (InvalidOperationException ex)
+            {
+                Logger.Warn("EnsureChannelsLoadedAsync: load failed: {0}", ex.Message);
+            }
+            catch (ArgumentException ex)
+            {
+                Logger.Warn("EnsureChannelsLoadedAsync: load failed: {0}", ex.Message);
+            }
+            catch (HttpRequestException ex)
+            {
+                Logger.Warn("EnsureChannelsLoadedAsync: load failed: {0}", ex.Message);
+            }
+            catch (TaskCanceledException ex)
+            {
+                Logger.Warn("EnsureChannelsLoadedAsync: load timed out: {0}", ex.Message);
+            }
+            catch (OperationCanceledException ex)
+            {
+                Logger.Warn("EnsureChannelsLoadedAsync: load canceled: {0}", ex.Message);
+            }
+
+            return false;
+        }
+
+        private List<ChannelInfo> GetChannelsForArtworkCleanup()
+        {
+            var cachedChannels = _cachedChannels;
+            if (cachedChannels != null && cachedChannels.Count > 0)
+            {
+                return cachedChannels;
+            }
+
+            Logger.Info("ClearWrongChannelArtwork: no cached channels, attempting one-time reload for cleanup");
+
+            try
+            {
+                var xtreamTuner = FindRegisteredTunerHost("ClearWrongChannelArtwork");
                 if (xtreamTuner == null)
                 {
-                    Logger.Info("ClearWrongChannelArtwork: no Xtream tuner host found in LiveTvOptions");
                     return null;
                 }
 
