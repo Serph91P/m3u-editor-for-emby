@@ -375,13 +375,11 @@ namespace Emby.Xtream.Plugin.Service
                         var profiles = await _dispatcharrClient.GetProfilesAsync(
                             config.DispatcharrUrl, cancellationToken).ConfigureAwait(false);
                         enabledChannelIds = new HashSet<int>();
-                        foreach (var profile in profiles)
+                        foreach (var profile in profiles
+                            .Where(p => Array.IndexOf(config.SelectedDispatcharrProfileIds, p.Id) >= 0))
                         {
-                            if (Array.IndexOf(config.SelectedDispatcharrProfileIds, profile.Id) >= 0)
-                            {
-                                foreach (var chId in profile.Channels)
-                                    enabledChannelIds.Add(chId);
-                            }
+                            foreach (var chId in profile.Channels)
+                                enabledChannelIds.Add(chId);
                         }
                         Logger.Info("Profile filter active: {0} profile(s), {1} enabled Dispatcharr channel IDs",
                             config.SelectedDispatcharrProfileIds.Length, enabledChannelIds.Count);
@@ -1196,13 +1194,11 @@ namespace Emby.Xtream.Plugin.Service
                     var profiles = await _dispatcharrClient.GetProfilesAsync(
                         config.DispatcharrUrl, cancellationToken).ConfigureAwait(false);
                     enabledChannelIds = new HashSet<int>();
-                    foreach (var profile in profiles)
+                    foreach (var profile in profiles
+                        .Where(p => Array.IndexOf(config.SelectedDispatcharrProfileIds, p.Id) >= 0))
                     {
-                        if (Array.IndexOf(config.SelectedDispatcharrProfileIds, profile.Id) >= 0)
-                        {
-                            foreach (var chId in profile.Channels)
-                                enabledChannelIds.Add(chId);
-                        }
+                        foreach (var chId in profile.Channels)
+                            enabledChannelIds.Add(chId);
                     }
                 }
 
