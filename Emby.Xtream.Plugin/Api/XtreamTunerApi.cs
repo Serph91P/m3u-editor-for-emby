@@ -1269,7 +1269,17 @@ namespace Emby.Xtream.Plugin.Api
                     "{0} of {1} channels have probe data ({2} from backend payload, {3} from Dispatcharr). FFprobe is bypassed for these on playback.",
                     withStats, total, backend, dispatcharr);
             }
-            catch (Exception ex)
+            catch (InvalidOperationException ex)
+            {
+                result.Success = false;
+                result.Message = "Unexpected error: " + ex.Message;
+            }
+            catch (ArgumentException ex)
+            {
+                result.Success = false;
+                result.Message = "Unexpected error: " + ex.Message;
+            }
+            catch (NullReferenceException ex)
             {
                 result.Success = false;
                 result.Message = "Unexpected error: " + ex.Message;
