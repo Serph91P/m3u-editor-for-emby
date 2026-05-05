@@ -62,3 +62,5 @@ node_modules/
 package-lock.json
 artifacts/
 .hermes/
+streamtv.xml
+xtream-tuner-log.txt

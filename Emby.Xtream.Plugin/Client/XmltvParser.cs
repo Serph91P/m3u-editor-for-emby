@@ -150,8 +150,9 @@ namespace Emby.Xtream.Plugin.Client
                 else if (string.Equals(name, "icon", StringComparison.OrdinalIgnoreCase))
                 {
                     var src = reader.GetAttribute("src");
-                    if (!string.IsNullOrEmpty(src))
-                        program.ImageUrl = src;
+                    var sanitized = Util.UrlValidator.SanitizeHttpUrl(src);
+                    if (sanitized != null)
+                        program.ImageUrl = sanitized;
                 }
             }
 

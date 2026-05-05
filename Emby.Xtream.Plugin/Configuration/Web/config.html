@@ -599,8 +599,10 @@
                             <span>Enable Name Cleaning</span>
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
-                            Clean movie, series, and channel names by removing country-code
-                            prefix tags (e.g. ┃UK┃, │EN│, |FR|) and custom terms.
+                            Clean movie and series names by removing country-code
+                            prefix tags (e.g. ┃UK┃, │EN│, |FR|) and custom terms
+                            from STRM file/folder names. Does not affect Live TV channel
+                            names (see the dedicated toggle in the Live TV section).
                         </div>
                     </div>
                     <div class="nameCleaningSettings">
@@ -691,10 +693,14 @@
                         </button>
                         <div class="probeCoverageResult" style="margin-top:0.5em;"></div>
                     </div>
+                </div>
+                </details>
 
-                    <hr style="border:none; border-top:1px solid rgba(128,128,128,0.15); margin:1em 0;" />
+                <hr style="border:none; border-top:1px solid rgba(128,128,128,0.2); margin:0.25em 0 1.25em;" />
 
-                    <h3 class="sectionTitle" style="margin-top:0; font-size:1em;">Dispatcharr (optional)</h3>
+                <details class="settings-collapsible" data-collapse-key="settings.dispatcharr">
+                    <summary>Dispatcharr Integration (optional)</summary>
+                <div class="verticalSection">
                     <div class="fieldDescription" style="margin-bottom:0.8em;">
                         Enable Dispatcharr to also route Live TV, VOD movies, and series through it
                         for stream proxying, reconnect handling, and multiple quality versions per
@@ -728,7 +734,7 @@
                                    label="Dispatcharr Password" />
                         </div>
                         <div class="fieldDescription" style="margin-top:-0.25em; margin-bottom:0.75em;">
-                            These are your <strong>Dispatcharr web UI login credentials</strong> — the account you use to sign in to the Dispatcharr admin interface.
+                            These are your <strong>Dispatcharr web UI login credentials</strong>, the account you use to sign in to the Dispatcharr admin interface.
                             They are not the same as the Xtream API username/password you may have set in the <em>Xtream Connection</em> section above.
                         </div>
                         <button class="btnTestDispatcharr raised button-secondary" is="emby-button" type="button">
@@ -1184,6 +1190,33 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
                             When enabled, adult-flagged channels will be included in the channel list.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:1.2em;">
+                        <label>
+                            <input class="chkEnableChannelNameCleaning" type="checkbox" is="emby-checkbox" />
+                            <span>Clean Channel Names (advanced)</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Strip provider tags (country prefixes like UK:, |HD|, [FHD], trailing
+                            HD/UHD/4K, codec markers) from Live TV channel display names.
+                            <strong>Off by default</strong> because channels like
+                            "BBC One HD" or "Das Erste HD" are distinct broadcasts with their
+                            own EPG IDs; enabling this can merge separate channels and break
+                            EPG matching. Only enable if your provider returns very noisy names.
+                        </div>
+                    </div>
+                    <div class="channelNameCleaningSettings" style="display:none;">
+                        <div class="inputContainer">
+                            <textarea class="txtChannelRemoveTerms" is="emby-input"
+                                      label="Additional Channel Terms to Remove (one per line)"
+                                      rows="4" style="resize:vertical;"
+                                      placeholder="VIP&#10;PREMIUM&#10;BACKUP"></textarea>
+                            <div class="fieldDescription">
+                                Extra terms to strip from channel names, one per line.
+                                Built-in patterns already handle country prefixes and quality tags.
+                            </div>
                         </div>
                     </div>
                 </div>

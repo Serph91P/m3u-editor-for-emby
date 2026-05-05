@@ -38,6 +38,10 @@ function (BaseView, loading) {
             updateNameCleaningVisibility(view);
         });
 
+        view.querySelector('.chkEnableChannelNameCleaning').addEventListener('change', function () {
+            updateChannelNameCleaningVisibility(view);
+        });
+
         view.querySelector('.chkEnableTmdbFolderNaming').addEventListener('change', function () {
             updateTmdbVisibility(view);
         });
@@ -347,10 +351,22 @@ function (BaseView, loading) {
         // config snapshot loaded in loadConfig. Running them in parallel made
         // the banner flash "not configured" on every reopen until loadConfig
         // resolved (issue: post-1.1.3 reopen race).
-        loadConfig(this).then(function () {
-            loadDashboard(self.view);
-            checkForUpdate(self.view);
-        });
+        //
+        // BUT: if loadConfig rejects (server hiccup, network blip, error in
+        // the rendering pipeline), the dashboard would be stuck on the
+        // initial "Loading..." placeholders forever until the user switched
+        // tabs and triggered a re-mount. Always run the dashboard +
+        // update-check follow-ups, even on rejection, so the dashboard
+        // self-heals on the next render cycle.
+        var followUp = function () {
+            try { loadDashboard(self.view); } catch (e) {
+                console.error('Xtream: loadDashboard failed in onResume', e);
+            }
+            try { checkForUpdate(self.view); } catch (e) {
+                console.error('Xtream: checkForUpdate failed in onResume', e);
+            }
+        };
+        loadConfig(this).then(followUp, followUp);
     };
 
     View.prototype.onPause = function () {};
@@ -359,6 +375,16 @@ function (BaseView, loading) {
         loading.show();
         return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             var view = instance.view;
+
+            // Paint the health bar FIRST so the dashboard never stays stuck on
+            // "Loading..." if a later field assignment throws. renderHealthBar
+            // only depends on a few config fields and does not touch unrelated
+            // DOM nodes, so this is safe to call before the rest of loadConfig
+            // runs. The trailing renderHealthBar call below stays as a no-op
+            // refresh once everything else is wired up.
+            try { renderHealthBar(view, config); } catch (e) {
+                console.error('Xtream: renderHealthBar (early) failed', e);
+            }
 
             view.querySelector('.txtBaseUrl').value = config.BaseUrl || '';
             view.querySelector('.txtUsername').value = config.Username || '';
@@ -381,14 +407,20 @@ function (BaseView, loading) {
 
             instance.selectedCategoryIds = config.SelectedLiveCategoryIds || [];
 
-            // Unified name cleaning (drives both content + channel cleaning)
-            var nameCleaningEnabled = !!config.EnableContentNameCleaning || !!config.EnableChannelNameCleaning;
-            view.querySelector('.chkEnableNameCleaning').checked = nameCleaningEnabled;
-            var removeTerms = config.ContentRemoveTerms || '';
-            if (!removeTerms && config.ChannelRemoveTerms) {
-                removeTerms = config.ChannelRemoveTerms.split(',').map(function (t) { return t.trim(); }).filter(function (t) { return t; }).join('\n');
+            // STRM content name cleaning (movies + series only)
+            view.querySelector('.chkEnableNameCleaning').checked = !!config.EnableContentNameCleaning;
+            view.querySelector('.txtRemoveTerms').value = config.ContentRemoveTerms || '';
+
+            // Live TV channel name cleaning (independent toggle)
+            view.querySelector('.chkEnableChannelNameCleaning').checked = !!config.EnableChannelNameCleaning;
+            var channelTerms = '';
+            if (config.ChannelRemoveTerms) {
+                channelTerms = config.ChannelRemoveTerms.split(',')
+                    .map(function (t) { return t.trim(); })
+                    .filter(function (t) { return t; })
+                    .join('\n');
             }
-            view.querySelector('.txtRemoveTerms').value = removeTerms;
+            view.querySelector('.txtChannelRemoveTerms').value = channelTerms;
 
             view.querySelector('.chkEnableDispatcharr').checked = !!config.EnableDispatcharr;
             view.querySelector('.txtDispatcharrUrl').value = config.DispatcharrUrl || '';
@@ -456,6 +488,7 @@ function (BaseView, loading) {
 
             updateTmdbVisibility(view);
             updateNameCleaningVisibility(view);
+            updateChannelNameCleaningVisibility(view);
             updateDispatcharrVisibility(view);
             updateEpgVisibility(view);
             updateVodMovieVisibility(view);
@@ -479,6 +512,18 @@ function (BaseView, loading) {
         }).catch(function (err) {
             loading.hide();
             console.error('Xtream: failed to load plugin configuration', err);
+            // Don't leave the health bar stuck on "Loading..." -- render a
+            // best-effort fallback from an empty config so the user sees a
+            // grey "Not configured / Disabled / Never" line instead of the
+            // initial placeholder.
+            try {
+                var view = instance && instance.view;
+                if (view) {
+                    renderHealthBar(view, {});
+                }
+            } catch (e2) {
+                console.error('Xtream: renderHealthBar (fallback) failed', e2);
+            }
         });
     }
 
@@ -505,13 +550,17 @@ function (BaseView, loading) {
 
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
 
-            // Unified name cleaning → both backend properties
-            var nameCleaningOn = view.querySelector('.chkEnableNameCleaning').checked;
-            var removeTermsVal = view.querySelector('.txtRemoveTerms').value;
-            config.EnableContentNameCleaning = nameCleaningOn;
-            config.EnableChannelNameCleaning = nameCleaningOn;
-            config.ContentRemoveTerms = removeTermsVal;
-            config.ChannelRemoveTerms = removeTermsVal.split('\n').map(function (t) { return t.trim(); }).filter(function (t) { return t; }).join(',');
+            // STRM content name cleaning (movies + series)
+            config.EnableContentNameCleaning = view.querySelector('.chkEnableNameCleaning').checked;
+            config.ContentRemoveTerms = view.querySelector('.txtRemoveTerms').value;
+
+            // Live TV channel name cleaning (independent toggle, see PluginConfiguration.cs)
+            config.EnableChannelNameCleaning = view.querySelector('.chkEnableChannelNameCleaning').checked;
+            config.ChannelRemoveTerms = view.querySelector('.txtChannelRemoveTerms').value
+                .split('\n')
+                .map(function (t) { return t.trim(); })
+                .filter(function (t) { return t; })
+                .join(',');
 
             config.EnableDispatcharr = view.querySelector('.chkEnableDispatcharr').checked;
             config.DispatcharrUrl = view.querySelector('.txtDispatcharrUrl').value.replace(/\/+$/, '');
@@ -560,13 +609,26 @@ function (BaseView, loading) {
             config.TvdbFolderIdOverrides = view.querySelector('.txtTvdbFolderIdOverrides').value;
 
             ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
+                // Dashboard.processPluginConfigurationUpdateResult internally calls
+                // loading.hide() and shows the success toast. Do NOT call loading.hide()
+                // again here or it desyncs the spinner counter and the next save shows
+                // a stale failure toast on the first click.
                 Dashboard.processPluginConfigurationUpdateResult();
-                applyScheduleToTasks(view, config, ApiClient);
-                if (typeof callback === 'function') callback();
+                try { applyScheduleToTasks(view, config, ApiClient); } catch (e) {}
+                if (typeof callback === 'function') {
+                    try { callback(); } catch (e) {}
+                }
+            }, function (err) {
+                // Explicit reject handler so the rejection never bubbles up as
+                // "unhandled" and the spinner is always cleared.
+                loading.hide();
+                var detail = (err && (err.statusText || err.message)) || '';
+                Dashboard.alert('Failed to save configuration.' + (detail ? ' (' + detail + ')' : ''));
             });
-        }).catch(function () {
+        }, function (err) {
             loading.hide();
-            Dashboard.alert('Failed to save configuration.');
+            var detail = (err && (err.statusText || err.message)) || '';
+            Dashboard.alert('Failed to load current configuration before saving.' + (detail ? ' (' + detail + ')' : ''));
         });
     }
 
@@ -618,6 +680,14 @@ function (BaseView, loading) {
     function updateNameCleaningVisibility(view) {
         var enabled = view.querySelector('.chkEnableNameCleaning').checked;
         view.querySelector('.nameCleaningSettings').style.display = enabled ? '' : 'none';
+    }
+
+    function updateChannelNameCleaningVisibility(view) {
+        var el = view.querySelector('.chkEnableChannelNameCleaning');
+        if (!el) return;
+        var enabled = el.checked;
+        var section = view.querySelector('.channelNameCleaningSettings');
+        if (section) section.style.display = enabled ? '' : 'none';
     }
 
     function updateVodMovieVisibility(view) {
@@ -1910,9 +1980,29 @@ function (BaseView, loading) {
                 stopDashboardProgressPolling();
                 view.querySelector('.dashboardLiveProgress').style.display = 'none';
             }
-        }).catch(function () {
-            if ((loadDashboard._retries = (loadDashboard._retries || 0) + 1) <= 5) {
+        }).catch(function (err) {
+            console.warn('Xtream: dashboard load failed', err);
+            var attempts = (loadDashboard._retries = (loadDashboard._retries || 0) + 1);
+            if (attempts <= 5) {
                 setTimeout(function () { loadDashboard(view); }, 4000);
+                return;
+            }
+            // Final fallback: don't leave the dashboard stuck on the
+            // "Loading..." placeholder forever. Render a clear error state
+            // with a retry hint so the user knows what happened.
+            try {
+                var statusEl = view.querySelector('.dashboardStatusContent');
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="status-badge failed">Unavailable</span>' +
+                        '<span style="margin-left:0.8em; opacity:0.6; font-size:0.9em;">' +
+                        'Could not load dashboard data. Reopen this page to retry.</span>';
+                }
+                var statsEl = view.querySelector('.dashboardStatusStats');
+                if (statsEl) statsEl.style.display = 'none';
+                var liveEl = view.querySelector('.dashboardLiveProgress');
+                if (liveEl) liveEl.style.display = 'none';
+            } catch (e) {
+                console.error('Xtream: dashboard fallback render failed', e);
             }
         });
 

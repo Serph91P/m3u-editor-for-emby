@@ -71,7 +71,7 @@ namespace Emby.Xtream.Plugin.Service
                 }
             }
 
-            var currentVersion = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+            var currentVersion = PluginVersionHelper.CurrentVersion;
 
             UpdateCheckResult result;
             try
@@ -97,7 +97,8 @@ namespace Emby.Xtream.Plugin.Service
                     var body = ExtractJsonString(releaseJson, "body");
                     var publishedAt = ExtractJsonString(releaseJson, "published_at");
 
-                    result = CompareVersions(currentVersion, tagName, htmlUrl, body, publishedAt);
+                    result = CompareVersions(currentVersion, tagName, htmlUrl, body, publishedAt,
+                        useBeta, !PluginVersionHelper.HasInformationalVersion);
                     result.DownloadUrl = ExtractDllDownloadUrl(releaseJson, DllAssetName);
                     result.UpdateInstalled = _updateInstalled;
                     result.IsPreRelease = ExtractJsonBool(releaseJson, "prerelease");
@@ -136,6 +137,26 @@ namespace Emby.Xtream.Plugin.Service
 
         public static UpdateCheckResult CompareVersions(string currentVersion, string tagName, string releaseUrl, string body, string publishedAt)
         {
+            return CompareVersions(currentVersion, tagName, releaseUrl, body, publishedAt, false, false);
+        }
+
+        /// <summary>
+        /// Overload that takes additional context: whether the user is on the
+        /// beta channel, and whether the reported current version came from a
+        /// reliable SemVer source (true = unreliable, e.g. a 4-part
+        /// AssemblyName.Version that strips "-beta.X" suffixes).
+        ///
+        /// When <paramref name="currentVersionUnreliable"/> is true and we are
+        /// on the beta channel and the latest tag is a pre-release of the same
+        /// numeric core (e.g. installed reports "1.2.1.0", latest is
+        /// "1.2.1-beta.4"), we offer the update. The installed build could be
+        /// any beta of that core and we have no way to tell. Defaulting to
+        /// "no update" would leave the user stuck on whatever beta they have.
+        /// Stable channel keeps strict SemVer semantics.
+        /// </summary>
+        public static UpdateCheckResult CompareVersions(string currentVersion, string tagName, string releaseUrl, string body, string publishedAt,
+            bool useBeta, bool currentVersionUnreliable)
+        {
             var result = new UpdateCheckResult
             {
                 CurrentVersion = currentVersion,
@@ -168,7 +189,28 @@ namespace Emby.Xtream.Plugin.Service
                 return result;
             }
 
-            result.UpdateAvailable = SemVer.Compare(latest, current) > 0;
+            var cmp = SemVer.Compare(latest, current);
+            result.UpdateAvailable = cmp > 0;
+
+            // Unreliable-current-version override: on the beta channel, when the
+            // installed version came from a 4-part AssemblyName.Version (no
+            // "-beta.X" suffix preserved), strict SemVer says stable "1.2.1"
+            // outranks pre-release "1.2.1-beta.4". But "1.2.1.0" reported by
+            // an old beta build is indistinguishable from real stable "1.2.1".
+            // If the latest beta has the same numeric core, offer it so the
+            // user can recover from a stuck beta install.
+            if (!result.UpdateAvailable
+                && useBeta
+                && currentVersionUnreliable
+                && latest.PreRelease != null
+                && current.PreRelease == null
+                && latest.Major == current.Major
+                && latest.Minor == current.Minor
+                && latest.Patch == current.Patch)
+            {
+                result.UpdateAvailable = true;
+            }
+
             return result;
         }
 

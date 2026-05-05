@@ -33,9 +33,13 @@ namespace Emby.Xtream.Plugin
         public int[] SelectedLiveCategoryIds { get; set; } = new int[0];
         public bool IncludeAdultChannels { get; set; }
 
-        // Channel name cleaning
+        // Channel name cleaning (Live TV channel display names).
+        // Default OFF: channels like "BBC One HD" / "Das Erste HD" are
+        // distinct broadcasts with their own EPG IDs; stripping the suffix
+        // breaks EPG matching and merges separate channels visually. Users
+        // can opt in via the dedicated toggle in the Live TV settings.
         public string ChannelRemoveTerms { get; set; } = string.Empty;
-        public bool EnableChannelNameCleaning { get; set; } = true;
+        public bool EnableChannelNameCleaning { get; set; } = false;
 
         // Dispatcharr
         public bool EnableDispatcharr { get; set; }
