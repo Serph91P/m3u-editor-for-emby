@@ -17,6 +17,7 @@ namespace Emby.Xtream.Plugin
         // Live TV
         public bool EnableLiveTv { get; set; } = true;
         public string LiveTvOutputFormat { get; set; } = "ts";
+        public bool EnableLiveTvDiagnostics { get; set; }
 
         // EPG / Guide Data
         public EpgSourceMode EpgSource { get; set; } = EpgSourceMode.XtreamServer;

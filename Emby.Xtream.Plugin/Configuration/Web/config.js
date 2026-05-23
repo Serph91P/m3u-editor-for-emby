@@ -394,6 +394,7 @@ function (BaseView, loading) {
 
             view.querySelector('.chkEnableLiveTv').checked = config.EnableLiveTv !== false;
             view.querySelector('.selOutputFormat').value = config.LiveTvOutputFormat || 'ts';
+            view.querySelector('.chkEnableLiveTvDiagnostics').checked = !!config.EnableLiveTvDiagnostics;
             view.querySelector('.chkIncludeAdult').checked = !!config.IncludeAdultChannels;
 
             var epgVal = config.EpgSource;
@@ -539,6 +540,7 @@ function (BaseView, loading) {
 
             config.EnableLiveTv = view.querySelector('.chkEnableLiveTv').checked;
             config.LiveTvOutputFormat = view.querySelector('.selOutputFormat').value;
+            config.EnableLiveTvDiagnostics = view.querySelector('.chkEnableLiveTvDiagnostics').checked;
             config.IncludeAdultChannels = view.querySelector('.chkIncludeAdult').checked;
 
             config.EpgSource = parseInt(view.querySelector('.selectEpgSource').value, 10);
