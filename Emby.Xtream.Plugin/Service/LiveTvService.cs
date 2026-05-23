@@ -630,6 +630,10 @@ namespace Emby.Xtream.Plugin.Service
             if (xmltvCacheFresh)
             {
                 var programs = PopulateFromXmltvCache(streamId);
+                if (Plugin.Instance.Configuration.EnableLiveTvDiagnostics)
+                {
+                    _logger.Info("[livetv-diag] stream={0} xmltv-cache-hit programs={1}", streamId, programs != null ? programs.Count : 0);
+                }
                 if (programs != null) return programs;
             }
 
@@ -641,6 +645,10 @@ namespace Emby.Xtream.Plugin.Service
             if (!xmltvCacheFresh && (!_xmltvFailed || xmltvFailedButRetryDue))
             {
                 var xmltvOk = await TryFetchXmltvEpgAsync(cancellationToken).ConfigureAwait(false);
+                if (Plugin.Instance.Configuration.EnableLiveTvDiagnostics)
+                {
+                    _logger.Info("[livetv-diag] stream={0} xmltv-refetch attempted ok={1} failedFlag={2}", streamId, xmltvOk, _xmltvFailed);
+                }
                 if (xmltvOk)
                 {
                     var programs = PopulateFromXmltvCache(streamId);
@@ -661,6 +669,10 @@ namespace Emby.Xtream.Plugin.Service
             _logger.Debug("FetchEpgForChannelCachedAsync: using JSON fallback for stream {0}", streamId);
             var epgListings = await FetchEpgForChannelAsync(streamId, cancellationToken).ConfigureAwait(false);
             var jsonPrograms = epgListings?.Listings ?? new List<EpgProgram>();
+            if (Plugin.Instance.Configuration.EnableLiveTvDiagnostics)
+            {
+                _logger.Info("[livetv-diag] stream={0} json-fallback programs={1}", streamId, jsonPrograms.Count);
+            }
 
             lock (_perChannelEpgLock)
             {
