@@ -112,6 +112,14 @@ namespace Emby.Xtream.Plugin.Service
                 }
 
                 var channels = channelsTask.Result;
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    _logger.Info("[livetv-diag] m3u-build channels={0} categories={1} tvgMap={2} stationMap={3}",
+                        channels.Count,
+                        categoryMap.Count,
+                        XtreamTunerHost.Instance?.TvgIdMap?.Count ?? 0,
+                        XtreamTunerHost.Instance?.StationIdMap?.Count ?? 0);
+                }
                 var m3u = GenerateM3U(channels, config, categoryMap,
                     XtreamTunerHost.Instance?.TvgIdMap,
                     XtreamTunerHost.Instance?.StationIdMap);
@@ -145,7 +153,16 @@ namespace Emby.Xtream.Plugin.Service
 
                 _logger.Info("Generating XMLTV EPG");
                 var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    _logger.Info("[livetv-diag] xmltv-build sourceChannels={0} epgSource={1} days={2}",
+                        channels.Count, config.EpgSource, config.EpgDaysToFetch);
+                }
                 var epgXml = await GenerateXmltvAsync(channels, config, cancellationToken).ConfigureAwait(false);
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    _logger.Info("[livetv-diag] xmltv-build complete bytes={0}", Encoding.UTF8.GetByteCount(epgXml));
+                }
 
                 _cachedEpgXml = epgXml;
                 _epgCacheTime = DateTime.UtcNow;
@@ -174,6 +191,10 @@ namespace Emby.Xtream.Plugin.Service
                 var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
                 var categories = STJ.JsonSerializer.Deserialize<List<Category>>(json, JsonOptions)
                     ?? new List<Category>();
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    _logger.Info("[livetv-diag] live-categories fetched count={0}", categories.Count);
+                }
                 return categories.OrderBy(c => c.CategoryName).ToList();
             }
         }
@@ -206,6 +227,14 @@ namespace Emby.Xtream.Plugin.Service
         internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
         {
             var config = Plugin.Instance.Configuration;
+            var diagnostics = IsLiveTvDiagnosticsEnabled();
+            if (diagnostics)
+            {
+                _logger.Info("[livetv-diag] channel-filter start selectedCategories={0} includeAdult={1} nameCleaning={2}",
+                    config.SelectedLiveCategoryIds != null ? config.SelectedLiveCategoryIds.Length : 0,
+                    config.IncludeAdultChannels,
+                    config.EnableChannelNameCleaning);
+            }
 
             List<LiveStreamInfo> allChannels;
 
@@ -240,17 +269,34 @@ namespace Emby.Xtream.Plugin.Service
                 }
 
                 // Remove duplicates by StreamId
+                var beforeDedup = allChannels.Count;
                 allChannels = allChannels.GroupBy(c => c.StreamId).Select(g => g.First()).ToList();
+                if (diagnostics)
+                {
+                    _logger.Info("[livetv-diag] category-filter rawChannels={0} uniqueChannels={1} duplicatesRemoved={2}",
+                        beforeDedup, allChannels.Count, beforeDedup - allChannels.Count);
+                }
             }
             else
             {
                 allChannels = await FetchAllChannelsAsync(cancellationToken).ConfigureAwait(false);
+                if (diagnostics)
+                {
+                    _logger.Info("[livetv-diag] all-channel-fetch rawChannels={0}", allChannels.Count);
+                }
             }
 
+            var beforeAdultFilter = allChannels.Count;
             // Filter adult channels
             if (!config.IncludeAdultChannels)
             {
                 allChannels = allChannels.Where(c => !c.IsAdultChannel).ToList();
+            }
+            if (diagnostics)
+            {
+                _logger.Info("[livetv-diag] adult-filter before={0} after={1} removed={2}",
+                    beforeAdultFilter, allChannels.Count, beforeAdultFilter - allChannels.Count);
+                LogLiveTvChannelDiagnostics(allChannels, config, "filtered");
             }
 
             // Channel hash: detect changes and invalidate dependent caches.
@@ -264,6 +310,17 @@ namespace Emby.Xtream.Plugin.Service
                 _logger.Info("Channel list changed (hash {0} → {1}), invalidating dependent caches",
                     string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
                     newHash.Substring(0, 8));
+                if (diagnostics)
+                {
+                    _logger.Info("[livetv-diag] channel-hash changed old={0} new={1} channels={2} m3uCached={3} epgXmlCached={4} xmltvCached={5} perChannelEpgEntries={6}",
+                        string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
+                        newHash.Substring(0, 8),
+                        allChannels.Count,
+                        _cachedM3U != null,
+                        _cachedEpgXml != null,
+                        _xmltvCache != null,
+                        PerChannelEpgCacheCount);
+                }
                 config.LastChannelListHash = newHash;
                 Plugin.Instance.SaveConfiguration();
 
@@ -308,6 +365,15 @@ namespace Emby.Xtream.Plugin.Service
             else
             {
                 _logger.Debug("Channel list unchanged (hash {0})", newHash.Substring(0, 8));
+                if (diagnostics)
+                {
+                    _logger.Info("[livetv-diag] channel-hash unchanged hash={0} m3uCached={1} epgXmlCached={2} xmltvCached={3} perChannelEpgEntries={4}",
+                        newHash.Substring(0, 8),
+                        _cachedM3U != null,
+                        _cachedEpgXml != null,
+                        _xmltvCache != null,
+                        PerChannelEpgCacheCount);
+                }
             }
 
             _logger.Info("Fetched {0} Live TV channels", allChannels.Count);
@@ -344,8 +410,14 @@ namespace Emby.Xtream.Plugin.Service
             using (var httpClient = Plugin.CreateHttpClient(30))
             {
                 var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                return STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
+                var channels = STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
                     ?? new List<LiveStreamInfo>();
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    _logger.Info("[livetv-diag] fetch-all-channels responseBytes={0} channels={1}",
+                        Encoding.UTF8.GetByteCount(json), channels.Count);
+                }
+                return channels;
             }
         }
 
@@ -362,8 +434,14 @@ namespace Emby.Xtream.Plugin.Service
                 try
                 {
                     var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                    return STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
+                    var channels = STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
                         ?? new List<LiveStreamInfo>();
+                    if (IsLiveTvDiagnosticsEnabled())
+                    {
+                        _logger.Info("[livetv-diag] fetch-category-channels categoryId={0} responseBytes={1} channels={2}",
+                            categoryId, Encoding.UTF8.GetByteCount(json), channels.Count);
+                    }
+                    return channels;
                 }
                 catch (Exception ex)
                 {
@@ -535,6 +613,10 @@ namespace Emby.Xtream.Plugin.Service
 
                         if (epgListings == null || epgListings.Listings == null)
                         {
+                            if (IsLiveTvDiagnosticsEnabled())
+                            {
+                                _logger.Info("[livetv-diag] epg-data stream={0} listings=null", channel.StreamId);
+                            }
                             return new List<EpgProgram>();
                         }
 
@@ -555,9 +637,19 @@ namespace Emby.Xtream.Plugin.Service
 
                         var nowUnix = now.ToUnixTimeSeconds();
                         var endUnix = endTime.ToUnixTimeSeconds();
-                        return epgListings.Listings
+                        var filtered = epgListings.Listings
                             .Where(p => p.StopTimestamp > nowUnix && p.StartTimestamp < endUnix)
                             .ToList();
+                        if (IsLiveTvDiagnosticsEnabled())
+                        {
+                            _logger.Info("[livetv-diag] epg-data stream={0} rawPrograms={1} windowPrograms={2} epgId='{3}' name='{4}'",
+                                channel.StreamId,
+                                epgListings.Listings.Count,
+                                filtered.Count,
+                                channelId,
+                                channel.Name ?? string.Empty);
+                        }
+                        return filtered;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -696,7 +788,14 @@ namespace Emby.Xtream.Plugin.Service
 
             List<EpgProgram> xmltvPrograms;
             if (_xmltvCache == null || !_xmltvCache.TryGetValue(epgChannelId, out xmltvPrograms))
+            {
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    _logger.Info("[livetv-diag] xmltv-cache-miss stream={0} epgId='{1}' xmltvCacheChannels={2}",
+                        streamId, epgChannelId, _xmltvCache != null ? _xmltvCache.Count : 0);
+                }
                 return null;
+            }
 
             lock (_perChannelEpgLock)
             {
@@ -750,6 +849,10 @@ namespace Emby.Xtream.Plugin.Service
                             : ch.StreamId.ToString(CultureInfo.InvariantCulture);
                         mapping[ch.StreamId] = epgId;
                     }
+                    if (IsLiveTvDiagnosticsEnabled())
+                    {
+                        _logger.Info("[livetv-diag] xmltv-fetch channelMapping entries={0}", mapping.Count);
+                    }
 
                     var now = DateTimeOffset.UtcNow;
                     var filterEndUnix = now.AddDays(config.EpgDaysToFetch).ToUnixTimeSeconds();
@@ -801,6 +904,72 @@ namespace Emby.Xtream.Plugin.Service
             {
                 var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
                 return STJ.JsonSerializer.Deserialize<EpgListings>(json, JsonOptions);
+            }
+        }
+
+        private static bool IsLiveTvDiagnosticsEnabled()
+        {
+            return Plugin.Instance?.Configuration?.EnableLiveTvDiagnostics == true;
+        }
+
+        private void LogLiveTvChannelDiagnostics(
+            List<LiveStreamInfo> channels,
+            PluginConfiguration config,
+            string phase)
+        {
+            var total = channels?.Count ?? 0;
+            var withEpgId = channels?.Count(c => !string.IsNullOrEmpty(c.EpgChannelId)) ?? 0;
+            var withIcon = channels?.Count(c => !string.IsNullOrEmpty(c.StreamIcon)) ?? 0;
+            var withValidIcon = channels?.Count(c => Util.UrlValidator.SanitizeHttpUrl(c.StreamIcon) != null) ?? 0;
+            var withCategory = channels?.Count(c => c.CategoryId.HasValue) ?? 0;
+            var withStats = channels?.Count(c => c.StreamStats != null) ?? 0;
+            var adult = channels?.Count(c => c.IsAdultChannel) ?? 0;
+            var tunerHost = XtreamTunerHost.Instance;
+            var tvgIds = tunerHost?.TvgIdMap?.Count ?? 0;
+            var stationIds = tunerHost?.StationIdMap?.Count ?? 0;
+
+            _logger.Info("[livetv-diag] channel-summary phase={0} total={1} epgIds={2} icons={3} validIcons={4} categories={5} stats={6} adult={7} dispatcharrTvgIds={8} gracenoteStationIds={9}",
+                phase,
+                total,
+                withEpgId,
+                withIcon,
+                withValidIcon,
+                withCategory,
+                withStats,
+                adult,
+                tvgIds,
+                stationIds);
+
+            if (channels == null || channels.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var channel in channels.OrderBy(c => c.Num).Take(20))
+            {
+                var cleanName = ChannelNameCleaner.CleanChannelName(
+                    channel.Name,
+                    config.ChannelRemoveTerms,
+                    config.EnableChannelNameCleaning);
+                var sanitizedIcon = Util.UrlValidator.SanitizeHttpUrl(channel.StreamIcon);
+                var hasDispatcharrTvgId = tunerHost?.TvgIdMap != null
+                    && tunerHost.TvgIdMap.ContainsKey(channel.StreamId);
+                var hasStationId = tunerHost?.StationIdMap != null
+                    && tunerHost.StationIdMap.ContainsKey(channel.StreamId);
+
+                _logger.Info("[livetv-diag] channel-sample phase={0} stream={1} num={2} name='{3}' cleanName='{4}' epgId='{5}' categoryId={6} icon={7} validIcon={8} stats={9} dispatcharrTvgId={10} gracenoteStationId={11}",
+                    phase,
+                    channel.StreamId,
+                    channel.Num,
+                    channel.Name ?? string.Empty,
+                    cleanName ?? string.Empty,
+                    channel.EpgChannelId ?? string.Empty,
+                    channel.CategoryId.HasValue ? channel.CategoryId.Value.ToString(CultureInfo.InvariantCulture) : string.Empty,
+                    !string.IsNullOrEmpty(channel.StreamIcon),
+                    sanitizedIcon != null,
+                    channel.StreamStats != null,
+                    hasDispatcharrTvgId,
+                    hasStationId);
             }
         }
 
