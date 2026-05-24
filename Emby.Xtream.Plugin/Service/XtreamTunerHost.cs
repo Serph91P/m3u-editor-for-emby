@@ -16,6 +16,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.LiveTv;
 using MediaBrowser.Model.MediaInfo;
 using STJ = System.Text.Json;
+using Emby.Xtream.Plugin.Util;
 
 #pragma warning disable CS0612 // SupportsProbing and AnalyzeDurationMs are obsolete but still functional
 namespace Emby.Xtream.Plugin.Service
@@ -113,6 +114,10 @@ namespace Emby.Xtream.Plugin.Service
             else if (!int.TryParse(tunerChannelId, NumberStyles.None, CultureInfo.InvariantCulture, out streamId))
             {
                 Logger.Warn("GetProgramsInternal: cannot parse tunerChannelId '{0}'", tunerChannelId);
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    Logger.Info("[livetv-diag] GetProgramsInternal rejected channelId='{0}' because it is not mapped and not numeric", tunerChannelId);
+                }
                 return new List<ProgramInfo>();
             }
 
@@ -213,6 +218,10 @@ namespace Emby.Xtream.Plugin.Service
             // row stays visible and clickable in the guide (matches M3U tuner behaviour).
             if (result.Count == 0)
             {
+                if (IsLiveTvDiagnosticsEnabled())
+                {
+                    Logger.Info("[livetv-diag] stream={0} returned 0 programs in window {1:u} .. {2:u}", streamId, startDateUtc.UtcDateTime, endDateUtc.UtcDateTime);
+                }
                 var channelName = _cachedChannels?.Find(c => c.TunerChannelId == tunerChannelId)?.Name;
                 if (!string.IsNullOrEmpty(channelName))
                 {
@@ -238,6 +247,10 @@ namespace Emby.Xtream.Plugin.Service
             }
 
             Logger.Debug("GetProgramsInternal: returning {0} programs for channel {1}", result.Count, streamId);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                Logger.Info("[livetv-diag] stream={0} returning {1} programs for requested window", streamId, result.Count);
+            }
             return result;
         }
 
@@ -579,12 +592,18 @@ namespace Emby.Xtream.Plugin.Service
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             await EnsureStatsLoadedAsync(cancellationToken).ConfigureAwait(false);
-            Logger.Info("[stream-timing] ch={0} EnsureStats={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                Logger.Info("[stream-timing] ch={0} EnsureStats={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
+            }
             sw.Restart();
 
             var config = Plugin.Instance.Configuration;
             var (streamUrl, isDispatcharr) = BuildStreamUrl(config, streamId);
-            Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms isDispatcharr={2}", tunerChannel.Name, sw.ElapsedMilliseconds, isDispatcharr);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms isDispatcharr={2}", tunerChannel.Name, sw.ElapsedMilliseconds, isDispatcharr);
+            }
             sw.Restart();
 
             if (streamUrl == null)
@@ -595,7 +614,10 @@ namespace Emby.Xtream.Plugin.Service
             _streamStats.TryGetValue(streamId, out var stats);
 
             var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, isDispatcharr, config.ForceAudioTranscode, config.HttpUserAgent);
-            Logger.Info("[stream-timing] ch={0} CreateMediaSource={1}ms hasStats={2}", tunerChannel.Name, sw.ElapsedMilliseconds, stats != null);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                Logger.Info("[stream-timing] ch={0} CreateMediaSource={1}ms hasStats={2}", tunerChannel.Name, sw.ElapsedMilliseconds, stats != null);
+            }
 
             return new List<MediaSourceInfo> { mediaSource };
         }
@@ -614,7 +636,10 @@ namespace Emby.Xtream.Plugin.Service
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             await EnsureStatsLoadedAsync(cancellationToken).ConfigureAwait(false);
-            Logger.Info("[stream-timing] ch={0} EnsureStats={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                Logger.Info("[stream-timing] ch={0} EnsureStats={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
+            }
             sw.Restart();
 
             var config = Plugin.Instance.Configuration;
@@ -625,11 +650,17 @@ namespace Emby.Xtream.Plugin.Service
                     string.Format("Channel {0}: Dispatcharr proxy unavailable and fallback disabled", streamId));
             }
             _streamStats.TryGetValue(streamId, out var stats);
-            Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms isDispatcharr={2}", tunerChannel.Name, sw.ElapsedMilliseconds, isDispatcharr);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms isDispatcharr={2}", tunerChannel.Name, sw.ElapsedMilliseconds, isDispatcharr);
+            }
             sw.Restart();
 
             var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, isDispatcharr, config.ForceAudioTranscode, config.HttpUserAgent);
-            Logger.Info("[stream-timing] ch={0} CreateMediaSource={1}ms hasStats={2}", tunerChannel.Name, sw.ElapsedMilliseconds, stats != null);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                Logger.Info("[stream-timing] ch={0} CreateMediaSource={1}ms hasStats={2}", tunerChannel.Name, sw.ElapsedMilliseconds, stats != null);
+            }
 
             var httpClient = Plugin.CreateHttpClient();
             ILiveStream liveStream = new XtreamLiveStream(mediaSource, tuner.Id, httpClient, Logger);
@@ -1626,6 +1657,11 @@ namespace Emby.Xtream.Plugin.Service
             if (int.TryParse(lower, NumberStyles.None, CultureInfo.InvariantCulture, out int plain))
                 return plain;
             return null;
+        }
+
+        private bool IsLiveTvDiagnosticsEnabled()
+        {
+            return Diagnostics.IsEnabled;
         }
 
         private static string MapVideoCodec(string dispatcharrCodec)

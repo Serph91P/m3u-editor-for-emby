@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Logging;
+using Emby.Xtream.Plugin.Util;
 
 namespace Emby.Xtream.Plugin.Service
 {
@@ -47,7 +48,10 @@ namespace Emby.Xtream.Plugin.Service
         // the first CopyToAsync() call via ConnectAsync().
         public Task Open(CancellationToken openCancellationToken)
         {
-            _logger?.Info("[XtreamLiveStream] Open called (deferred connect)");
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                _logger?.Info("[XtreamLiveStream] Open called (deferred connect)");
+            }
             return Task.CompletedTask;
         }
 
@@ -58,12 +62,18 @@ namespace Emby.Xtream.Plugin.Service
                 MediaSource.Path,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken).ConfigureAwait(false);
-            _logger?.Info("[stream-timing] Connect.HttpGet={0}ms status={1}", sw.ElapsedMilliseconds, (int)_response.StatusCode);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                _logger?.Info("[stream-timing] Connect.HttpGet={0}ms status={1}", sw.ElapsedMilliseconds, (int)_response.StatusCode);
+            }
             sw.Restart();
 
             _response.EnsureSuccessStatusCode();
             _stream = await _response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            _logger?.Info("[stream-timing] Connect.StreamReady={0}ms", sw.ElapsedMilliseconds);
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                _logger?.Info("[stream-timing] Connect.StreamReady={0}ms", sw.ElapsedMilliseconds);
+            }
         }
 
         public Task Close()
@@ -91,7 +101,15 @@ namespace Emby.Xtream.Plugin.Service
                 cancellationToken).ConfigureAwait(false);
             _response.EnsureSuccessStatusCode();
             _stream = await _response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            _logger?.Info("[stream-timing] Reconnected to upstream after client disconnect");
+            if (IsLiveTvDiagnosticsEnabled())
+            {
+                _logger?.Info("[stream-timing] Reconnected to upstream after client disconnect");
+            }
+        }
+
+        private bool IsLiveTvDiagnosticsEnabled()
+        {
+            return Diagnostics.IsEnabled;
         }
 
         public async Task CopyToAsync(PipeWriter writer, CancellationToken cancellationToken)
