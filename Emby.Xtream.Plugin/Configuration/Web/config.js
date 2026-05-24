@@ -390,11 +390,11 @@ function (BaseView, loading) {
             view.querySelector('.txtUsername').value = config.Username || '';
             view.querySelector('.txtPassword').value = config.Password || '';
             view.querySelector('.txtHttpUserAgent').value = config.HttpUserAgent || '';
+            view.querySelector('.chkEnableDiagnosticsLogging').checked = !!config.EnableDiagnosticsLogging || !!config.EnableLiveTvDiagnostics;
             setBackendDetectionHint(view, config.DetectedBackendName || '', config.DetectedBackendType || '');
 
             view.querySelector('.chkEnableLiveTv').checked = config.EnableLiveTv !== false;
             view.querySelector('.selOutputFormat').value = config.LiveTvOutputFormat || 'ts';
-            view.querySelector('.chkEnableLiveTvDiagnostics').checked = !!config.EnableLiveTvDiagnostics;
             view.querySelector('.chkIncludeAdult').checked = !!config.IncludeAdultChannels;
 
             var epgVal = config.EpgSource;
@@ -537,10 +537,11 @@ function (BaseView, loading) {
             config.Username = view.querySelector('.txtUsername').value;
             config.Password = view.querySelector('.txtPassword').value;
             config.HttpUserAgent = view.querySelector('.txtHttpUserAgent').value;
+            config.EnableDiagnosticsLogging = view.querySelector('.chkEnableDiagnosticsLogging').checked;
+            config.EnableLiveTvDiagnostics = config.EnableDiagnosticsLogging;
 
             config.EnableLiveTv = view.querySelector('.chkEnableLiveTv').checked;
             config.LiveTvOutputFormat = view.querySelector('.selOutputFormat').value;
-            config.EnableLiveTvDiagnostics = view.querySelector('.chkEnableLiveTvDiagnostics').checked;
             config.IncludeAdultChannels = view.querySelector('.chkIncludeAdult').checked;
 
             config.EpgSource = parseInt(view.querySelector('.selectEpgSource').value, 10);
