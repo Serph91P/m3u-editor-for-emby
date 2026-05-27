@@ -489,6 +489,16 @@
                             Leave blank for most providers. Set to <code>VLC/3.0.21 LibVLC/3.0.21</code> (or your provider's required value) if categories and channels fail to load with a 401 error even though your credentials are correct.
                         </div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:0.5em;">
+                        <label>
+                            <input class="chkEnableDiagnosticsLogging" type="checkbox" is="emby-checkbox" />
+                            <span>Enable diagnostics logging (advanced)</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Adds detailed plugin logs for troubleshooting connection tests, syncs, guide data, Live TV, and update checks.
+                            Keep this off by default and only enable it while investigating an issue.
+                        </div>
+                    </div>
                     <button class="btnTestConnection raised button-secondary" is="emby-button" type="button">
                         <span>Test Connection</span>
                     </button>
@@ -1082,17 +1092,6 @@
                         <span>Refresh Channel &amp; EPG Cache</span>
                     </button>
                     <div class="refreshCacheResult" style="margin-top:0.5em;"></div>
-
-                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:1em;">
-                        <label>
-                            <input class="chkEnableLiveTvDiagnostics" type="checkbox" is="emby-checkbox" />
-                            <span>Enable Live TV diagnostics logging (advanced)</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">
-                            Adds detailed plugin logs for guide fetches and LiveTv/Programs behaviour.
-                            Keep this off by default, turn it on only while investigating EPG issues.
-                        </div>
-                    </div>
                 </div>
                 </details>
 

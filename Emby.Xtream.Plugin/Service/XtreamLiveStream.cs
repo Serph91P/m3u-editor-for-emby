@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Logging;
+using Emby.Xtream.Plugin.Util;
 
 namespace Emby.Xtream.Plugin.Service
 {
@@ -108,7 +109,7 @@ namespace Emby.Xtream.Plugin.Service
 
         private bool IsLiveTvDiagnosticsEnabled()
         {
-            return Plugin.Instance?.Configuration?.EnableLiveTvDiagnostics == true;
+            return Diagnostics.IsEnabled;
         }
 
         public async Task CopyToAsync(PipeWriter writer, CancellationToken cancellationToken)

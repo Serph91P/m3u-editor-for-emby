@@ -10,6 +10,7 @@ using Emby.Xtream.Plugin.Client;
 using Emby.Xtream.Plugin.Client.Models;
 using MediaBrowser.Model.Logging;
 using STJ = System.Text.Json;
+using Emby.Xtream.Plugin.Util;
 
 namespace Emby.Xtream.Plugin.Service
 {
@@ -722,7 +723,7 @@ namespace Emby.Xtream.Plugin.Service
             if (xmltvCacheFresh)
             {
                 var programs = PopulateFromXmltvCache(streamId);
-                if (Plugin.Instance.Configuration.EnableLiveTvDiagnostics)
+                if (Diagnostics.IsEnabled)
                 {
                     _logger.Info("[livetv-diag] stream={0} xmltv-cache-hit programs={1}", streamId, programs != null ? programs.Count : 0);
                 }
@@ -737,7 +738,7 @@ namespace Emby.Xtream.Plugin.Service
             if (!xmltvCacheFresh && (!_xmltvFailed || xmltvFailedButRetryDue))
             {
                 var xmltvOk = await TryFetchXmltvEpgAsync(cancellationToken).ConfigureAwait(false);
-                if (Plugin.Instance.Configuration.EnableLiveTvDiagnostics)
+                if (Diagnostics.IsEnabled)
                 {
                     _logger.Info("[livetv-diag] stream={0} xmltv-refetch attempted ok={1} failedFlag={2}", streamId, xmltvOk, _xmltvFailed);
                 }
@@ -761,7 +762,7 @@ namespace Emby.Xtream.Plugin.Service
             _logger.Debug("FetchEpgForChannelCachedAsync: using JSON fallback for stream {0}", streamId);
             var epgListings = await FetchEpgForChannelAsync(streamId, cancellationToken).ConfigureAwait(false);
             var jsonPrograms = epgListings?.Listings ?? new List<EpgProgram>();
-            if (Plugin.Instance.Configuration.EnableLiveTvDiagnostics)
+            if (Diagnostics.IsEnabled)
             {
                 _logger.Info("[livetv-diag] stream={0} json-fallback programs={1}", streamId, jsonPrograms.Count);
             }
@@ -909,7 +910,7 @@ namespace Emby.Xtream.Plugin.Service
 
         private static bool IsLiveTvDiagnosticsEnabled()
         {
-            return Plugin.Instance?.Configuration?.EnableLiveTvDiagnostics == true;
+            return Diagnostics.IsEnabled;
         }
 
         private void LogLiveTvChannelDiagnostics(

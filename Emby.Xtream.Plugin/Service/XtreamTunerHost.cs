@@ -16,6 +16,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.LiveTv;
 using MediaBrowser.Model.MediaInfo;
 using STJ = System.Text.Json;
+using Emby.Xtream.Plugin.Util;
 
 #pragma warning disable CS0612 // SupportsProbing and AnalyzeDurationMs are obsolete but still functional
 namespace Emby.Xtream.Plugin.Service
@@ -1660,7 +1661,7 @@ namespace Emby.Xtream.Plugin.Service
 
         private bool IsLiveTvDiagnosticsEnabled()
         {
-            return Plugin.Instance?.Configuration?.EnableLiveTvDiagnostics == true;
+            return Diagnostics.IsEnabled;
         }
 
         private static string MapVideoCodec(string dispatcharrCodec)

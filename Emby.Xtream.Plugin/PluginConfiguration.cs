@@ -10,6 +10,7 @@ namespace Emby.Xtream.Plugin
         public string Username { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
         public string HttpUserAgent { get; set; } = string.Empty;
+        public bool EnableDiagnosticsLogging { get; set; }
         public string DetectedBackendType { get; set; } = string.Empty;
         public string DetectedBackendName { get; set; } = string.Empty;
         public long LastBackendDetectionTicks { get; set; }
@@ -17,6 +18,7 @@ namespace Emby.Xtream.Plugin
         // Live TV
         public bool EnableLiveTv { get; set; } = true;
         public string LiveTvOutputFormat { get; set; } = "ts";
+        [Obsolete("Use EnableDiagnosticsLogging instead")]
         public bool EnableLiveTvDiagnostics { get; set; }
 
         // EPG / Guide Data

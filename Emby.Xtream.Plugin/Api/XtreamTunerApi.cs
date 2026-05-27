@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Emby.Xtream.Plugin.Client;
 using Emby.Xtream.Plugin.Client.Models;
 using Emby.Xtream.Plugin.Service;
+using Emby.Xtream.Plugin.Util;
 using MediaBrowser.Controller.Api;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Logging;
@@ -858,12 +859,6 @@ namespace Emby.Xtream.Plugin.Api
 
         public void Post(RefreshCache request)
         {
-            // Clear channel artwork BEFORE clearing the channel cache: artwork clearing
-            // needs the currently-cached channel list to identify which Emby library
-            // items belong to the Xtream tuner. Without this, stale logos from the
-            // upstream provider persist in Emby's image store until the next guide refresh.
-            XtreamTunerHost.Instance?.ClearWrongChannelArtwork();
-
             Plugin.Instance.LiveTvService.InvalidateCache();
             XtreamTunerHost.Instance?.ClearCaches();
         }
@@ -1160,6 +1155,11 @@ namespace Emby.Xtream.Plugin.Api
                 result.BackendName = BackendTypes.ToDisplayName(result.BackendType);
             }
 
+            if (Diagnostics.IsEnabled)
+            {
+                Logger.Info("[diag] xtream-test success={0} backend={1}", result.Success, result.BackendName ?? "unknown");
+            }
+
             return result;
         }
 
@@ -1207,6 +1207,11 @@ namespace Emby.Xtream.Plugin.Api
             {
                 result.Success = false;
                 result.Message = "Unexpected error: " + ex.Message;
+            }
+
+            if (Diagnostics.IsEnabled)
+            {
+                Logger.Info("[diag] dispatcharr-test success={0}", result.Success);
             }
 
             return result;
@@ -1358,7 +1363,14 @@ namespace Emby.Xtream.Plugin.Api
             // Always invalidate before a user-initiated check so the dashboard
             // reflects releases published since the last page load.
             UpdateChecker.InvalidateCache();
-            return await UpdateChecker.CheckForUpdateAsync(request.Beta).ConfigureAwait(false);
+            var result = await UpdateChecker.CheckForUpdateAsync(request.Beta).ConfigureAwait(false);
+            if (Diagnostics.IsEnabled)
+            {
+                Logger.Info("[diag] update-check betaOverride={0} available={1} current={2} latest={3}",
+                    request.Beta.HasValue, result.UpdateAvailable, result.CurrentVersion, result.LatestVersion);
+            }
+
+            return result;
         }
 
         public async Task<object> Post(InstallUpdate request)
