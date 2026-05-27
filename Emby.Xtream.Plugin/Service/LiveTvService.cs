@@ -734,7 +734,7 @@ namespace Emby.Xtream.Plugin.Service
             //    to warrant a retry (once the TTL has elapsed since the failure), try fetching it.
             //    This ensures the plugin recovers transparently when the upstream EPG source
             //    comes back online, without requiring a manual "Refresh Cache" action.
-            var xmltvFailedButRetryDue = _xmltvFailed && DateTime.UtcNow - _xmltvFailedTime >= cacheTtl;
+            var xmltvFailedButRetryDue = _xmltvFailed && DateTime.UtcNow - _xmltvFailedTime >= TimeSpan.FromMinutes(5);
             if (!xmltvCacheFresh && (!_xmltvFailed || xmltvFailedButRetryDue))
             {
                 var xmltvOk = await TryFetchXmltvEpgAsync(cancellationToken).ConfigureAwait(false);
