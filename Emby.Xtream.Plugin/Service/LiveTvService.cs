@@ -239,51 +239,20 @@ namespace Emby.Xtream.Plugin.Service
 
             List<LiveStreamInfo> allChannels;
 
+            allChannels = await FetchAllChannelsAsync(cancellationToken).ConfigureAwait(false);
+            if (diagnostics)
+            {
+                _logger.Info("[livetv-diag] all-channel-fetch rawChannels={0}", allChannels.Count);
+            }
+
             if (config.SelectedLiveCategoryIds != null && config.SelectedLiveCategoryIds.Length > 0)
             {
-                allChannels = new List<LiveStreamInfo>();
-                var semaphore = new SemaphoreSlim(5);
-                try
-                {
-                    var tasks = config.SelectedLiveCategoryIds.Select(async categoryId =>
-                    {
-                        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                        try
-                        {
-                            return await FetchChannelsByCategoryAsync(categoryId, cancellationToken).ConfigureAwait(false);
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
-                    });
-
-                    var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-                    foreach (var result in results)
-                    {
-                        allChannels.AddRange(result);
-                    }
-                }
-                finally
-                {
-                    semaphore.Dispose();
-                }
-
-                // Remove duplicates by StreamId
-                var beforeDedup = allChannels.Count;
-                allChannels = allChannels.GroupBy(c => c.StreamId).Select(g => g.First()).ToList();
+                var beforeCategoryFilter = allChannels.Count;
+                allChannels = FilterChannelsBySelectedCategories(allChannels, config.SelectedLiveCategoryIds);
                 if (diagnostics)
                 {
-                    _logger.Info("[livetv-diag] category-filter rawChannels={0} uniqueChannels={1} duplicatesRemoved={2}",
-                        beforeDedup, allChannels.Count, beforeDedup - allChannels.Count);
-                }
-            }
-            else
-            {
-                allChannels = await FetchAllChannelsAsync(cancellationToken).ConfigureAwait(false);
-                if (diagnostics)
-                {
-                    _logger.Info("[livetv-diag] all-channel-fetch rawChannels={0}", allChannels.Count);
+                    _logger.Info("[livetv-diag] category-filter before={0} after={1} removed={2}",
+                        beforeCategoryFilter, allChannels.Count, beforeCategoryFilter - allChannels.Count);
                 }
             }
 
@@ -400,6 +369,19 @@ namespace Emby.Xtream.Plugin.Service
             return stale.Count;
         }
 
+        internal static List<LiveStreamInfo> FilterChannelsBySelectedCategories(
+            List<LiveStreamInfo> channels,
+            int[] selectedCategoryIds)
+        {
+            if (channels == null) return new List<LiveStreamInfo>();
+            if (selectedCategoryIds == null || selectedCategoryIds.Length == 0) return channels;
+
+            var selected = new HashSet<int>(selectedCategoryIds);
+            return channels
+                .Where(c => c.CategoryId.HasValue && selected.Contains(c.CategoryId.Value))
+                .ToList();
+        }
+
         private async Task<List<LiveStreamInfo>> FetchAllChannelsAsync(CancellationToken cancellationToken)
         {
             var config = Plugin.Instance.Configuration;
@@ -422,35 +404,6 @@ namespace Emby.Xtream.Plugin.Service
             }
         }
 
-        private async Task<List<LiveStreamInfo>> FetchChannelsByCategoryAsync(int categoryId, CancellationToken cancellationToken)
-        {
-            var config = Plugin.Instance.Configuration;
-            var url = string.Format(
-                CultureInfo.InvariantCulture,
-                "{0}/player_api.php?username={1}&password={2}&action=get_live_streams&category_id={3}",
-                config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty), categoryId);
-
-            using (var httpClient = Plugin.CreateHttpClient(30))
-            {
-                try
-                {
-                    var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                    var channels = STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
-                        ?? new List<LiveStreamInfo>();
-                    if (IsLiveTvDiagnosticsEnabled())
-                    {
-                        _logger.Info("[livetv-diag] fetch-category-channels categoryId={0} responseBytes={1} channels={2}",
-                            categoryId, Encoding.UTF8.GetByteCount(json), channels.Count);
-                    }
-                    return channels;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn("Failed to fetch channels for category {0}: {1}", categoryId, ex.Message);
-                    return new List<LiveStreamInfo>();
-                }
-            }
-        }
 
         private static string GenerateM3U(
             List<LiveStreamInfo> channels,

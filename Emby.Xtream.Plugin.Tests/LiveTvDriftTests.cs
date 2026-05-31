@@ -83,5 +83,37 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.Equal(1, pruned);
             Assert.Empty(cache);
         }
+
+        [Fact]
+        public void FilterChannelsBySelectedCategories_PreservesProviderChannelNumbers()
+        {
+            var channels = new List<LiveStreamInfo>
+            {
+                new LiveStreamInfo { StreamId = 101, CategoryId = 10, ChannelNumber = "1" },
+                new LiveStreamInfo { StreamId = 102, CategoryId = 20, ChannelNumber = "2" },
+                new LiveStreamInfo { StreamId = 103, CategoryId = 10, ChannelNumber = "3" },
+                new LiveStreamInfo { StreamId = 104, CategoryId = 30, ChannelNumber = "4" },
+            };
+
+            var filtered = LiveTvService.FilterChannelsBySelectedCategories(channels, new[] { 10, 30 });
+
+            Assert.Collection(filtered,
+                c => Assert.Equal("1", c.DisplayChannelNumber),
+                c => Assert.Equal("3", c.DisplayChannelNumber),
+                c => Assert.Equal("4", c.DisplayChannelNumber));
+        }
+
+        [Fact]
+        public void FilterChannelsBySelectedCategories_EmptySelectionReturnsOriginalList()
+        {
+            var channels = new List<LiveStreamInfo>
+            {
+                new LiveStreamInfo { StreamId = 101, CategoryId = 10, ChannelNumber = "6001" },
+            };
+
+            var filtered = LiveTvService.FilterChannelsBySelectedCategories(channels, new int[0]);
+
+            Assert.Same(channels, filtered);
+        }
     }
 }
