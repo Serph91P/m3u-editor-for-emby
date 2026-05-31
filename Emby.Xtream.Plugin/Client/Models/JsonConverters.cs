@@ -68,7 +68,9 @@ namespace Emby.Xtream.Plugin.Client.Models
         public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             if (reader.TokenType == JsonTokenType.Number)
-                return reader.TryGetInt64(out var l) ? l.ToString() : reader.GetDouble().ToString();
+                return reader.TryGetInt64(out var l)
+                    ? l.ToString(CultureInfo.InvariantCulture)
+                    : reader.GetDouble().ToString("G", CultureInfo.InvariantCulture);
             if (reader.TokenType == JsonTokenType.String)
                 return reader.GetString();
             if (reader.TokenType == JsonTokenType.Null)
