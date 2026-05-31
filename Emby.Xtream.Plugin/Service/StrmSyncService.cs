@@ -173,9 +173,9 @@ namespace Emby.Xtream.Plugin.Service
                 sb.Append(':');
                 sb.Append(c.CategoryId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
                 sb.Append(':');
-                // Channel number (Num) and StreamIcon are user-visible; include them so
+                // Channel number and StreamIcon are user-visible; include them so
                 // a logo swap or channel reorder at the provider triggers cache invalidation.
-                sb.Append(c.Num.ToString(CultureInfo.InvariantCulture));
+                sb.Append(c.DisplayChannelNumber);
                 sb.Append(':');
                 sb.Append(c.StreamIcon ?? string.Empty);
                 sb.Append('|');

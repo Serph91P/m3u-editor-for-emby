@@ -463,7 +463,7 @@ namespace Emby.Xtream.Plugin.Service
             sb.AppendLine("#EXTM3U");
 
             var extinf = new StringBuilder();
-            foreach (var channel in channels.OrderBy(c => c.Num))
+            foreach (var channel in channels.OrderBy(c => c.ChannelNumberSortKey).ThenBy(c => c.StreamId))
             {
                 var cleanName = ChannelNameCleaner.CleanChannelName(
                     channel.Name,
@@ -487,7 +487,7 @@ namespace Emby.Xtream.Plugin.Service
                 extinf.Append("#EXTINF:-1");
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-id=\"{0}\"", EscapeAttribute(epgId));
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-name=\"{0}\"", EscapeAttribute(cleanName));
-                extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-chno=\"{0}\"", channel.Num);
+                extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-chno=\"{0}\"", channel.DisplayChannelNumber);
 
                 if (!string.IsNullOrEmpty(channel.StreamIcon))
                 {
@@ -531,7 +531,7 @@ namespace Emby.Xtream.Plugin.Service
             sb.AppendLine("<tv generator-info-name=\"Emby Xtream Tuner\">");
 
             // Channel definitions
-            foreach (var channel in channels.OrderBy(c => c.Num))
+            foreach (var channel in channels.OrderBy(c => c.ChannelNumberSortKey).ThenBy(c => c.StreamId))
             {
                 var cleanName = ChannelNameCleaner.CleanChannelName(
                     channel.Name,
@@ -946,7 +946,7 @@ namespace Emby.Xtream.Plugin.Service
                 return;
             }
 
-            foreach (var channel in channels.OrderBy(c => c.Num).Take(20))
+            foreach (var channel in channels.OrderBy(c => c.ChannelNumberSortKey).ThenBy(c => c.StreamId).Take(20))
             {
                 var cleanName = ChannelNameCleaner.CleanChannelName(
                     channel.Name,
@@ -961,7 +961,7 @@ namespace Emby.Xtream.Plugin.Service
                 _logger.Info("[livetv-diag] channel-sample phase={0} stream={1} num={2} name='{3}' cleanName='{4}' epgId='{5}' categoryId={6} icon={7} validIcon={8} stats={9} dispatcharrTvgId={10} gracenoteStationId={11}",
                     phase,
                     channel.StreamId,
-                    channel.Num,
+                    channel.DisplayChannelNumber,
                     channel.Name ?? string.Empty,
                     cleanName ?? string.Empty,
                     channel.EpgChannelId ?? string.Empty,

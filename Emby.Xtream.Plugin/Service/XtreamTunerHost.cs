@@ -509,7 +509,7 @@ namespace Emby.Xtream.Plugin.Service
                 }
                 else
                 {
-                    channelNumber = channel.Num.ToString(CultureInfo.InvariantCulture);
+                    channelNumber = channel.DisplayChannelNumber;
                 }
 
                 string callSign = null;
