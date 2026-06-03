@@ -43,6 +43,7 @@ namespace Emby.Xtream.Plugin
         // can opt in via the dedicated toggle in the Live TV settings.
         public string ChannelRemoveTerms { get; set; } = string.Empty;
         public bool EnableChannelNameCleaning { get; set; } = false;
+        public bool UseM3uLogoForAllChannelImages { get; set; } = false;
 
         // Dispatcharr
         public bool EnableDispatcharr { get; set; }

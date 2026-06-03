@@ -414,6 +414,7 @@ function (BaseView, loading) {
 
             // Live TV channel name cleaning (independent toggle)
             view.querySelector('.chkEnableChannelNameCleaning').checked = !!config.EnableChannelNameCleaning;
+            view.querySelector('.chkUseM3uLogoForAllChannelImages').checked = !!config.UseM3uLogoForAllChannelImages;
             var channelTerms = '';
             if (config.ChannelRemoveTerms) {
                 channelTerms = config.ChannelRemoveTerms.split(',')
@@ -559,6 +560,7 @@ function (BaseView, loading) {
 
             // Live TV channel name cleaning (independent toggle, see PluginConfiguration.cs)
             config.EnableChannelNameCleaning = view.querySelector('.chkEnableChannelNameCleaning').checked;
+            config.UseM3uLogoForAllChannelImages = view.querySelector('.chkUseM3uLogoForAllChannelImages').checked;
             config.ChannelRemoveTerms = view.querySelector('.txtChannelRemoveTerms').value
                 .split('\n')
                 .map(function (t) { return t.trim(); })
