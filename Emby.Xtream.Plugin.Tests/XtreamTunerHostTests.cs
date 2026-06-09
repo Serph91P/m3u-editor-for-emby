@@ -155,6 +155,49 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.False(GetField<bool>(host, "_dispatcharrDataLoaded"));
         }
 
+        // ── Channel artwork variants ───────────────────────────────────────────
+
+        [Fact]
+        public void ApplyChannelLogoVariants_DisabledLeavesLightLogosEmpty()
+        {
+            var info = new ChannelInfo();
+
+            XtreamTunerHost.ApplyChannelLogoVariants(info, "https://example.com/logo.png", false);
+
+            Assert.Equal("https://example.com/logo.png", info.ImageUrl);
+            Assert.Null(info.LightLogoImageUrl);
+            Assert.Null(info.LightColorLogoImageUrl);
+        }
+
+        [Fact]
+        public void ApplyChannelLogoVariants_EnabledCopiesPrimaryLogoToAllLogoVariants()
+        {
+            var info = new ChannelInfo();
+
+            XtreamTunerHost.ApplyChannelLogoVariants(info, "https://example.com/logo.png", true);
+
+            Assert.Equal("https://example.com/logo.png", info.ImageUrl);
+            Assert.Equal("https://example.com/logo.png", info.LightLogoImageUrl);
+            Assert.Equal("https://example.com/logo.png", info.LightColorLogoImageUrl);
+        }
+
+        [Fact]
+        public void ApplyChannelLogoVariants_EmptyLogoClearsAllLogoUrls()
+        {
+            var info = new ChannelInfo
+            {
+                ImageUrl = "https://example.com/old.png",
+                LightLogoImageUrl = "https://example.com/old-light.png",
+                LightColorLogoImageUrl = "https://example.com/old-color.png",
+            };
+
+            XtreamTunerHost.ApplyChannelLogoVariants(info, null, true);
+
+            Assert.Null(info.ImageUrl);
+            Assert.Null(info.LightLogoImageUrl);
+            Assert.Null(info.LightColorLogoImageUrl);
+        }
+
         // ── Helpers ────────────────────────────────────────────────────────────
 
         private static void SetField(object obj, string name, object value)
