@@ -1,11 +1,35 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace Emby.Xtream.Plugin.Client.Models
 {
     public class LiveStreamInfo
     {
+        private string _channelNumber = "0";
+
         [JsonPropertyName("num")]
-        public int Num { get; set; }
+        [JsonConverter(typeof(StringOrNumberAsStringConverter))]
+        public string ChannelNumber
+        {
+            get => _channelNumber;
+            set => _channelNumber = NormalizeChannelNumber(value);
+        }
+
+        [JsonIgnore]
+        public int Num
+        {
+            get => int.TryParse(ChannelNumber, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
+            set => ChannelNumber = value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        [JsonIgnore]
+        public string DisplayChannelNumber => ChannelNumber;
+
+        [JsonIgnore]
+        public decimal ChannelNumberSortKey => decimal.TryParse(ChannelNumber, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : decimal.MaxValue;
+
 
         [JsonPropertyName("name")]
         public string Name { get; set; } = string.Empty;
@@ -55,5 +79,15 @@ namespace Emby.Xtream.Plugin.Client.Models
 
         public bool HasTvArchive => TvArchive;
         public bool IsAdultChannel => IsAdult;
+
+        private static string NormalizeChannelNumber(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "0";
+            }
+
+            return value.Trim();
+        }
     }
 }

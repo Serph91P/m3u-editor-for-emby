@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Emby.Xtream.Plugin.Client.Models;
@@ -64,6 +65,56 @@ namespace Emby.Xtream.Plugin.Tests
             var list = JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, Options);
 
             Assert.Equal("6", list[0].StreamStats.AudioChannels);
+        }
+
+        [Theory]
+        [InlineData("2.1", "2.1")]
+        [InlineData("101.5", "101.5")]
+        [InlineData("6000", "6000")]
+        public void Deserialize_NumAsString_PreservesDisplayChannelNumber(string input, string expected)
+        {
+            var json = "[{\"num\":\"" + input + "\",\"name\":\"Channel A\",\"stream_id\":42}]";
+
+            var list = JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, Options);
+
+            Assert.Equal(expected, list[0].ChannelNumber);
+            Assert.Equal(expected, list[0].DisplayChannelNumber);
+        }
+
+        [Fact]
+        public void Deserialize_NumAsDecimalNumber_PreservesDecimalChannelNumber()
+        {
+            var json = "[{\"num\":2.1,\"name\":\"Channel A\",\"stream_id\":42}]";
+
+            var list = JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, Options);
+
+            Assert.Equal("2.1", list[0].DisplayChannelNumber);
+        }
+
+        [Fact]
+        public void MissingNum_DefaultsToZeroForBackwardCompatibility()
+        {
+            var json = "[{\"name\":\"Channel A\",\"stream_id\":42}]";
+
+            var list = JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, Options);
+
+            Assert.Equal("0", list[0].DisplayChannelNumber);
+            Assert.Equal(0, list[0].Num);
+        }
+
+        [Fact]
+        public void ChannelNumberSortKey_OrdersDecimalNumbersNumerically()
+        {
+            var channels = new List<LiveStreamInfo>
+            {
+                new LiveStreamInfo { StreamId = 10, ChannelNumber = "10", Name = "Ten" },
+                new LiveStreamInfo { StreamId = 2, ChannelNumber = "2", Name = "Two" },
+                new LiveStreamInfo { StreamId = 21, ChannelNumber = "2.1", Name = "Two point one" },
+            };
+
+            var sorted = channels.OrderBy(c => c.ChannelNumberSortKey).ThenBy(c => c.StreamId).ToList();
+
+            Assert.Equal(new[] { "2", "2.1", "10" }, sorted.Select(c => c.DisplayChannelNumber).ToArray());
         }
     }
 }

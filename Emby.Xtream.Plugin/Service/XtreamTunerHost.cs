@@ -296,6 +296,27 @@ namespace Emby.Xtream.Plugin.Service
             };
         }
 
+        internal static void ApplyChannelLogoVariants(ChannelInfo channelInfo, string imageUrl, bool useM3uLogoForAllChannelImages)
+        {
+            if (channelInfo == null)
+            {
+                return;
+            }
+
+            channelInfo.ImageUrl = imageUrl;
+
+            if (useM3uLogoForAllChannelImages && !string.IsNullOrEmpty(imageUrl))
+            {
+                channelInfo.LightLogoImageUrl = imageUrl;
+                channelInfo.LightColorLogoImageUrl = imageUrl;
+            }
+            else
+            {
+                channelInfo.LightLogoImageUrl = null;
+                channelInfo.LightColorLogoImageUrl = null;
+            }
+        }
+
         protected override async Task<List<ChannelInfo>> GetChannelsInternal(
             TunerHostInfo tuner, CancellationToken cancellationToken)
         {
@@ -509,7 +530,7 @@ namespace Emby.Xtream.Plugin.Service
                 }
                 else
                 {
-                    channelNumber = channel.Num.ToString(CultureInfo.InvariantCulture);
+                    channelNumber = channel.DisplayChannelNumber;
                 }
 
                 string callSign = null;
@@ -520,19 +541,25 @@ namespace Emby.Xtream.Plugin.Service
                     callSign = tvgId;
                 }
 
-                return new ChannelInfo
+                var channelInfo = new ChannelInfo
                 {
                     Id = CreateEmbyChannelId(tuner, streamIdStr),
                     TunerChannelId = tunerChannelId,
                     Name = cleanName,
                     Number = channelNumber,
                     CallSign = callSign,
-                    ImageUrl = Util.UrlValidator.SanitizeHttpUrl(channel.StreamIcon),
                     ChannelType = ChannelType.TV,
                     TunerHostId = tuner.Id,
                     Tags = tags,
                     ListingsChannelId = listingsChannelId,
                 };
+
+                ApplyChannelLogoVariants(
+                    channelInfo,
+                    Util.UrlValidator.SanitizeHttpUrl(channel.StreamIcon),
+                    config.UseM3uLogoForAllChannelImages);
+
+                return channelInfo;
             }).ToList();
 
             _streamStats = newStats;

@@ -239,51 +239,20 @@ namespace Emby.Xtream.Plugin.Service
 
             List<LiveStreamInfo> allChannels;
 
+            allChannels = await FetchAllChannelsAsync(cancellationToken).ConfigureAwait(false);
+            if (diagnostics)
+            {
+                _logger.Info("[livetv-diag] all-channel-fetch rawChannels={0}", allChannels.Count);
+            }
+
             if (config.SelectedLiveCategoryIds != null && config.SelectedLiveCategoryIds.Length > 0)
             {
-                allChannels = new List<LiveStreamInfo>();
-                var semaphore = new SemaphoreSlim(5);
-                try
-                {
-                    var tasks = config.SelectedLiveCategoryIds.Select(async categoryId =>
-                    {
-                        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                        try
-                        {
-                            return await FetchChannelsByCategoryAsync(categoryId, cancellationToken).ConfigureAwait(false);
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
-                    });
-
-                    var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-                    foreach (var result in results)
-                    {
-                        allChannels.AddRange(result);
-                    }
-                }
-                finally
-                {
-                    semaphore.Dispose();
-                }
-
-                // Remove duplicates by StreamId
-                var beforeDedup = allChannels.Count;
-                allChannels = allChannels.GroupBy(c => c.StreamId).Select(g => g.First()).ToList();
+                var beforeCategoryFilter = allChannels.Count;
+                allChannels = FilterChannelsBySelectedCategories(allChannels, config.SelectedLiveCategoryIds);
                 if (diagnostics)
                 {
-                    _logger.Info("[livetv-diag] category-filter rawChannels={0} uniqueChannels={1} duplicatesRemoved={2}",
-                        beforeDedup, allChannels.Count, beforeDedup - allChannels.Count);
-                }
-            }
-            else
-            {
-                allChannels = await FetchAllChannelsAsync(cancellationToken).ConfigureAwait(false);
-                if (diagnostics)
-                {
-                    _logger.Info("[livetv-diag] all-channel-fetch rawChannels={0}", allChannels.Count);
+                    _logger.Info("[livetv-diag] category-filter before={0} after={1} removed={2}",
+                        beforeCategoryFilter, allChannels.Count, beforeCategoryFilter - allChannels.Count);
                 }
             }
 
@@ -400,6 +369,19 @@ namespace Emby.Xtream.Plugin.Service
             return stale.Count;
         }
 
+        internal static List<LiveStreamInfo> FilterChannelsBySelectedCategories(
+            List<LiveStreamInfo> channels,
+            int[] selectedCategoryIds)
+        {
+            if (channels == null) return new List<LiveStreamInfo>();
+            if (selectedCategoryIds == null || selectedCategoryIds.Length == 0) return channels;
+
+            var selected = new HashSet<int>(selectedCategoryIds);
+            return channels
+                .Where(c => c.CategoryId.HasValue && selected.Contains(c.CategoryId.Value))
+                .ToList();
+        }
+
         private async Task<List<LiveStreamInfo>> FetchAllChannelsAsync(CancellationToken cancellationToken)
         {
             var config = Plugin.Instance.Configuration;
@@ -422,35 +404,6 @@ namespace Emby.Xtream.Plugin.Service
             }
         }
 
-        private async Task<List<LiveStreamInfo>> FetchChannelsByCategoryAsync(int categoryId, CancellationToken cancellationToken)
-        {
-            var config = Plugin.Instance.Configuration;
-            var url = string.Format(
-                CultureInfo.InvariantCulture,
-                "{0}/player_api.php?username={1}&password={2}&action=get_live_streams&category_id={3}",
-                config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty), categoryId);
-
-            using (var httpClient = Plugin.CreateHttpClient(30))
-            {
-                try
-                {
-                    var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                    var channels = STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
-                        ?? new List<LiveStreamInfo>();
-                    if (IsLiveTvDiagnosticsEnabled())
-                    {
-                        _logger.Info("[livetv-diag] fetch-category-channels categoryId={0} responseBytes={1} channels={2}",
-                            categoryId, Encoding.UTF8.GetByteCount(json), channels.Count);
-                    }
-                    return channels;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn("Failed to fetch channels for category {0}: {1}", categoryId, ex.Message);
-                    return new List<LiveStreamInfo>();
-                }
-            }
-        }
 
         private static string GenerateM3U(
             List<LiveStreamInfo> channels,
@@ -463,7 +416,7 @@ namespace Emby.Xtream.Plugin.Service
             sb.AppendLine("#EXTM3U");
 
             var extinf = new StringBuilder();
-            foreach (var channel in channels.OrderBy(c => c.Num))
+            foreach (var channel in channels.OrderBy(c => c.ChannelNumberSortKey).ThenBy(c => c.StreamId))
             {
                 var cleanName = ChannelNameCleaner.CleanChannelName(
                     channel.Name,
@@ -487,7 +440,7 @@ namespace Emby.Xtream.Plugin.Service
                 extinf.Append("#EXTINF:-1");
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-id=\"{0}\"", EscapeAttribute(epgId));
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-name=\"{0}\"", EscapeAttribute(cleanName));
-                extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-chno=\"{0}\"", channel.Num);
+                extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-chno=\"{0}\"", channel.DisplayChannelNumber);
 
                 if (!string.IsNullOrEmpty(channel.StreamIcon))
                 {
@@ -531,7 +484,7 @@ namespace Emby.Xtream.Plugin.Service
             sb.AppendLine("<tv generator-info-name=\"Emby Xtream Tuner\">");
 
             // Channel definitions
-            foreach (var channel in channels.OrderBy(c => c.Num))
+            foreach (var channel in channels.OrderBy(c => c.ChannelNumberSortKey).ThenBy(c => c.StreamId))
             {
                 var cleanName = ChannelNameCleaner.CleanChannelName(
                     channel.Name,
@@ -734,7 +687,7 @@ namespace Emby.Xtream.Plugin.Service
             //    to warrant a retry (once the TTL has elapsed since the failure), try fetching it.
             //    This ensures the plugin recovers transparently when the upstream EPG source
             //    comes back online, without requiring a manual "Refresh Cache" action.
-            var xmltvFailedButRetryDue = _xmltvFailed && DateTime.UtcNow - _xmltvFailedTime >= cacheTtl;
+            var xmltvFailedButRetryDue = _xmltvFailed && DateTime.UtcNow - _xmltvFailedTime >= TimeSpan.FromMinutes(5);
             if (!xmltvCacheFresh && (!_xmltvFailed || xmltvFailedButRetryDue))
             {
                 var xmltvOk = await TryFetchXmltvEpgAsync(cancellationToken).ConfigureAwait(false);
@@ -946,7 +899,7 @@ namespace Emby.Xtream.Plugin.Service
                 return;
             }
 
-            foreach (var channel in channels.OrderBy(c => c.Num).Take(20))
+            foreach (var channel in channels.OrderBy(c => c.ChannelNumberSortKey).ThenBy(c => c.StreamId).Take(20))
             {
                 var cleanName = ChannelNameCleaner.CleanChannelName(
                     channel.Name,
@@ -961,7 +914,7 @@ namespace Emby.Xtream.Plugin.Service
                 _logger.Info("[livetv-diag] channel-sample phase={0} stream={1} num={2} name='{3}' cleanName='{4}' epgId='{5}' categoryId={6} icon={7} validIcon={8} stats={9} dispatcharrTvgId={10} gracenoteStationId={11}",
                     phase,
                     channel.StreamId,
-                    channel.Num,
+                    channel.DisplayChannelNumber,
                     channel.Name ?? string.Empty,
                     cleanName ?? string.Empty,
                     channel.EpgChannelId ?? string.Empty,
