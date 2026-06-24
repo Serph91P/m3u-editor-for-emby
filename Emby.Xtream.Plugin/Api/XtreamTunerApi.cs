@@ -37,7 +37,7 @@ namespace Emby.Xtream.Plugin.Api
     {
     }
 
-    [Route("/XtreamTuner/RefreshChannelIcons", "POST", Summary = "Clears Emby cached Live TV channel icons and reloads backend icon metadata")]
+    [Route("/XtreamTuner/RefreshChannelIcons", "POST", Summary = "Reloads backend channel icon metadata without deleting existing Emby artwork")]
     public class RefreshChannelIcons : IReturn<RefreshChannelIconsResult>
     {
     }
@@ -900,24 +900,10 @@ namespace Emby.Xtream.Plugin.Api
             {
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
                 {
-                    if (host.CachedChannelCount == 0)
-                    {
-                        await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
-                    }
-
-                    var cleanup = host.ClearWrongChannelArtwork();
-                    result.TotalLibraryChannels = cleanup.TotalLibraryChannels;
-                    result.MatchedChannels = cleanup.MatchedChannels;
-                    result.ClearedChannels = cleanup.ClearedChannels;
-                    result.AlreadyCleanChannels = cleanup.AlreadyCleanChannels;
-
-                    if (!cleanup.Success)
-                    {
-                        result.Success = false;
-                        result.Message = "Channel icon refresh failed: " + cleanup.Message;
-                        return result;
-                    }
-
+                    // Do not clear Emby's persisted ImageInfos here. Testing showed that
+                    // deleting ImageInfos only removes the existing channel logos; warming
+                    // the plugin cache does not force Emby to re-populate the item artwork.
+                    // Keep this action to a safe backend metadata reload.
                     Plugin.Instance.LiveTvService.InvalidateCache();
                     host.ClearCaches();
 
@@ -930,8 +916,8 @@ namespace Emby.Xtream.Plugin.Api
                     result.EpgBytes = epg == null ? 0 : Encoding.UTF8.GetByteCount(epg);
                     result.Success = rebuilt;
                     result.Message = rebuilt
-                        ? string.Format("Cleared cached icons for {0} Xtream channel(s), rebuilt {1} channels from backend metadata. If an Emby client still shows old artwork, run Live TV -> Refresh Guide once.", result.ClearedChannels, result.RebuiltChannels)
-                        : "Cached icons were cleared, but the channel reload returned no channels. Verify Xtream credentials and run Live TV -> Refresh Guide.";
+                        ? string.Format("Reloaded backend icon metadata for {0} channel(s) without deleting existing Emby channel artwork. M3U bytes: {1}, EPG bytes: {2}.", result.RebuiltChannels, result.M3UBytes, result.EpgBytes)
+                        : "Backend icon metadata reload returned no channels. Verify Xtream credentials and run Live TV -> Refresh Guide.";
                 }
             }
             catch (InvalidOperationException ex)
