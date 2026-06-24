@@ -155,6 +155,24 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.False(GetField<bool>(host, "_dispatcharrDataLoaded"));
         }
 
+        // ── Listing-provider detach must not wipe logos by default ─────────────
+
+        [Fact]
+        public void ShouldClearWrongChannelArtworkAfterDetach_DefaultFlowPreservesArtwork()
+        {
+            // Regression: a normal Live TV guide refresh can auto-detach listing
+            // providers. That path must not clear Emby's ImageInfos for every
+            // Xtream channel, otherwise M3U/m3u-editor logos fall back to EPG art.
+            Assert.False(XtreamTunerHost.ShouldClearWrongChannelArtworkAfterDetach(false, true));
+        }
+
+        [Fact]
+        public void ShouldClearWrongChannelArtworkAfterDetach_RequiresExplicitRecoveryFlagAndConfigChange()
+        {
+            Assert.True(XtreamTunerHost.ShouldClearWrongChannelArtworkAfterDetach(true, true));
+            Assert.False(XtreamTunerHost.ShouldClearWrongChannelArtworkAfterDetach(true, false));
+        }
+
         // ── Channel artwork variants ───────────────────────────────────────────
 
         [Fact]

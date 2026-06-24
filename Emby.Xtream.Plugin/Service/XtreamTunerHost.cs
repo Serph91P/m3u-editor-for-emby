@@ -346,8 +346,11 @@ namespace Emby.Xtream.Plugin.Service
                 Logger.Debug("Returning cached channel list ({0} channels, {1} with Gracenote station ID)",
                     _cachedChannels.Count, cachedGracenote);
 
-                // Run detach+artwork-clear even on cache hits so that "Refresh Guide Data"
-                // always triggers it, not just when the 5-minute channel cache expires.
+                // Run listing-provider detach even on cache hits so that
+                // "Refresh Guide Data" always fixes provider ownership, not
+                // just when the 5-minute channel cache expires. Do not clear
+                // Emby's channel ImageInfos here: a normal guide refresh must
+                // preserve the user's M3U/m3u-editor logos.
                 if (config.DeferEpgToGuideData && cachedGracenote > 0)
                 {
                     _ = Task.Run(() =>
@@ -760,7 +763,7 @@ namespace Emby.Xtream.Plugin.Service
         /// directly for channels that have a station ID and returns Xtream EPG for the rest.
         /// </summary>
         /// <returns>Number of listing providers updated.</returns>
-        public int DetachListingProviders()
+        public int DetachListingProviders(bool clearWrongArtwork = false)
         {
             IConfigurationManager configManager;
             try
@@ -870,7 +873,14 @@ namespace Emby.Xtream.Plugin.Service
                     return 0;
                 }
 
-                ClearWrongChannelArtwork();
+                if (ShouldClearWrongChannelArtworkAfterDetach(clearWrongArtwork, configChanged))
+                {
+                    ClearWrongChannelArtwork();
+                }
+                else
+                {
+                    Logger.Info("DetachListingProviders: preserved channel artwork cache");
+                }
             }
             else
             {
@@ -878,6 +888,11 @@ namespace Emby.Xtream.Plugin.Service
             }
 
             return updated;
+        }
+
+        internal static bool ShouldClearWrongChannelArtworkAfterDetach(bool clearWrongArtwork, bool configChanged)
+        {
+            return clearWrongArtwork && configChanged;
         }
 
         /// <summary>
