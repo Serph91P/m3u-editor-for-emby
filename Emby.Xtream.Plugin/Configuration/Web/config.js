@@ -1946,7 +1946,7 @@ function (BaseView, loading) {
             btn.disabled = false;
             var detail = result.Message || 'Channel icon reload completed.';
             if (result.Success) {
-                detail += ' Rebuilt: ' + result.RebuiltChannels + '.';
+                detail += ' Cleared: ' + result.ClearedChannels + ', rebuilt: ' + result.RebuiltChannels + '.';
             }
             setPillResult(resultEl, result.Success, detail);
         }).catch(function () {
