@@ -56,14 +56,14 @@ When a channel has a station ID in `_stationIdMap` and `DeferEpgToGuideData` is 
 
 If no Gracenote data is returned, falls back to Xtream EPG.
 
-### ClearWrongChannelArtwork() (v1.4.62, revised v1.4.69)
+### ClearWrongChannelArtwork() (v1.4.62, revised v1.4.69 and later)
 
 Emby downloads artwork from listing providers during auto-mapping. Even though we detach the providers, artwork cached during the brief auto-mapping window persists. This method:
 1. Resolves `ILibraryManager` via DI
 2. Queries all `LiveTvChannel` items belonging to the Xtream tuner (via reflection)
 3. Clears `ImageInfos` on **all** Xtream channels (including Gracenote-matched ones, since Emby's auto-mapper can assign wrong artwork to those too) and calls `UpdateItem` with `ItemUpdateType.ImageUpdate`
 
-As of v1.4.69, `ClearWrongChannelArtwork()` only runs when `DetachListingProviders()` actually modifies config (i.e. the first time it detaches). Previously it ran unconditionally on every guide refresh, which wiped channel logos repeatedly and caused them to disappear between refresh cycles.
+`ClearWrongChannelArtwork()` is a recovery operation only. Normal cache and guide refresh paths must not call it because clearing Emby's `ImageInfos` removes the user's M3U/m3u-editor channel logos and makes Emby fall back to EPG artwork.
 
 ## Consequences
 
@@ -71,7 +71,7 @@ As of v1.4.69, `ClearWrongChannelArtwork()` only runs when `DetachListingProvide
 - Plugin has full control over which channels get Gracenote EPG
 - No more wrong heuristic matches from Emby's auto-mapper
 - Channels without Gracenote IDs correctly show Xtream EPG
-- Stale artwork is cleaned up once when providers are first detached
+- Normal guide and cache refreshes preserve user-selected channel logos
 
 **Negative**:
 - Channel Identifiarr's "Scan Missing Listings" sees all Xtream channels as missing `ListingsId` (because no listing provider is associated with the tuner). Every run re-processes all channels. See [ADR-006](006-channel-identifiarr-managementid-bug.md).
@@ -87,9 +87,9 @@ Emby has two user-facing ways to refresh guide data, and they trigger different 
 | Refresh Guide | Scheduled Tasks page | Yes | Yes |
 | Refresh Guide Data | Live TV management page | Not always | Yes |
 
-"Refresh Guide" runs the full pipeline: channel scan (`GetChannelsInternal`) followed by per-channel EPG fetch (`GetProgramsInternal`). Since `DetachListingProviders()` is called from `GetChannelsInternal`, this path reliably triggers the detach and artwork clear.
+"Refresh Guide" runs the full pipeline: channel scan (`GetChannelsInternal`) followed by per-channel EPG fetch (`GetProgramsInternal`). Since `DetachListingProviders()` is called from `GetChannelsInternal`, this path reliably triggers the detach, but it preserves channel artwork during normal refreshes.
 
-"Refresh Guide Data" may use a lighter code path that skips the channel scan phase entirely. Prior to v1.4.69, the plugin had a fallback `DetachListingProviders()` call inside `GetProgramsInternal` to cover this case. This caused duplicate execution during normal guide refreshes (detach + artwork clear fired twice). Since artwork clearing only matters on the initial detach (a one-time config change), the fallback was removed - the small risk of missing the detach on the lighter path is acceptable because it will fire on the next full refresh.
+"Refresh Guide Data" may use a lighter code path that skips the channel scan phase entirely. Prior to v1.4.69, the plugin had a fallback `DetachListingProviders()` call inside `GetProgramsInternal` to cover this case. This caused duplicate execution during normal guide refreshes. Since artwork clearing is a recovery action, the fallback was removed - the small risk of missing the detach on the lighter path is acceptable because it will fire on the next full refresh.
 
 ## Related
 
