@@ -21,6 +21,16 @@ using Emby.Xtream.Plugin.Util;
 #pragma warning disable CS0612 // SupportsProbing and AnalyzeDurationMs are obsolete but still functional
 namespace Emby.Xtream.Plugin.Service
 {
+    internal class ChannelArtworkCleanupResult
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int TotalLibraryChannels { get; set; }
+        public int MatchedChannels { get; set; }
+        public int ClearedChannels { get; set; }
+        public int AlreadyCleanChannels { get; set; }
+    }
+
     public class XtreamTunerHost : BaseTunerHost
     {
         internal const string TunerType = "xtream-tuner";
@@ -350,7 +360,7 @@ namespace Emby.Xtream.Plugin.Service
                 // "Refresh Guide Data" always fixes provider ownership, not
                 // just when the 5-minute channel cache expires. Do not clear
                 // Emby's channel ImageInfos here: a normal guide refresh must
-                // preserve the user's M3U/m3u-editor logos.
+                // preserve the user's backend-provided logos.
                 if (config.DeferEpgToGuideData && cachedGracenote > 0)
                 {
                     _ = Task.Run(() =>
@@ -902,8 +912,9 @@ namespace Emby.Xtream.Plugin.Service
         /// window before the plugin detached. Correct artwork returns on the next guide
         /// refresh from the proper source.
         /// </summary>
-        internal void ClearWrongChannelArtwork()
+        internal ChannelArtworkCleanupResult ClearWrongChannelArtwork()
         {
+            var result = new ChannelArtworkCleanupResult();
             try
             {
                 var libraryManager = _applicationHost.Resolve<ILibraryManager>();
@@ -938,8 +949,9 @@ namespace Emby.Xtream.Plugin.Service
 
                 if (liveTvChannelType == null)
                 {
+                    result.Message = "LiveTvChannel type not found.";
                     Logger.Warn("ClearWrongChannelArtwork: LiveTvChannel type not found");
-                    return;
+                    return result;
                 }
 
                 var internalQueryType = AppDomain.CurrentDomain.GetAssemblies()
@@ -974,8 +986,9 @@ namespace Emby.Xtream.Plugin.Service
 
                 if (internalQueryType == null)
                 {
+                    result.Message = "InternalItemsQuery type not found.";
                     Logger.Warn("ClearWrongChannelArtwork: InternalItemsQuery type not found");
-                    return;
+                    return result;
                 }
 
                 var query = Activator.CreateInstance(internalQueryType);
@@ -990,15 +1003,17 @@ namespace Emby.Xtream.Plugin.Service
 
                 if (getItemListMethod == null)
                 {
+                    result.Message = "GetItemList method not found.";
                     Logger.Warn("ClearWrongChannelArtwork: GetItemList method not found");
-                    return;
+                    return result;
                 }
 
                 var items = getItemListMethod.Invoke(libraryManager, new[] { query }) as System.Collections.IEnumerable;
                 if (items == null)
                 {
+                    result.Message = "GetItemList returned null.";
                     Logger.Info("ClearWrongChannelArtwork: GetItemList returned null");
-                    return;
+                    return result;
                 }
 
                 // Build lookups for Xtream channel ownership checks.
@@ -1007,8 +1022,9 @@ namespace Emby.Xtream.Plugin.Service
                 var cachedChannels = GetChannelsForArtworkCleanup();
                 if (cachedChannels == null || cachedChannels.Count == 0)
                 {
+                    result.Message = "No cached Xtream channels available. Refresh the channel cache first.";
                     Logger.Info("ClearWrongChannelArtwork: no cached channels - skipping");
-                    return;
+                    return result;
                 }
 
                 var xtreamChannelNumbers = new HashSet<string>(StringComparer.Ordinal);
@@ -1079,11 +1095,21 @@ namespace Emby.Xtream.Plugin.Service
 
                 Logger.Info("ClearWrongChannelArtwork: {0} library channels, {1} matched Xtream, cleared {2}, {3} already clean",
                     totalLibraryChannels, cleared + noImages, cleared, noImages);
+                result.Success = true;
+                result.TotalLibraryChannels = totalLibraryChannels;
+                result.MatchedChannels = cleared + noImages;
+                result.ClearedChannels = cleared;
+                result.AlreadyCleanChannels = noImages;
+                result.Message = string.Format(CultureInfo.InvariantCulture,
+                    "Cleared {0} cached image(s) from {1} matched Xtream channel(s); {2} were already clean.",
+                    cleared, cleared + noImages, noImages);
             }
             catch (Exception ex)
             {
+                result.Message = ex.Message;
                 Logger.Warn("ClearWrongChannelArtwork: {0}", ex.Message);
             }
+            return result;
         }
 
         /// <summary>

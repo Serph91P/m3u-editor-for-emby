@@ -162,7 +162,7 @@ namespace Emby.Xtream.Plugin.Tests
         {
             // Regression: a normal Live TV guide refresh can auto-detach listing
             // providers. That path must not clear Emby's ImageInfos for every
-            // Xtream channel, otherwise M3U/m3u-editor logos fall back to EPG art.
+            // Xtream channel, otherwise backend-provided logos fall back to EPG art.
             Assert.False(XtreamTunerHost.ShouldClearWrongChannelArtworkAfterDetach(false, true));
         }
 

@@ -175,6 +175,10 @@ function (BaseView, loading) {
             refreshCache(view);
         });
 
+        view.querySelector('.btnRefreshChannelIcons').addEventListener('click', function () {
+            refreshChannelIcons(view);
+        });
+
         view.querySelector('.btnSyncGuideMappings').addEventListener('click', function () {
             syncGuideMappings(view);
         });
@@ -1925,6 +1929,29 @@ function (BaseView, loading) {
             setPillResult(resultEl, true, 'Cache refreshed successfully!');
         }).catch(function () {
             setPillResult(resultEl, false, 'Failed to refresh cache.');
+        });
+    }
+
+    function refreshChannelIcons(view) {
+        var btn = view.querySelector('.btnRefreshChannelIcons');
+        var resultEl = view.querySelector('.refreshCacheResult');
+        btn.disabled = true;
+        resultEl.innerHTML = '<span style="opacity:0.5;">Reloading channel icons...</span>';
+
+        ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('XtreamTuner/RefreshChannelIcons'),
+            dataType: 'json'
+        }).then(function (result) {
+            btn.disabled = false;
+            var detail = result.Message || 'Channel icon reload completed.';
+            if (result.Success) {
+                detail += ' Cleared: ' + result.ClearedChannels + ', rebuilt: ' + result.RebuiltChannels + '.';
+            }
+            setPillResult(resultEl, result.Success, detail);
+        }).catch(function () {
+            btn.disabled = false;
+            setPillResult(resultEl, false, 'Channel icon reload failed. Check server logs.');
         });
     }
 
