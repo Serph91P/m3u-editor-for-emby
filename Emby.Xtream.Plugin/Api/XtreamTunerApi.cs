@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,6 +34,11 @@ namespace Emby.Xtream.Plugin.Api
 
     [Route("/XtreamTuner/RefreshCache", "POST", Summary = "Invalidates M3U and EPG caches")]
     public class RefreshCache : IReturnVoid
+    {
+    }
+
+    [Route("/XtreamTuner/RefreshChannelIcons", "POST", Summary = "Clears Emby cached Live TV channel icons and reloads backend icon metadata")]
+    public class RefreshChannelIcons : IReturn<RefreshChannelIconsResult>
     {
     }
 
@@ -123,6 +129,19 @@ namespace Emby.Xtream.Plugin.Api
         public int ChannelsWithProbeData { get; set; }
         public string Source { get; set; } // "backend" | "dispatcharr" | "mixed" | "none"
         public string BackendType { get; set; } // detected backend identifier (e.g. "M3uEditor")
+    }
+
+    public class RefreshChannelIconsResult
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int TotalLibraryChannels { get; set; }
+        public int MatchedChannels { get; set; }
+        public int ClearedChannels { get; set; }
+        public int AlreadyCleanChannels { get; set; }
+        public int RebuiltChannels { get; set; }
+        public int M3UBytes { get; set; }
+        public int EpgBytes { get; set; }
     }
 
     [Route("/XtreamTuner/DispatcharrProfiles", "GET", Summary = "Gets Channel Profiles from Dispatcharr")]
@@ -861,9 +880,87 @@ namespace Emby.Xtream.Plugin.Api
         {
             // Normal cache refresh must only invalidate volatile plugin caches.
             // Do not clear Emby's channel ImageInfos here: that deletes the
-            // user's M3U/m3u-editor logos and makes Emby fall back to EPG art.
+            // user's backend-provided logos and makes Emby fall back to EPG art.
             Plugin.Instance.LiveTvService.InvalidateCache();
             XtreamTunerHost.Instance?.ClearCaches();
+        }
+
+        public async Task<object> Post(RefreshChannelIcons request)
+        {
+            var result = new RefreshChannelIconsResult();
+            var host = XtreamTunerHost.Instance;
+            if (host == null)
+            {
+                result.Success = false;
+                result.Message = "Xtream tuner host is not initialized.";
+                return result;
+            }
+
+            try
+            {
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
+                {
+                    if (host.CachedChannelCount == 0)
+                    {
+                        await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
+                    }
+
+                    var cleanup = host.ClearWrongChannelArtwork();
+                    result.TotalLibraryChannels = cleanup.TotalLibraryChannels;
+                    result.MatchedChannels = cleanup.MatchedChannels;
+                    result.ClearedChannels = cleanup.ClearedChannels;
+                    result.AlreadyCleanChannels = cleanup.AlreadyCleanChannels;
+
+                    if (!cleanup.Success)
+                    {
+                        result.Success = false;
+                        result.Message = "Channel icon refresh failed: " + cleanup.Message;
+                        return result;
+                    }
+
+                    Plugin.Instance.LiveTvService.InvalidateCache();
+                    host.ClearCaches();
+
+                    var rebuilt = await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
+                    result.RebuiltChannels = host.CachedChannelCount;
+
+                    var m3u = await Plugin.Instance.LiveTvService.GetM3UPlaylistAsync(cts.Token).ConfigureAwait(false);
+                    var epg = await Plugin.Instance.LiveTvService.GetXmltvEpgAsync(cts.Token).ConfigureAwait(false);
+                    result.M3UBytes = m3u == null ? 0 : Encoding.UTF8.GetByteCount(m3u);
+                    result.EpgBytes = epg == null ? 0 : Encoding.UTF8.GetByteCount(epg);
+                    result.Success = rebuilt;
+                    result.Message = rebuilt
+                        ? string.Format("Cleared cached icons for {0} Xtream channel(s), rebuilt {1} channels from backend metadata. If an Emby client still shows old artwork, run Live TV -> Refresh Guide once.", result.ClearedChannels, result.RebuiltChannels)
+                        : "Cached icons were cleared, but the channel reload returned no channels. Verify Xtream credentials and run Live TV -> Refresh Guide.";
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                result.Success = false;
+                result.Message = "Channel icon refresh failed: " + ex.Message;
+            }
+            catch (ArgumentException ex)
+            {
+                result.Success = false;
+                result.Message = "Channel icon refresh failed: " + ex.Message;
+            }
+            catch (HttpRequestException ex)
+            {
+                result.Success = false;
+                result.Message = "Channel icon refresh failed: " + ex.Message;
+            }
+            catch (TaskCanceledException ex)
+            {
+                result.Success = false;
+                result.Message = "Channel icon refresh timed out: " + ex.Message;
+            }
+            catch (OperationCanceledException ex)
+            {
+                result.Success = false;
+                result.Message = "Channel icon refresh was canceled: " + ex.Message;
+            }
+
+            return result;
         }
 
         public object Get(GetWritablePaths request)

@@ -63,7 +63,7 @@ Emby downloads artwork from listing providers during auto-mapping. Even though w
 2. Queries all `LiveTvChannel` items belonging to the Xtream tuner (via reflection)
 3. Clears `ImageInfos` on **all** Xtream channels (including Gracenote-matched ones, since Emby's auto-mapper can assign wrong artwork to those too) and calls `UpdateItem` with `ItemUpdateType.ImageUpdate`
 
-`ClearWrongChannelArtwork()` is a recovery operation only. Normal cache and guide refresh paths must not call it because clearing Emby's `ImageInfos` removes the user's M3U/m3u-editor channel logos and makes Emby fall back to EPG artwork.
+`ClearWrongChannelArtwork()` is a recovery operation only. Normal cache and guide refresh paths must not call it because clearing Emby's `ImageInfos` removes the user's backend-provided channel logos and makes Emby fall back to EPG artwork.
 
 ## Consequences
 
