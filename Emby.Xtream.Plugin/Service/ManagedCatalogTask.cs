@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Tasks;
 
@@ -47,7 +48,9 @@ namespace Emby.Xtream.Plugin.Service
                 config,
                 () => plugin.SaveConfiguration(),
                 progress,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                () => plugin.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
+                .ConfigureAwait(false);
         }
     }
 }

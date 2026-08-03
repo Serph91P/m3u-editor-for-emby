@@ -575,7 +575,9 @@ namespace Emby.Xtream.Plugin.Api
                 config,
                 () => Plugin.Instance.SaveConfiguration(),
                 null,
-                CancellationToken.None).ConfigureAwait(false);
+                CancellationToken.None,
+                () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
+                .ConfigureAwait(false);
             return new ManagedActionResult
             {
                 Success = reconciled.Success,

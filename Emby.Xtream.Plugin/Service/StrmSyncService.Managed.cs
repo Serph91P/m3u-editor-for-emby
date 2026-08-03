@@ -97,12 +97,14 @@ namespace Emby.Xtream.Plugin.Service
             new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
 
         internal Action<string> ManagedPhaseHook { get; set; }
+        internal Action<string, string> ManagedFileMoveHook { get; set; }
 
         internal async Task<ManagedReconcileResult> ReconcileManagedAsync(
             PluginConfiguration config,
             Action saveConfig,
             IProgress<double> progress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Action refresh)
         {
             if (config == null)
             {
@@ -110,6 +112,7 @@ namespace Emby.Xtream.Plugin.Service
             }
 
             var result = new ManagedReconcileResult { Success = true };
+            var refreshRequired = false;
             var client = new M3uEditorClient(_httpClient);
             try
             {
@@ -158,6 +161,7 @@ namespace Emby.Xtream.Plugin.Service
                     {
                         published = await PublishManagedMappingAsync(mapping, cancellationToken).ConfigureAwait(false);
                     }
+                    var activeGenerationChanged = published.Success && !published.Duplicate;
 
                     if (published.Success)
                     {
@@ -215,6 +219,7 @@ namespace Emby.Xtream.Plugin.Service
 
                         config.ManagedActiveGeneration = mapping.Revision;
                         config.ManagedPreviousGeneration = published.PreviousRevision ?? string.Empty;
+                        refreshRequired = refreshRequired || (activeGenerationChanged && mapping.Options.Refresh);
                     }
                     else
                     {
@@ -248,6 +253,16 @@ namespace Emby.Xtream.Plugin.Service
                     progress?.Report(10 + (catalog.Mappings.Count == 0
                         ? 85
                         : 85.0 * (index + 1) / catalog.Mappings.Count));
+                }
+
+                if (result.Success && refreshRequired)
+                {
+                    if (refresh == null)
+                    {
+                        throw new InvalidOperationException("Managed library refresh is unavailable.");
+                    }
+
+                    refresh();
                 }
 
                 config.ManagedMappingsJson = JsonSerializer.Serialize(states, JsonOptions);
@@ -543,7 +558,7 @@ namespace Emby.Xtream.Plugin.Service
             }
         }
 
-        private static ManagedPublishResult RollbackManagedMapping(
+        private ManagedPublishResult RollbackManagedMapping(
             string root,
             string mappingUuid,
             CancellationToken cancellationToken)
@@ -555,8 +570,8 @@ namespace Emby.Xtream.Plugin.Service
             var currentFilesRoot = Path.Combine(metadataRoot, "rollback-current");
             ManagedGenerationManifest active = null;
             ManagedGenerationManifest previous = null;
-            var currentMoved = false;
-            var previousMoved = false;
+            var currentMoved = new List<string>();
+            var previousMoved = new List<string>();
 
             try
             {
@@ -579,10 +594,8 @@ namespace Emby.Xtream.Plugin.Service
                 }
 
                 DeleteOwnedDirectory(currentFilesRoot);
-                MoveManifestFiles(root, currentFilesRoot, active);
-                currentMoved = true;
-                MoveManifestFiles(previousFilesRoot, root, previous);
-                previousMoved = true;
+                MoveManifestFiles(root, currentFilesRoot, active, "rollback-active", currentMoved);
+                MoveManifestFiles(previousFilesRoot, root, previous, "rollback-previous", previousMoved);
 
                 WriteManifestAtomic(activeManifestPath, previous);
                 WriteManifestAtomic(previousManifestPath, active);
@@ -624,37 +637,33 @@ namespace Emby.Xtream.Plugin.Service
             }
         }
 
-        private static void RestoreFailedRollback(
+        private void RestoreFailedRollback(
             string root,
             string previousFilesRoot,
             string currentFilesRoot,
             ManagedGenerationManifest active,
             ManagedGenerationManifest previous,
-            bool currentMoved,
-            bool previousMoved)
+            List<string> currentMoved,
+            List<string> previousMoved)
         {
-            try
+            if (previousMoved.Count > 0)
             {
-                if (previousMoved && previous != null)
-                {
-                    MoveManifestFiles(root, previousFilesRoot, previous);
-                }
+                RestoreMovedFiles(root, previousFilesRoot, previousMoved, "restore-rollback-previous");
+            }
 
-                if (currentMoved && active != null && Directory.Exists(currentFilesRoot))
-                {
-                    MoveManifestFiles(currentFilesRoot, root, active);
-                    WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "active.json"), active);
-                    if (previous != null)
-                    {
-                        WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "previous.json"), previous);
-                    }
-                }
-            }
-            catch (IOException)
+            if (currentMoved.Count > 0)
             {
+                RestoreMovedFiles(currentFilesRoot, root, currentMoved, "restore-rollback-active");
             }
-            catch (UnauthorizedAccessException)
+
+            if (active != null)
             {
+                WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "active.json"), active);
+            }
+
+            if (previous != null)
+            {
+                WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "previous.json"), previous);
             }
         }
 
@@ -666,8 +675,12 @@ namespace Emby.Xtream.Plugin.Service
             var result = new ManagedPublishResult { Revision = mapping.Revision };
             string stagingRoot = null;
             string previousFilesRoot = null;
+            string previousBackupRoot = null;
             ManagedGenerationManifest activeManifest = null;
+            ManagedGenerationManifest previousManifest = null;
             List<ManagedPlannedFile> plan = null;
+            var quarantinedFiles = new List<string>();
+            var publishedFiles = new List<string>();
             var mutationStarted = false;
 
             try
@@ -687,6 +700,7 @@ namespace Emby.Xtream.Plugin.Service
 
                 var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
                 activeManifest = ReadManifest(activeManifestPath);
+                previousManifest = ReadManifest(previousManifestPath);
                 if (activeManifest != null &&
                     !string.Equals(activeManifest.MappingUuid, mapping.MappingUuid, StringComparison.OrdinalIgnoreCase))
                 {
@@ -722,7 +736,18 @@ namespace Emby.Xtream.Plugin.Service
                 previousFilesRoot = Path.Combine(metadataRoot, "previous-files");
                 if (Directory.Exists(previousFilesRoot))
                 {
-                    Directory.Delete(previousFilesRoot, true);
+                    if (previousManifest == null || !ManifestOwnsDirectory(previousFilesRoot, previousManifest))
+                    {
+                        throw new InvalidOperationException("The previous managed generation is invalid.");
+                    }
+
+                    previousBackupRoot = Path.Combine(metadataRoot, "previous-backup-" + Guid.NewGuid().ToString("N"));
+                    Directory.Move(previousFilesRoot, previousBackupRoot);
+                    mutationStarted = true;
+                }
+                else if (previousManifest != null)
+                {
+                    throw new InvalidOperationException("The previous managed generation files are missing.");
                 }
 
                 if (activeManifest != null)
@@ -733,7 +758,7 @@ namespace Emby.Xtream.Plugin.Service
                     }
 
                     mutationStarted = true;
-                    MoveManifestFiles(root, previousFilesRoot, activeManifest);
+                    MoveManifestFiles(root, previousFilesRoot, activeManifest, "quarantine", quarantinedFiles);
                     WriteManifestAtomic(previousManifestPath, activeManifest);
                     result.PreviousRevision = activeManifest.Revision;
                     InvokeManagedPhase("after-quarantine");
@@ -746,7 +771,9 @@ namespace Emby.Xtream.Plugin.Service
                     var source = CombineUnderRoot(stagingRoot, file.RelativePath);
                     var destination = CombineUnderRoot(root, file.RelativePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                    InvokeManagedFileMove("publish", file.RelativePath);
                     File.Move(source, destination);
+                    publishedFiles.Add(file.RelativePath);
                 }
 
                 InvokeManagedPhase("after-publish");
@@ -767,6 +794,8 @@ namespace Emby.Xtream.Plugin.Service
                 WriteManifestAtomic(activeManifestPath, newManifest);
                 Directory.Delete(stagingRoot, true);
                 stagingRoot = null;
+                DeleteOwnedDirectory(previousBackupRoot);
+                previousBackupRoot = null;
 
                 result.Success = true;
                 result.FileCount = plan.Count;
@@ -774,31 +803,81 @@ namespace Emby.Xtream.Plugin.Service
             }
             catch (OperationCanceledException)
             {
-                RestoreManagedGeneration(root, activeManifest, plan, previousFilesRoot, mutationStarted);
+                if (mutationStarted)
+                {
+                    RestoreManagedGeneration(
+                        root,
+                        activeManifest,
+                        previousManifest,
+                        previousFilesRoot,
+                        previousBackupRoot,
+                        quarantinedFiles,
+                        publishedFiles);
+                }
                 DeleteOwnedDirectory(stagingRoot);
                 throw;
             }
             catch (IOException)
             {
-                RestoreManagedGeneration(root, activeManifest, plan, previousFilesRoot, mutationStarted);
+                if (mutationStarted)
+                {
+                    RestoreManagedGeneration(
+                        root,
+                        activeManifest,
+                        previousManifest,
+                        previousFilesRoot,
+                        previousBackupRoot,
+                        quarantinedFiles,
+                        publishedFiles);
+                }
                 DeleteOwnedDirectory(stagingRoot);
                 return Failed(mapping.Revision, "Managed publication failed during filesystem commit.", result);
             }
             catch (UnauthorizedAccessException)
             {
-                RestoreManagedGeneration(root, activeManifest, plan, previousFilesRoot, mutationStarted);
+                if (mutationStarted)
+                {
+                    RestoreManagedGeneration(
+                        root,
+                        activeManifest,
+                        previousManifest,
+                        previousFilesRoot,
+                        previousBackupRoot,
+                        quarantinedFiles,
+                        publishedFiles);
+                }
                 DeleteOwnedDirectory(stagingRoot);
                 return Failed(mapping.Revision, "Managed publication failed because the output root is not writable.", result);
             }
             catch (InvalidOperationException ex)
             {
-                RestoreManagedGeneration(root, activeManifest, plan, previousFilesRoot, mutationStarted);
+                if (mutationStarted)
+                {
+                    RestoreManagedGeneration(
+                        root,
+                        activeManifest,
+                        previousManifest,
+                        previousFilesRoot,
+                        previousBackupRoot,
+                        quarantinedFiles,
+                        publishedFiles);
+                }
                 DeleteOwnedDirectory(stagingRoot);
                 return Failed(mapping.Revision, ex.Message, result);
             }
             catch (JsonException)
             {
-                RestoreManagedGeneration(root, activeManifest, plan, previousFilesRoot, mutationStarted);
+                if (mutationStarted)
+                {
+                    RestoreManagedGeneration(
+                        root,
+                        activeManifest,
+                        previousManifest,
+                        previousFilesRoot,
+                        previousBackupRoot,
+                        quarantinedFiles,
+                        publishedFiles);
+                }
                 DeleteOwnedDirectory(stagingRoot);
                 return Failed(mapping.Revision, "Managed generation manifest is invalid.", result);
             }
@@ -1181,6 +1260,42 @@ namespace Emby.Xtream.Plugin.Service
             return true;
         }
 
+        private static bool ManifestOwnsDirectory(string root, ManagedGenerationManifest manifest)
+        {
+            if (!ManifestFilesAreValid(root, manifest))
+            {
+                return false;
+            }
+
+            var expectedFiles = new HashSet<string>(
+                manifest.Files.Select(file => CombineUnderRoot(root, file.RelativePath)),
+                StringComparer.OrdinalIgnoreCase);
+            var actualFiles = new HashSet<string>(
+                Directory.GetFiles(root, "*", SearchOption.AllDirectories).Select(Path.GetFullPath),
+                StringComparer.OrdinalIgnoreCase);
+            if (!expectedFiles.SetEquals(actualFiles))
+            {
+                return false;
+            }
+
+            var expectedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in expectedFiles)
+            {
+                var directory = Path.GetDirectoryName(path);
+                while (!string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
+                {
+                    expectedDirectories.Add(directory);
+                    directory = Path.GetDirectoryName(directory);
+                }
+            }
+
+            var actualDirectories = new HashSet<string>(
+                Directory.GetDirectories(root, "*", SearchOption.AllDirectories).Select(Path.GetFullPath),
+                StringComparer.OrdinalIgnoreCase);
+            return expectedDirectories.SetEquals(actualDirectories) &&
+                actualDirectories.All(path => (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0);
+        }
+
         private static bool IsManagedHash(string value)
         {
             return !string.IsNullOrEmpty(value) && value.Length == 64 &&
@@ -1188,49 +1303,112 @@ namespace Emby.Xtream.Plugin.Service
                     (character >= '0' && character <= '9'));
         }
 
-        private static void MoveManifestFiles(
+        private void MoveManifestFiles(
             string root,
             string destinationRoot,
-            ManagedGenerationManifest manifest)
+            ManagedGenerationManifest manifest,
+            string operation,
+            List<string> movedFiles)
         {
             foreach (var file in manifest.Files)
             {
                 var source = CombineUnderRoot(root, file.RelativePath);
                 var destination = CombineUnderRoot(destinationRoot, file.RelativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                InvokeManagedFileMove(operation, file.RelativePath);
+                File.Move(source, destination);
+                movedFiles.Add(file.RelativePath);
+            }
+        }
+
+        private void RestoreMovedFiles(
+            string root,
+            string destinationRoot,
+            List<string> movedFiles,
+            string operation)
+        {
+            for (var index = movedFiles.Count - 1; index >= 0; index--)
+            {
+                var relativePath = movedFiles[index];
+                var source = CombineUnderRoot(root, relativePath);
+                var destination = CombineUnderRoot(destinationRoot, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                InvokeManagedFileMove(operation, relativePath);
                 File.Move(source, destination);
             }
         }
 
-        private static void RestoreManagedGeneration(
+        private void RestoreManagedGeneration(
             string root,
+            ManagedGenerationManifest active,
             ManagedGenerationManifest previous,
-            List<ManagedPlannedFile> plan,
             string previousFilesRoot,
-            bool mutationStarted)
+            string previousBackupRoot,
+            List<string> quarantinedFiles,
+            List<string> publishedFiles)
         {
-            if (!mutationStarted)
+            for (var index = publishedFiles.Count - 1; index >= 0; index--)
             {
-                return;
+                var relativePath = publishedFiles[index];
+                var path = CombineUnderRoot(root, relativePath);
+                InvokeManagedFileMove("remove-published", relativePath);
+                File.Delete(path);
             }
 
-            if (plan != null)
+            if (quarantinedFiles.Count > 0)
             {
-                foreach (var file in plan)
+                RestoreMovedFiles(previousFilesRoot, root, quarantinedFiles, "restore-quarantine");
+            }
+
+            if (Directory.Exists(previousFilesRoot))
+            {
+                DeleteEmptyDirectoryTree(previousFilesRoot);
+            }
+
+            if (!string.IsNullOrEmpty(previousBackupRoot) && Directory.Exists(previousBackupRoot))
+            {
+                Directory.Move(previousBackupRoot, previousFilesRoot);
+            }
+
+            var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
+            var activeManifestPath = Path.Combine(metadataRoot, "active.json");
+            var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
+            if (active == null)
+            {
+                File.Delete(activeManifestPath);
+            }
+            else
+            {
+                WriteManifestAtomic(activeManifestPath, active);
+            }
+
+            if (previous == null)
+            {
+                File.Delete(previousManifestPath);
+            }
+            else
+            {
+                WriteManifestAtomic(previousManifestPath, previous);
+            }
+        }
+
+        private static void DeleteEmptyDirectoryTree(string root)
+        {
+            foreach (var directory in Directory.GetDirectories(root, "*", SearchOption.AllDirectories)
+                .OrderByDescending(path => path.Length))
+            {
+                if (!Directory.EnumerateFileSystemEntries(directory).Any())
                 {
-                    var path = CombineUnderRoot(root, file.RelativePath);
-                    if (File.Exists(path))
-                    {
-                        File.Delete(path);
-                    }
+                    Directory.Delete(directory);
                 }
             }
 
-            if (previous != null && Directory.Exists(previousFilesRoot))
+            if (Directory.EnumerateFileSystemEntries(root).Any())
             {
-                MoveManifestFiles(previousFilesRoot, root, previous);
-                WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "active.json"), previous);
+                throw new InvalidOperationException("Managed recovery encountered files not owned by this operation.");
             }
+
+            Directory.Delete(root);
         }
 
         private static void DeleteOwnedDirectory(string path)
@@ -1267,6 +1445,11 @@ namespace Emby.Xtream.Plugin.Service
         private void InvokeManagedPhase(string phase)
         {
             ManagedPhaseHook?.Invoke(phase);
+        }
+
+        private void InvokeManagedFileMove(string operation, string relativePath)
+        {
+            ManagedFileMoveHook?.Invoke(operation, relativePath);
         }
     }
 }

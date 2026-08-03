@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -69,6 +70,56 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
+        public async Task PublishManagedMappingAsync_MidQuarantineFailure_RestoresEveryMovedFile()
+        {
+            var service = MakeService();
+            var original = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(
+                1,
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "https://editor.example/current/"), None)).Success);
+            var foreignPath = Path.Combine(TempDir.Path, "foreign.bin");
+            File.WriteAllBytes(foreignPath, new byte[] { 0, 1, 2, 255 });
+            var before = SnapshotFiles(TempDir.Path);
+            InjectSecondMoveFailure(service, "quarantine");
+
+            var failed = await service.PublishManagedMappingAsync(MovieMapping(
+                1,
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "https://editor.example/replacement/"), None);
+
+            Assert.False(failed.Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            Assert.Equal(new byte[] { 0, 1, 2, 255 }, File.ReadAllBytes(foreignPath));
+        }
+
+        [Fact]
+        public async Task PublishManagedMappingAsync_MidPublicationFailure_RestoresEveryMovedFile()
+        {
+            var service = MakeService();
+            var original = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(
+                1,
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "https://editor.example/current/"), None)).Success);
+            var foreignPath = Path.Combine(TempDir.Path, "foreign.bin");
+            File.WriteAllBytes(foreignPath, new byte[] { 0, 1, 2, 255 });
+            var before = SnapshotFiles(TempDir.Path);
+            InjectSecondMoveFailure(service, "publish");
+
+            var failed = await service.PublishManagedMappingAsync(MovieMapping(
+                1,
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "https://editor.example/replacement/"), None);
+
+            Assert.False(failed.Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            Assert.Equal(new byte[] { 0, 1, 2, 255 }, File.ReadAllBytes(foreignPath));
+        }
+
+        [Fact]
         public async Task RollbackManagedMappingAsync_PreviousGeneration_RestoresItAtomically()
         {
             var service = MakeService();
@@ -114,6 +165,34 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.Equal(0, refreshCount);
         }
 
+        [Theory]
+        [InlineData("rollback-active")]
+        [InlineData("rollback-previous")]
+        public async Task RollbackManagedMappingAsync_MidMoveFailure_RestoresBothGenerations(string operation)
+        {
+            var service = MakeService();
+            var original = MovieMapping(1);
+            var replacement = MovieMapping(
+                1,
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "https://editor.example/replacement/");
+            Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(replacement, None)).Success);
+            var foreignPath = Path.Combine(TempDir.Path, "foreign.bin");
+            File.WriteAllBytes(foreignPath, new byte[] { 0, 1, 2, 255 });
+            var before = SnapshotFiles(TempDir.Path);
+            InjectSecondMoveFailure(service, operation);
+
+            var failed = await service.RollbackManagedMappingAsync(
+                TempDir.Path,
+                original.MappingUuid,
+                None);
+
+            Assert.False(failed.Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            Assert.Equal(new byte[] { 0, 1, 2, 255 }, File.ReadAllBytes(foreignPath));
+        }
+
         [Fact]
         public async Task PublishManagedMappingAsync_UnownedFile_PreservesIt()
         {
@@ -139,6 +218,21 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.False(result.Success);
             Assert.Equal("foreign", File.ReadAllText(foreignPath));
             Assert.False(File.Exists(Path.Combine(metadataRoot, "active.json")));
+        }
+
+        [Fact]
+        public async Task PublishManagedMappingAsync_InvalidActiveManifest_PreservesForeignMetadata()
+        {
+            var metadataRoot = Path.Combine(TempDir.Path, ".m3u-editor-for-emby");
+            Directory.CreateDirectory(metadataRoot);
+            var manifestPath = Path.Combine(metadataRoot, "active.json");
+            var foreignManifest = new byte[] { 0, 1, 2, 255 };
+            File.WriteAllBytes(manifestPath, foreignManifest);
+
+            var result = await MakeService().PublishManagedMappingAsync(MovieMapping(1), None);
+
+            Assert.False(result.Success);
+            Assert.Equal(foreignManifest, File.ReadAllBytes(manifestPath));
         }
 
         [Fact]
@@ -202,11 +296,19 @@ namespace Emby.Xtream.Plugin.Tests
                 }
             }));
             var config = DefaultConfig();
+            var refreshCount = 0;
 
-            var result = await MakeService().ReconcileManagedAsync(config, SaveConfig, null, None);
+            var result = await ReconcileWithRefresh(MakeService(), config, () =>
+            {
+                Assert.True(File.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
+                Assert.Equal(1, Handler.ReceivedBodies.Count(body => body.Contains("status=success")));
+                Assert.Equal(0, SaveConfigCallCount);
+                refreshCount++;
+            });
 
             Assert.True(result.Compatible);
             Assert.True(result.Success, result.Error);
+            Assert.Equal(1, refreshCount);
             Assert.Equal(1, result.AppliedMappings);
             Assert.Equal(catalogRevision, config.ManagedCatalogRevision);
             Assert.Equal(mapping.Revision, config.ManagedActiveGeneration);
@@ -217,15 +319,63 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
+        public async Task ReconcileManagedAsync_MultipleChangedMappings_RefreshesOnceAfterEveryCallback()
+        {
+            var firstRoot = Path.Combine(TempDir.Path, "first");
+            var secondRoot = Path.Combine(TempDir.Path, "second");
+            Directory.CreateDirectory(firstRoot);
+            Directory.CreateDirectory(secondRoot);
+            var first = MovieMapping(1);
+            first.TargetLibrary.OutputPath = firstRoot;
+            var second = MovieMapping(
+                1,
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "https://editor.example/second/");
+            second.MappingUuid = "123e4567-e89b-12d3-a456-426614174002";
+            second.IntegrationId = 8;
+            second.TargetLibrary.Id = "library-2";
+            second.TargetLibrary.OutputPath = secondRoot;
+            ConfigureReconcile(first, second);
+            var refreshCount = 0;
+
+            var result = await ReconcileWithRefresh(MakeService(), DefaultConfig(), () =>
+            {
+                Assert.Equal(2, Handler.ReceivedBodies.Count(body => body.Contains("status=success")));
+                Assert.Equal(0, SaveConfigCallCount);
+                refreshCount++;
+            });
+
+            Assert.True(result.Success, result.Error);
+            Assert.Equal(2, result.AppliedMappings);
+            Assert.Equal(1, refreshCount);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_DuplicateSyncReportForChangedMapping_StillRefreshes()
+        {
+            var mapping = MovieMapping(1);
+            ConfigureReconcileResponses(true, mapping);
+            var refreshCount = 0;
+
+            var result = await ReconcileWithRefresh(MakeService(), DefaultConfig(), () => refreshCount++);
+
+            Assert.True(result.Success, result.Error);
+            Assert.Equal(1, result.DuplicateMappings);
+            Assert.Equal(1, refreshCount);
+        }
+
+        [Fact]
         public async Task ReconcileManagedAsync_NoCompatibleCapability_LeavesGenericXtreamModeUntouched()
         {
             Handler.RespondWith("player_api.php?username=", "{\"user_info\":{\"auth\":1}}");
             var config = DefaultConfig();
+            var refreshCount = 0;
 
-            var result = await MakeService().ReconcileManagedAsync(config, SaveConfig, null, None);
+            var result = await ReconcileWithRefresh(MakeService(), config, () => refreshCount++);
 
             Assert.False(result.Compatible);
             Assert.True(result.Success);
+            Assert.Equal(0, refreshCount);
             Assert.False(config.ManagedPublishingEnabled);
             Assert.Single(Handler.ReceivedUrls);
         }
@@ -244,9 +394,12 @@ namespace Emby.Xtream.Plugin.Tests
             }));
             Handler.RespondWith("action=m3u_editor_sync_result", "{}", HttpStatusCode.ServiceUnavailable);
 
-            var result = await MakeService().ReconcileManagedAsync(DefaultConfig(), SaveConfig, null, None);
+            var refreshCount = 0;
+
+            var result = await ReconcileWithRefresh(MakeService(), DefaultConfig(), () => refreshCount++);
 
             Assert.False(result.Success);
+            Assert.Equal(0, refreshCount);
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
             Assert.False(Directory.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby")));
             Assert.DoesNotContain(Handler.ReceivedBodies, body => body.Contains("status=failed"));
@@ -267,12 +420,45 @@ namespace Emby.Xtream.Plugin.Tests
             Handler.RespondWith("action=m3u_editor_sync_result", "{\"error\":\"sync_failed\"}", HttpStatusCode.UnprocessableEntity);
             var config = DefaultConfig();
             config.SyncMovies = true;
+            var refreshCount = 0;
 
-            var result = await MakeService().ReconcileManagedAsync(config, SaveConfig, null, None);
+            var result = await ReconcileWithRefresh(MakeService(), config, () => refreshCount++);
 
             Assert.False(result.Success);
+            Assert.Equal(0, refreshCount);
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
             Assert.Contains(Handler.ReceivedBodies, body => body.Contains("status=failed"));
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_DuplicateOnly_DoesNotRefresh()
+        {
+            var service = MakeService();
+            var mapping = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(mapping, None)).Success);
+            ConfigureReconcile(mapping);
+            var refreshCount = 0;
+
+            var result = await ReconcileWithRefresh(service, DefaultConfig(), () => refreshCount++);
+
+            Assert.True(result.Success, result.Error);
+            Assert.Equal(1, result.DuplicateMappings);
+            Assert.Equal(0, refreshCount);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_RefreshDisabled_DoesNotRefresh()
+        {
+            var mapping = MovieMapping(1);
+            mapping.Options.Refresh = false;
+            ConfigureReconcile(mapping);
+            var refreshCount = 0;
+
+            var result = await ReconcileWithRefresh(MakeService(), DefaultConfig(), () => refreshCount++);
+
+            Assert.True(result.Success, result.Error);
+            Assert.Equal(1, result.AppliedMappings);
+            Assert.Equal(0, refreshCount);
         }
 
         [Fact]
@@ -494,6 +680,78 @@ namespace Emby.Xtream.Plugin.Tests
                     }
                 }
             };
+        }
+
+        private async Task<ManagedReconcileResult> ReconcileWithRefresh(
+            StrmSyncService service,
+            PluginConfiguration config,
+            Action refresh)
+        {
+            return await service.ReconcileManagedAsync(config, SaveConfig, null, None, refresh);
+        }
+
+        private void ConfigureReconcile(params M3uEditorMapping[] mappings)
+        {
+            ConfigureReconcileResponses(false, mappings);
+        }
+
+        private void ConfigureReconcileResponses(bool callbackDuplicate, params M3uEditorMapping[] mappings)
+        {
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
+            {
+                ApiVersion = 1,
+                FullSnapshot = true,
+                Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Mappings = mappings.ToList()
+            }));
+            foreach (var mapping in mappings)
+            {
+                Handler.RespondWith("action=m3u_editor_sync_result", JsonSerializer.Serialize(
+                    new M3uEditorResponse<M3uEditorSyncResult>
+                    {
+                        ApiVersion = 1,
+                        Data = new M3uEditorSyncResult
+                        {
+                            Applied = true,
+                            Duplicate = callbackDuplicate,
+                            MappingUuid = mapping.MappingUuid,
+                            Revision = mapping.Revision
+                        }
+                    }));
+            }
+        }
+
+        private static void InjectSecondMoveFailure(StrmSyncService service, string operation)
+        {
+            var moveCount = 0;
+            service.ManagedFileMoveHook = (currentOperation, relativePath) =>
+            {
+                if (currentOperation == operation && ++moveCount == 2)
+                {
+                    throw new IOException("Injected per-file move failure for " + relativePath + ".");
+                }
+            };
+        }
+
+        private static Dictionary<string, byte[]> SnapshotFiles(string root)
+        {
+            return Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+                .ToDictionary(
+                    path => Path.GetRelativePath(root, path),
+                    File.ReadAllBytes,
+                    StringComparer.Ordinal);
+        }
+
+        private static void AssertFilesEqual(
+            Dictionary<string, byte[]> expected,
+            Dictionary<string, byte[]> actual)
+        {
+            Assert.Equal(expected.Keys.OrderBy(path => path), actual.Keys.OrderBy(path => path));
+            foreach (var pair in expected)
+            {
+                Assert.Equal(pair.Value, actual[pair.Key]);
+            }
         }
 
         private static JsonElement EmptyJsonArray()
