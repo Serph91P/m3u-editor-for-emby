@@ -26,6 +26,7 @@ namespace Emby.Xtream.Plugin.Service
         public int Changed { get; set; }
         public int Removed { get; set; }
         public int FileCount { get; set; }
+        public int StrmFileCount { get; set; }
         public int OmittedVersions { get; set; }
         public string Error { get; set; }
     }
@@ -46,7 +47,7 @@ namespace Emby.Xtream.Plugin.Service
         public string Error { get; set; }
     }
 
-    internal sealed class ManagedMappingState
+    public sealed class ManagedMappingState
     {
         public string MappingUuid { get; set; }
         public int IntegrationId { get; set; }
@@ -58,6 +59,9 @@ namespace Emby.Xtream.Plugin.Service
         public bool Success { get; set; }
         public bool Duplicate { get; set; }
         public int FileCount { get; set; }
+        public int StrmFileCount { get; set; }
+        public int SeriesCount { get; set; }
+        public int SeasonCount { get; set; }
         public int Added { get; set; }
         public int Changed { get; set; }
         public int Removed { get; set; }
@@ -244,6 +248,15 @@ namespace Emby.Xtream.Plugin.Service
                         Success = published.Success,
                         Duplicate = published.Duplicate,
                         FileCount = published.FileCount,
+                        StrmFileCount = published.StrmFileCount,
+                        SeriesCount = mapping.Items.Count(item =>
+                            string.Equals(item.MediaType, "series", StringComparison.Ordinal)),
+                        SeasonCount = mapping.Items
+                            .Where(item => string.Equals(item.MediaType, "series", StringComparison.Ordinal))
+                            .Sum(item => (item.Episodes ?? new List<M3uEditorCatalogItem>())
+                                .Select(episode => episode.SeasonNumber)
+                                .Distinct()
+                                .Count()),
                         Added = published.Added,
                         Changed = published.Changed,
                         Removed = published.Removed,
@@ -607,7 +620,9 @@ namespace Emby.Xtream.Plugin.Service
                     Success = true,
                     Revision = previous.Revision,
                     PreviousRevision = active.Revision,
-                    FileCount = previous.Files.Count
+                    FileCount = previous.Files.Count,
+                    StrmFileCount = previous.Files.Count(file =>
+                        file.RelativePath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
                 };
             }
             catch (OperationCanceledException)
@@ -723,6 +738,8 @@ namespace Emby.Xtream.Plugin.Service
                     result.Success = true;
                     result.Duplicate = true;
                     result.FileCount = activeManifest.Files.Count;
+                    result.StrmFileCount = activeManifest.Files.Count(file =>
+                        file.RelativePath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase));
                     result.PreviousRevision = ReadManifest(previousManifestPath)?.Revision;
                     return result;
                 }
@@ -799,6 +816,7 @@ namespace Emby.Xtream.Plugin.Service
 
                 result.Success = true;
                 result.FileCount = plan.Count;
+                result.StrmFileCount = plan.Count(file => !file.IsNfo);
                 return result;
             }
             catch (OperationCanceledException)

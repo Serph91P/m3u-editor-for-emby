@@ -110,7 +110,7 @@ namespace Emby.Xtream.Plugin.Client
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(30));
-                for (var attempt = 0; attempt < 2; attempt++)
+                for (var attempt = 0; attempt < 3; attempt++)
                 {
                     try
                     {
@@ -118,6 +118,17 @@ namespace Emby.Xtream.Plugin.Client
                         {
                             if (!response.IsSuccessStatusCode)
                             {
+                                if ((int)response.StatusCode == 409 && attempt < 2)
+                                {
+                                    var conflictBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                                    if (IsRetryableCatalogConflict(conflictBody))
+                                    {
+                                        await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)), timeout.Token)
+                                            .ConfigureAwait(false);
+                                        continue;
+                                    }
+                                }
+
                                 if (attempt == 0 && (int)response.StatusCode >= 500)
                                 {
                                     continue;
@@ -166,6 +177,33 @@ namespace Emby.Xtream.Plugin.Client
             }
 
             throw new InvalidOperationException("Managed catalog request failed.");
+        }
+
+        private static bool IsRetryableCatalogConflict(string body)
+        {
+            try
+            {
+                using (var document = JsonDocument.Parse(body))
+                {
+                    JsonElement error;
+                    JsonElement code;
+                    if (!document.RootElement.TryGetProperty("error", out error) ||
+                        error.ValueKind != JsonValueKind.Object ||
+                        !error.TryGetProperty("code", out code) ||
+                        code.ValueKind != JsonValueKind.String)
+                    {
+                        return false;
+                    }
+
+                    var value = code.GetString();
+                    return string.Equals(value, "stale_revision", StringComparison.Ordinal) ||
+                           string.Equals(value, "incomplete_publication", StringComparison.Ordinal);
+                }
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
         }
 
         public async Task<M3uEditorSyncResult> ReportSyncResultAsync(

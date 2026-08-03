@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Emby.Xtream.Plugin.Api;
 using Emby.Xtream.Plugin.Client.Models;
 using MediaBrowser.Model.Logging;
 using STJ = System.Text.Json;
@@ -108,6 +109,8 @@ namespace Emby.Xtream.Plugin.Service
         private readonly object _historyLock = new object();
         private readonly List<FailedSyncItem> _failedItems = new List<FailedSyncItem>();
         private readonly object _failedItemsLock = new object();
+        internal ManagedActionJobCoordinator ManagedActionJobs { get; } =
+            new ManagedActionJobCoordinator(TimeSpan.FromMinutes(10));
 
         private SyncProgress _movieProgress = new SyncProgress();
         private SyncProgress _seriesProgress = new SyncProgress();

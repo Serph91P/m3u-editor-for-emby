@@ -137,6 +137,97 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
+        public async Task GetCatalogAsync_StaleRevisionConflict_RetriesUntilCatalogIsPublished()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "action=m3u_editor_catalog",
+                "{\"error\":{\"code\":\"stale_revision\"}}",
+                System.Net.HttpStatusCode.Conflict);
+            handler.RespondWith("action=m3u_editor_catalog", CatalogJson);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var catalog = await client.GetCatalogAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    CancellationToken.None);
+
+                Assert.Equal(Revision, catalog.Revision);
+                Assert.Equal(2, handler.ReceivedUrls.Count);
+            }
+        }
+
+        [Fact]
+        public async Task GetCatalogAsync_IncompletePublicationConflict_StopsAfterThreeAttempts()
+        {
+            var handler = new FakeHttpHandler();
+            const string conflict = "{\"error\":{\"code\":\"incomplete_publication\"}}";
+            handler.RespondWith("action=m3u_editor_catalog", conflict, System.Net.HttpStatusCode.Conflict);
+            handler.RespondWith("action=m3u_editor_catalog", conflict, System.Net.HttpStatusCode.Conflict);
+            handler.RespondWith("action=m3u_editor_catalog", conflict, System.Net.HttpStatusCode.Conflict);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    CancellationToken.None));
+
+                Assert.Equal("Managed catalog request failed with HTTP 409.", error.Message);
+                Assert.Equal(3, handler.ReceivedUrls.Count);
+            }
+        }
+
+        [Fact]
+        public async Task GetCatalogAsync_CancellationDuringConflictBackoff_IsHonored()
+        {
+            var handler = new FakeHttpHandler();
+            const string conflict = "{\"error\":{\"code\":\"stale_revision\"}}";
+            handler.RespondWith("action=m3u_editor_catalog", conflict, System.Net.HttpStatusCode.Conflict);
+            handler.RespondWith("action=m3u_editor_catalog", conflict, System.Net.HttpStatusCode.Conflict);
+            handler.RespondWith("action=m3u_editor_catalog", conflict, System.Net.HttpStatusCode.Conflict);
+            using (var httpClient = new HttpClient(handler))
+            using (var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(20)))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetCatalogAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    cancellation.Token));
+            }
+        }
+
+        [Fact]
+        public async Task GetCatalogAsync_UnrelatedConflict_FailsWithoutRetrying()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "action=m3u_editor_catalog",
+                "{\"error\":{\"code\":\"mapping_not_found\"}}",
+                System.Net.HttpStatusCode.Conflict);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    CancellationToken.None));
+
+                Assert.Equal("Managed catalog request failed with HTTP 409.", error.Message);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
         public async Task DiscoverCapabilityAsync_TransientServerFailure_RetriesIdempotentReadOnce()
         {
             var handler = new FakeHttpHandler();

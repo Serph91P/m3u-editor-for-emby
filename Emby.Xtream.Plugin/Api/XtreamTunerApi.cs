@@ -64,11 +64,13 @@ namespace Emby.Xtream.Plugin.Api
     }
 
     [Route("/XtreamTuner/Managed/Reconcile", "POST", Summary = "Reconciles a compatible m3u-editor managed publishing catalog")]
+    [Authenticated]
     public class ReconcileManagedCatalog : IReturn<ManagedActionResult>
     {
     }
 
     [Route("/XtreamTuner/Managed/Rollback", "POST", Summary = "Rolls a managed mapping back to its previous valid generation")]
+    [Authenticated]
     public class RollbackManagedCatalog : IReturn<ManagedActionResult>
     {
         public string MappingUuid { get; set; }
@@ -80,8 +82,11 @@ namespace Emby.Xtream.Plugin.Api
     }
 
     [Route("/XtreamTuner/Dashboard", "GET", Summary = "Gets dashboard data including sync history and library stats")]
+    [Authenticated]
     public class GetDashboard : IReturn<DashboardResult>
     {
+        public int? ManagedPage { get; set; }
+        public int? ManagedPageSize { get; set; }
     }
 
     [Route("/XtreamTuner/Content/Movies", "DELETE", Summary = "Deletes all movie STRM content")]
@@ -266,6 +271,10 @@ namespace Emby.Xtream.Plugin.Api
     public class ManagedActionResult
     {
         public bool Success { get; set; }
+        public bool Accepted { get; set; }
+        public bool Duplicate { get; set; }
+        public string JobId { get; set; }
+        public string State { get; set; }
         public bool Compatible { get; set; }
         public string Message { get; set; }
         public int TotalMappings { get; set; }
@@ -306,10 +315,23 @@ namespace Emby.Xtream.Plugin.Api
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
         public string MappingsJson { get; set; }
+        public List<ManagedMappingState> Mappings { get; set; }
+        public int TotalMappings { get; set; }
+        public int TotalFiles { get; set; }
+        public int TotalStrmFiles { get; set; }
+        public int MovieFolders { get; set; }
+        public int MovieCount { get; set; }
+        public int SeriesCount { get; set; }
+        public int SeasonCount { get; set; }
+        public int EpisodeCount { get; set; }
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+        public bool HasMore { get; set; }
         public string DryRunSummary { get; set; }
         public int OmittedVersions { get; set; }
         public string LastError { get; set; }
         public DateTime? LastSuccess { get; set; }
+        public ManagedJobStatus Job { get; set; }
     }
 
     public class LibraryStats
@@ -325,6 +347,92 @@ namespace Emby.Xtream.Plugin.Api
 
     public class XtreamTunerApi : BaseApiService
     {
+        internal static ManagedDashboardStatus BuildManagedDashboardStatus(
+            PluginConfiguration config,
+            ManagedJobStatus job,
+            int requestedPage,
+            int requestedPageSize)
+        {
+            var page = Math.Max(1, requestedPage);
+            var pageSize = Math.Max(1, Math.Min(25, requestedPageSize));
+            List<ManagedMappingState> mappings;
+            try
+            {
+                mappings = string.IsNullOrWhiteSpace(config.ManagedMappingsJson)
+                    ? new List<ManagedMappingState>()
+                    : System.Text.Json.JsonSerializer.Deserialize<List<ManagedMappingState>>(
+                        config.ManagedMappingsJson) ?? new List<ManagedMappingState>();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                mappings = new List<ManagedMappingState>();
+            }
+
+            mappings = mappings
+                .OrderBy(mapping => mapping.MappingUuid, StringComparer.Ordinal)
+                .ToList();
+            var maximumPage = mappings.Count == 0 ? 1 : ((mappings.Count - 1) / pageSize) + 1;
+            page = Math.Min(page, maximumPage);
+            var pageMappings = mappings
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList();
+            var libraryStats = BuildManagedLibraryStats(mappings);
+            return new ManagedDashboardStatus
+            {
+                Enabled = config.ManagedPublishingEnabled,
+                ApiVersion = config.ManagedPublishingApiVersion,
+                CatalogRevision = config.ManagedCatalogRevision,
+                ActiveGeneration = config.ManagedActiveGeneration,
+                PreviousGeneration = config.ManagedPreviousGeneration,
+                MappingsJson = System.Text.Json.JsonSerializer.Serialize(pageMappings),
+                Mappings = pageMappings,
+                TotalMappings = mappings.Count,
+                TotalFiles = mappings.Sum(mapping => mapping.FileCount),
+                TotalStrmFiles = mappings.Sum(mapping => mapping.StrmFileCount),
+                MovieFolders = libraryStats.MovieFolders,
+                MovieCount = libraryStats.MovieCount,
+                SeriesCount = libraryStats.SeriesCount,
+                SeasonCount = libraryStats.SeasonCount,
+                EpisodeCount = libraryStats.EpisodeCount,
+                Page = page,
+                PageSize = pageSize,
+                HasMore = page * pageSize < mappings.Count,
+                DryRunSummary = config.ManagedDryRunSummary,
+                OmittedVersions = config.ManagedOmittedVersions,
+                LastError = config.ManagedLastError,
+                LastSuccess = config.ManagedLastSuccessTicks > 0
+                    ? new DateTime(config.ManagedLastSuccessTicks, DateTimeKind.Utc)
+                    : (DateTime?)null,
+                Job = job
+            };
+        }
+
+        internal static LibraryStats BuildManagedLibraryStats(IEnumerable<ManagedMappingState> mappings)
+        {
+            var states = (mappings ?? Enumerable.Empty<ManagedMappingState>()).ToList();
+            return new LibraryStats
+            {
+                MovieFolders = states.Count(mapping =>
+                    string.Equals(mapping.CollectionType, "movies", StringComparison.Ordinal)),
+                MovieCount = states
+                    .Where(mapping => string.Equals(mapping.CollectionType, "movies", StringComparison.Ordinal))
+                    .Sum(mapping => mapping.StrmFileCount),
+                SeriesFolders = states
+                    .Where(mapping => string.Equals(mapping.CollectionType, "tvshows", StringComparison.Ordinal))
+                    .Sum(mapping => mapping.SeriesCount),
+                SeriesCount = states
+                    .Where(mapping => string.Equals(mapping.CollectionType, "tvshows", StringComparison.Ordinal))
+                    .Sum(mapping => mapping.SeriesCount),
+                SeasonCount = states
+                    .Where(mapping => string.Equals(mapping.CollectionType, "tvshows", StringComparison.Ordinal))
+                    .Sum(mapping => mapping.SeasonCount),
+                EpisodeCount = states
+                    .Where(mapping => string.Equals(mapping.CollectionType, "tvshows", StringComparison.Ordinal))
+                    .Sum(mapping => mapping.StrmFileCount)
+            };
+        }
+
         public async Task<object> Get(GetEpgXml request)
         {
             var liveTvService = Plugin.Instance.LiveTvService;
@@ -568,14 +676,23 @@ namespace Emby.Xtream.Plugin.Api
             return result;
         }
 
-        public async Task<object> Post(ReconcileManagedCatalog request)
+        public object Post(ReconcileManagedCatalog request)
+        {
+            var jobs = Plugin.Instance.StrmSyncService.ManagedActionJobs;
+            return ToManagedActionAdmission(jobs.TryStart(
+                "reconcile",
+                null,
+                ReconcileManagedCatalogAsync));
+        }
+
+        private static async Task<ManagedActionResult> ReconcileManagedCatalogAsync(CancellationToken cancellationToken)
         {
             var config = Plugin.Instance.Configuration;
             var reconciled = await Plugin.Instance.StrmSyncService.ReconcileManagedAsync(
                 config,
                 () => Plugin.Instance.SaveConfiguration(),
                 null,
-                CancellationToken.None,
+                cancellationToken,
                 () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
                 .ConfigureAwait(false);
             return new ManagedActionResult
@@ -593,7 +710,19 @@ namespace Emby.Xtream.Plugin.Api
             };
         }
 
-        public async Task<object> Post(RollbackManagedCatalog request)
+        public object Post(RollbackManagedCatalog request)
+        {
+            var jobs = Plugin.Instance.StrmSyncService.ManagedActionJobs;
+            var mappingUuid = request == null ? null : request.MappingUuid;
+            return ToManagedActionAdmission(jobs.TryStart(
+                "rollback",
+                mappingUuid,
+                cancellationToken => RollbackManagedCatalogAsync(mappingUuid, cancellationToken)));
+        }
+
+        private static async Task<ManagedActionResult> RollbackManagedCatalogAsync(
+            string mappingUuid,
+            CancellationToken cancellationToken)
         {
             var config = Plugin.Instance.Configuration;
             List<ManagedMappingState> mappings;
@@ -609,7 +738,7 @@ namespace Emby.Xtream.Plugin.Api
             }
 
             var mapping = mappings?.FirstOrDefault(value =>
-                string.Equals(value.MappingUuid, request.MappingUuid, StringComparison.OrdinalIgnoreCase));
+                string.Equals(value.MappingUuid, mappingUuid, StringComparison.OrdinalIgnoreCase));
             if (mapping == null)
             {
                 return new ManagedActionResult
@@ -622,11 +751,18 @@ namespace Emby.Xtream.Plugin.Api
             var rollback = await Plugin.Instance.StrmSyncService.RollbackManagedMappingAsync(
                 mapping.OutputPath,
                 mapping.MappingUuid,
-                CancellationToken.None,
+                cancellationToken,
                 () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
                 .ConfigureAwait(false);
             if (rollback.Success)
             {
+                mapping.ActiveRevision = rollback.Revision;
+                mapping.PreviousRevision = rollback.PreviousRevision;
+                mapping.FileCount = rollback.FileCount;
+                mapping.StrmFileCount = rollback.StrmFileCount;
+                mapping.Success = true;
+                mapping.Error = string.Empty;
+                config.ManagedMappingsJson = System.Text.Json.JsonSerializer.Serialize(mappings);
                 config.ManagedActiveGeneration = rollback.Revision ?? string.Empty;
                 config.ManagedPreviousGeneration = rollback.PreviousRevision ?? string.Empty;
                 config.ManagedLastError = string.Empty;
@@ -645,6 +781,21 @@ namespace Emby.Xtream.Plugin.Api
                 Message = rollback.Success ? "Previous managed generation restored." : rollback.Error,
                 Revision = rollback.Revision,
                 PreviousRevision = rollback.PreviousRevision
+            };
+        }
+
+        internal static ManagedActionResult ToManagedActionAdmission(ManagedJobStatus status)
+        {
+            return new ManagedActionResult
+            {
+                Success = status.Accepted || status.Duplicate,
+                Accepted = status.Accepted,
+                Duplicate = status.Duplicate,
+                JobId = status.JobId,
+                State = status.State,
+                Message = status.Accepted
+                    ? "Managed action accepted."
+                    : "A managed action is already running."
             };
         }
 
@@ -707,6 +858,11 @@ namespace Emby.Xtream.Plugin.Api
             var syncService = Plugin.Instance.StrmSyncService;
             var config = Plugin.Instance.Configuration;
             var history = syncService.GetSyncHistory();
+            var managedStatus = BuildManagedDashboardStatus(
+                config,
+                syncService.ManagedActionJobs.GetStatus(),
+                request?.ManagedPage ?? 1,
+                request?.ManagedPageSize ?? 10);
 
             var movieFolders = 0;
             var movieCount = 0;
@@ -714,10 +870,19 @@ namespace Emby.Xtream.Plugin.Api
             var seasonCount = 0;
             var episodeCount = 0;
 
+            if (config.ManagedPublishingEnabled)
+            {
+                movieFolders = managedStatus.MovieFolders;
+                movieCount = managedStatus.MovieCount;
+                seriesCount = managedStatus.SeriesCount;
+                seasonCount = managedStatus.SeasonCount;
+                episodeCount = managedStatus.EpisodeCount;
+            }
+
             try
             {
                 var moviesRoot = Path.Combine(config.StrmLibraryPath, "Movies");
-                if (Directory.Exists(moviesRoot))
+                if (!config.ManagedPublishingEnabled && Directory.Exists(moviesRoot))
                 {
                     movieFolders = Directory.GetDirectories(moviesRoot, "*", SearchOption.TopDirectoryOnly).Length;
                     movieCount = Directory.GetFiles(moviesRoot, "*.strm", SearchOption.AllDirectories).Length;
@@ -735,7 +900,7 @@ namespace Emby.Xtream.Plugin.Api
             try
             {
                 var showsRoot = Path.Combine(config.StrmLibraryPath, "Shows");
-                if (Directory.Exists(showsRoot))
+                if (!config.ManagedPublishingEnabled && Directory.Exists(showsRoot))
                 {
                     // In single mode: Shows/ShowName/Season XX/
                     // In multiple/custom mode: Shows/Category/ShowName/Season XX/
@@ -818,21 +983,7 @@ namespace Emby.Xtream.Plugin.Api
                 IsRunning = syncService.MovieProgress.IsRunning || syncService.SeriesProgress.IsRunning,
                 AutoSyncOn = config.AutoSyncEnabled,
                 NextSyncTime = nextSyncTime,
-                ManagedPublishing = new ManagedDashboardStatus
-                {
-                    Enabled = config.ManagedPublishingEnabled,
-                    ApiVersion = config.ManagedPublishingApiVersion,
-                    CatalogRevision = config.ManagedCatalogRevision,
-                    ActiveGeneration = config.ManagedActiveGeneration,
-                    PreviousGeneration = config.ManagedPreviousGeneration,
-                    MappingsJson = config.ManagedMappingsJson,
-                    DryRunSummary = config.ManagedDryRunSummary,
-                    OmittedVersions = config.ManagedOmittedVersions,
-                    LastError = config.ManagedLastError,
-                    LastSuccess = config.ManagedLastSuccessTicks > 0
-                        ? new DateTime(config.ManagedLastSuccessTicks, DateTimeKind.Utc)
-                        : (DateTime?)null
-                },
+                ManagedPublishing = managedStatus,
                 LibraryStats = new LibraryStats
                 {
                     MovieFolders   = movieFolders,

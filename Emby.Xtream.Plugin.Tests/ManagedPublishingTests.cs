@@ -23,6 +23,7 @@ namespace Emby.Xtream.Plugin.Tests
 
             Assert.True(result.Success, result.Error);
             Assert.Equal(2, result.OmittedVersions);
+            Assert.Equal(8, result.StrmFileCount);
             var strmFiles = Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories);
             Assert.Equal(8, strmFiles.Length);
             Assert.Contains(strmFiles, path => path.EndsWith("Movie - v00.strm"));
@@ -314,6 +315,9 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.Equal(mapping.Revision, config.ManagedActiveGeneration);
             Assert.True(config.ManagedPublishingEnabled);
             Assert.Contains("2 added", config.ManagedDryRunSummary);
+            var state = Assert.Single(JsonSerializer.Deserialize<List<ManagedMappingState>>(
+                config.ManagedMappingsJson));
+            Assert.Equal(1, state.StrmFileCount);
             Assert.Equal(1, Handler.ReceivedBodies.Count(body => body.Contains("status=success")));
             Assert.Contains(Handler.ReceivedBodies, body => body.Contains("revision=" + mapping.Revision));
         }

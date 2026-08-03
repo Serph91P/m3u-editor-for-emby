@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Emby.Xtream.Plugin.Api;
 using Emby.Xtream.Plugin.Service;
 using MediaBrowser.Controller.LiveTv;
+using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Services;
 using Xunit;
@@ -87,6 +88,22 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
+        public void ManagedDashboardAndActions_RequireEmbyAuthentication()
+        {
+            Assert.NotEmpty(typeof(GetDashboard).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
+            Assert.NotEmpty(typeof(ReconcileManagedCatalog).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
+            Assert.NotEmpty(typeof(RollbackManagedCatalog).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
+            Assert.Empty(typeof(GetM3UPlaylist).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
+
+            Assert.Equal(
+                typeof(object),
+                typeof(XtreamTunerApi).GetMethod("Post", new[] { typeof(ReconcileManagedCatalog) }).ReturnType);
+            Assert.Equal(
+                typeof(object),
+                typeof(XtreamTunerApi).GetMethod("Post", new[] { typeof(RollbackManagedCatalog) }).ReturnType);
+        }
+
+        [Fact]
         public void Dashboard_ManagedPublishingControls_UseOldRouteNamespaceAndConfirmRollback()
         {
             var assembly = typeof(Plugin).Assembly;
@@ -108,8 +125,13 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.Contains("managedPublishingMappings", html);
             Assert.Contains("btnManagedReconcile", html);
             Assert.Contains("btnManagedRollback", html);
+            Assert.Contains("btnManagedPreviousPage", html);
+            Assert.Contains("btnManagedNextPage", html);
             Assert.Contains("XtreamTuner/Managed/Reconcile", javascript);
             Assert.Contains("XtreamTuner/Managed/Rollback", javascript);
+            Assert.Contains("ManagedPage", javascript);
+            Assert.Contains("managed.Job", javascript);
+            Assert.Contains("Managed publishing status unavailable", javascript);
             Assert.Contains("confirm(", javascript);
         }
     }
