@@ -123,7 +123,7 @@ namespace Emby.Xtream.Plugin.Client
                                     var conflictBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                                     if (IsRetryableCatalogConflict(conflictBody))
                                     {
-                                        await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)), timeout.Token)
+                                        await Task.Delay(TimeSpan.FromMilliseconds(100d * (attempt + 1)), timeout.Token)
                                             .ConfigureAwait(false);
                                         continue;
                                     }
