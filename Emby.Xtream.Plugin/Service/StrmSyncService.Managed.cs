@@ -490,7 +490,8 @@ namespace Emby.Xtream.Plugin.Service
         internal async Task<ManagedPublishResult> RollbackManagedMappingAsync(
             string outputRoot,
             string mappingUuid,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Action refresh = null)
         {
             Guid parsedMappingUuid;
             if (string.IsNullOrWhiteSpace(outputRoot) || !Guid.TryParse(mappingUuid, out parsedMappingUuid))
@@ -508,7 +509,33 @@ namespace Emby.Xtream.Plugin.Service
 
             try
             {
-                return RollbackManagedMapping(root, mappingUuid, cancellationToken);
+                var rolledBack = RollbackManagedMapping(root, mappingUuid, cancellationToken);
+                if (!rolledBack.Success || refresh == null)
+                {
+                    return rolledBack;
+                }
+
+                try
+                {
+                    refresh();
+                    return rolledBack;
+                }
+                catch (InvalidOperationException)
+                {
+                    var restored = RollbackManagedMapping(root, mappingUuid, CancellationToken.None);
+                    return Failed(
+                        restored.Revision,
+                        "Managed rollback refresh failed; the prior active generation was restored.",
+                        restored);
+                }
+                catch (ArgumentException)
+                {
+                    var restored = RollbackManagedMapping(root, mappingUuid, CancellationToken.None);
+                    return Failed(
+                        restored.Revision,
+                        "Managed rollback refresh failed; the prior active generation was restored.",
+                        restored);
+                }
             }
             finally
             {

@@ -11,6 +11,7 @@ using Emby.Xtream.Plugin.Client.Models;
 using Emby.Xtream.Plugin.Service;
 using Emby.Xtream.Plugin.Util;
 using MediaBrowser.Controller.Api;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Services;
@@ -619,7 +620,9 @@ namespace Emby.Xtream.Plugin.Api
             var rollback = await Plugin.Instance.StrmSyncService.RollbackManagedMappingAsync(
                 mapping.OutputPath,
                 mapping.MappingUuid,
-                CancellationToken.None).ConfigureAwait(false);
+                CancellationToken.None,
+                () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
+                .ConfigureAwait(false);
             if (rollback.Success)
             {
                 config.ManagedActiveGeneration = rollback.Revision ?? string.Empty;

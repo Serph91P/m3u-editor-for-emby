@@ -79,18 +79,39 @@ namespace Emby.Xtream.Plugin.Tests
                 "https://editor.example/replacement/");
             Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
             Assert.True((await service.PublishManagedMappingAsync(replacement, None)).Success);
+            var refreshCount = 0;
 
             var rollback = await service.RollbackManagedMappingAsync(
                 TempDir.Path,
                 original.MappingUuid,
-                None);
+                None,
+                () => refreshCount++);
 
             Assert.True(rollback.Success, rollback.Error);
+            Assert.Equal(1, refreshCount);
             Assert.Equal(original.Revision, rollback.Revision);
             Assert.Equal(replacement.Revision, rollback.PreviousRevision);
             var activeStrm = Assert.Single(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories)
                 .Where(path => !path.Contains(Path.DirectorySeparatorChar + ".m3u-editor-for-emby" + Path.DirectorySeparatorChar)));
             Assert.Contains("https://editor.example/play/0", File.ReadAllText(activeStrm));
+        }
+
+        [Fact]
+        public async Task RollbackManagedMappingAsync_NoPreviousGeneration_DoesNotRefresh()
+        {
+            var service = MakeService();
+            var mapping = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(mapping, None)).Success);
+            var refreshCount = 0;
+
+            var rollback = await service.RollbackManagedMappingAsync(
+                TempDir.Path,
+                mapping.MappingUuid,
+                None,
+                () => refreshCount++);
+
+            Assert.False(rollback.Success);
+            Assert.Equal(0, refreshCount);
         }
 
         [Fact]
