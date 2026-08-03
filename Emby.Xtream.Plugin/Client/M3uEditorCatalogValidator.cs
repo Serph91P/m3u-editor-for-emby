@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -266,9 +267,7 @@ namespace Emby.Xtream.Plugin.Client
                 return false;
             }
 
-            return path[0] == '/' || path[0] == '\\' ||
-                   (path.Length >= 3 && char.IsLetter(path[0]) && path[1] == ':' &&
-                    (path[2] == '/' || path[2] == '\\'));
+            return Path.IsPathRooted(path);
         }
 
         internal static bool IsSafeRelativePath(string path)

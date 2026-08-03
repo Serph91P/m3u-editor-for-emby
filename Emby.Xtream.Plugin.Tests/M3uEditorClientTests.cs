@@ -1,6 +1,8 @@
-using System.Collections.Generic;
-using System.Net.Http;
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net.Http;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Emby.Xtream.Plugin.Client;
@@ -190,6 +192,41 @@ namespace Emby.Xtream.Plugin.Tests
                 Assert.DoesNotContain("account", error.ToString());
                 Assert.DoesNotContain("credential", error.ToString());
                 Assert.DoesNotContain("https://", error.ToString());
+            }
+        }
+
+        [Fact]
+        public void CatalogOutputPathAcceptance_UsesCurrentRuntimeRootSemantics()
+        {
+            var method = typeof(M3uEditorCatalogValidator).GetMethod(
+                "IsAbsolutePath",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+            Func<string, bool> accepts = path => (bool)method.Invoke(null, new object[] { path });
+            var nativeAbsolutePath = Path.Combine(Path.GetTempPath(), "managed-movies");
+            var candidates = new[]
+            {
+                nativeAbsolutePath,
+                @"C:\managed\movies",
+                @"\managed\movies",
+                @"\\server\share\movies"
+            };
+
+            Assert.True(Path.IsPathRooted(nativeAbsolutePath));
+            Assert.True(accepts(nativeAbsolutePath));
+            foreach (var candidate in candidates)
+            {
+                if (accepts(candidate))
+                {
+                    Assert.True(Path.IsPathRooted(candidate), "Accepted path was not rooted on this runtime: " + candidate);
+                }
+            }
+
+            if (Path.DirectorySeparatorChar == '/')
+            {
+                Assert.False(accepts(@"C:\managed\movies"));
+                Assert.False(accepts(@"\managed\movies"));
+                Assert.False(accepts(@"\\server\share\movies"));
             }
         }
 
