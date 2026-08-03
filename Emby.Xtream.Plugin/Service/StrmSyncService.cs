@@ -71,7 +71,7 @@ namespace Emby.Xtream.Plugin.Service
         public DateTime FailedAt { get; set; } = DateTime.UtcNow;
     }
 
-    public class StrmSyncService
+    public partial class StrmSyncService
     {
         private static readonly STJ.JsonSerializerOptions JsonOptions = new STJ.JsonSerializerOptions
         {
@@ -283,6 +283,15 @@ namespace Emby.Xtream.Plugin.Service
 
             try
             {
+                if (HasManagedOwnershipConflict(config, "movies"))
+                {
+                    movieSyncSuccess = false;
+                    _movieProgress.AbortReason =
+                        "Legacy movie sync is blocked because a managed mapping owns an overlapping output root.";
+                    _movieProgress.Phase = "Managed ownership conflict";
+                    return;
+                }
+
                 EnsureStrmLibraryPath(config.StrmLibraryPath);
 
                 var folderMappings = FolderMappingParser.Parse(config.MovieFolderMappings);
@@ -635,6 +644,16 @@ namespace Emby.Xtream.Plugin.Service
 
             try
             {
+                if (HasManagedOwnershipConflict(config, "tvshows"))
+                {
+                    seriesSyncSuccess = false;
+                    _seriesProgress.AbortReason =
+                        "Legacy series sync is blocked because a managed mapping owns an overlapping output root.";
+                    _seriesProgress.Phase = "Managed ownership conflict";
+                    _episodeProgress.IsRunning = false;
+                    return;
+                }
+
                 EnsureStrmLibraryPath(config.StrmLibraryPath);
 
                 var folderMappings = FolderMappingParser.Parse(config.SeriesFolderMappings);

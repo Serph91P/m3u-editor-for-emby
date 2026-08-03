@@ -246,6 +246,14 @@ function (BaseView, loading) {
             dashboardSyncAll(self);
         });
 
+        view.querySelector('.btnManagedReconcile').addEventListener('click', function () {
+            reconcileManaged(view);
+        });
+
+        view.querySelector('.btnManagedRollback').addEventListener('click', function () {
+            rollbackManaged(view);
+        });
+
         // Retry failed items button
         view.querySelector('.btnRetryFailed').addEventListener('click', function () {
             retryFailed(view);
@@ -2005,6 +2013,7 @@ function (BaseView, loading) {
 
             renderLibraryStats(view, data);
             renderDashboardHistory(view, data);
+            renderManagedPublishing(view, data.ManagedPublishing);
 
             if (data.IsRunning) {
                 startDashboardProgressPolling(view);
@@ -2393,6 +2402,111 @@ function (BaseView, loading) {
         } else {
             statsContainer.style.display = 'none';
         }
+    }
+
+    function renderManagedPublishing(view, managed) {
+        var statusEl = view.querySelector('.managedPublishingStatus');
+        var detailsEl = view.querySelector('.managedPublishingDetails');
+        var mappingsEl = view.querySelector('.managedPublishingMappings');
+        var warningEl = view.querySelector('.managedPublishingWarning');
+        var errorEl = view.querySelector('.managedPublishingError');
+        var selectEl = view.querySelector('.managedRollbackMapping');
+        var rollbackBtn = view.querySelector('.btnManagedRollback');
+        managed = managed || {};
+
+        if (!managed.Enabled) {
+            statusEl.innerHTML = '<span class="status-badge idle">Generic Xtream mode</span>' +
+                '<span style="margin-left:0.7em;">No compatible m3u-editor publishing v1 capability is active.</span>';
+        } else {
+            statusEl.innerHTML = '<span class="status-badge success">Managed mode active</span>' +
+                '<span style="margin-left:0.7em;">API v' + escapeHtml(managed.ApiVersion) +
+                ': full snapshots, library mappings, variants, provider failover, local NFO, revision metadata</span>';
+        }
+
+        detailsEl.innerHTML =
+            '<div><strong>Catalog:</strong> ' + escapeHtml(managed.CatalogRevision || 'Not fetched') + '</div>' +
+            '<div><strong>Active generation:</strong> ' + escapeHtml(managed.ActiveGeneration || 'None') + '</div>' +
+            '<div><strong>Previous generation:</strong> ' + escapeHtml(managed.PreviousGeneration || 'None') + '</div>' +
+            '<div><strong>Dry run:</strong> ' + escapeHtml(managed.DryRunSummary || 'No plan available') + '</div>' +
+            '<div><strong>Last success:</strong> ' + escapeHtml(managed.LastSuccess ? new Date(managed.LastSuccess).toLocaleString() : 'Never') + '</div>';
+
+        var mappings = [];
+        try { mappings = managed.MappingsJson ? JSON.parse(managed.MappingsJson) : []; }
+        catch (e) { console.warn('Xtream: managed mapping state parse failed', e); }
+        if (mappings.length === 0) {
+            mappingsEl.innerHTML = '<div style="opacity:0.55;">No managed library mappings advertised.</div>';
+            selectEl.innerHTML = '<option value="">No mapping available</option>';
+        } else {
+            mappingsEl.innerHTML = mappings.map(function (mapping) {
+                var state = mapping.Success ? 'success' : 'failed';
+                var label = mapping.Success ? (mapping.Duplicate ? 'Already current' : 'Published') : 'Failed';
+                return '<div style="padding:0.45em 0; border-top:1px solid rgba(128,128,128,0.12);">' +
+                    '<span class="status-badge ' + state + '">' + label + '</span> ' +
+                    '<strong>' + escapeHtml(mapping.LibraryName || mapping.MappingUuid) + '</strong> ' +
+                    '<span style="opacity:0.6;">(' + escapeHtml(mapping.CollectionType) + ', revision ' +
+                    escapeHtml(mapping.ActiveRevision || 'none') + ', ' + escapeHtml(mapping.FileCount || 0) + ' files)</span></div>';
+            }).join('');
+            selectEl.innerHTML = mappings.map(function (mapping) {
+                return '<option value="' + escapeHtml(mapping.MappingUuid) + '">' +
+                    escapeHtml(mapping.LibraryName || mapping.MappingUuid) + '</option>';
+            }).join('');
+        }
+
+        warningEl.style.display = managed.OmittedVersions > 0 ? '' : 'none';
+        warningEl.textContent = managed.OmittedVersions > 0
+            ? managed.OmittedVersions + ' visible version(s) were omitted by the eight-version cap.'
+            : '';
+        errorEl.style.display = managed.LastError ? '' : 'none';
+        errorEl.textContent = managed.LastError ? 'Last error: ' + managed.LastError : '';
+        rollbackBtn.disabled = !managed.Enabled || !managed.PreviousGeneration || mappings.length === 0;
+    }
+
+    function reconcileManaged(view) {
+        var resultEl = view.querySelector('.managedPublishingResult');
+        var button = view.querySelector('.btnManagedReconcile');
+        button.disabled = true;
+        resultEl.textContent = 'Reconciling managed catalog...';
+        ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('XtreamTuner/Managed/Reconcile'),
+            dataType: 'json'
+        }).then(function (result) {
+            button.disabled = false;
+            setPillResult(resultEl, result.Success, result.Message);
+            loadDashboard(view);
+        }).catch(function (err) {
+            console.error('Xtream: managed reconcile failed', err);
+            button.disabled = false;
+            setPillResult(resultEl, false, 'Managed reconcile request failed.');
+        });
+    }
+
+    function rollbackManaged(view) {
+        var selectEl = view.querySelector('.managedRollbackMapping');
+        var mappingUuid = selectEl.value;
+        if (!mappingUuid || !window.confirm('Restore the previous plugin-owned generation for this mapping?')) {
+            return;
+        }
+
+        var resultEl = view.querySelector('.managedPublishingResult');
+        var button = view.querySelector('.btnManagedRollback');
+        button.disabled = true;
+        resultEl.textContent = 'Restoring previous generation...';
+        ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('XtreamTuner/Managed/Rollback'),
+            contentType: 'application/json',
+            dataType: 'json',
+            data: JSON.stringify({ MappingUuid: mappingUuid })
+        }).then(function (result) {
+            button.disabled = false;
+            setPillResult(resultEl, result.Success, result.Message);
+            loadDashboard(view);
+        }).catch(function (err) {
+            console.error('Xtream: managed rollback failed', err);
+            button.disabled = false;
+            setPillResult(resultEl, false, 'Managed rollback request failed.');
+        });
     }
 
     function renderLibraryStats(view, data) {

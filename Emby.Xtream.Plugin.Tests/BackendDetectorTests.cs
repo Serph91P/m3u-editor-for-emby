@@ -24,6 +24,42 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
+        public void TryGetPublishingCapability_ExactVersionOneContract_EnablesManagedPublishing()
+        {
+            var json = "{\"m3u_editor\":{\"library_publishing\":{\"api_version\":1,\"actions\":{\"catalog\":\"m3u_editor_catalog\",\"sync_result\":\"m3u_editor_sync_result\"},\"snapshot_mode\":\"full\",\"features\":[\"library_mappings\",\"variants\",\"provider_failover\",\"local_nfo\",\"revision_metadata\"]}}}";
+            using (var doc = JsonDocument.Parse(json))
+            {
+                M3uEditorPublishingCapability capability;
+
+                var compatible = BackendDetector.TryGetPublishingCapability(doc.RootElement, out capability);
+
+                Assert.True(compatible);
+                Assert.Equal(1, capability.ApiVersion);
+                Assert.Equal("m3u_editor_catalog", capability.CatalogAction);
+                Assert.Equal("m3u_editor_sync_result", capability.SyncResultAction);
+                Assert.Equal("full", capability.SnapshotMode);
+                Assert.Contains("provider_failover", capability.Features);
+            }
+        }
+
+        [Theory]
+        [InlineData("{}")]
+        [InlineData("{\"m3u_editor\":null}")]
+        [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":2}}}")]
+        [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":\"1\"}}}")]
+        [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":1,\"actions\":{\"catalog\":\"wrong\",\"sync_result\":\"m3u_editor_sync_result\"},\"snapshot_mode\":\"full\",\"features\":[]}}}")]
+        public void TryGetPublishingCapability_AbsentUnsupportedOrMalformed_UsesGenericXtream(string json)
+        {
+            using (var doc = JsonDocument.Parse(json))
+            {
+                M3uEditorPublishingCapability capability;
+
+                Assert.False(BackendDetector.TryGetPublishingCapability(doc.RootElement, out capability));
+                Assert.Null(capability);
+            }
+        }
+
+        [Fact]
         public void DetectFromXtreamResponse_UserInfoPayload_ReturnsXtream()
         {
             var json = "{\"user_info\":{\"auth\":1,\"status\":\"Active\"},\"server_info\":{\"url\":\"provider.example\"}}";

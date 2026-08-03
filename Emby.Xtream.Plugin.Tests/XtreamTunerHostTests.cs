@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Emby.Xtream.Plugin.Client.Models;
 using Emby.Xtream.Plugin.Service;
 using MediaBrowser.Controller.LiveTv;
+using MediaBrowser.Model.LiveTv;
 using Xunit;
 
 namespace Emby.Xtream.Plugin.Tests
@@ -30,6 +31,59 @@ namespace Emby.Xtream.Plugin.Tests
             // so we have to set it manually for any test that exercises EnsureStatsLoadedAsync.
             // Tests that only call OnChannelListChanged don't need it.
             return host;
+        }
+
+        [Fact]
+        public void ReconcileTunerHosts_FreshInstallCreatesStableOfficialConfiguration()
+        {
+            var options = new LiveTvOptions { TunerHosts = null };
+
+            var changed = XtreamTunerHost.ReconcileTunerHosts(options, true);
+
+            Assert.True(changed);
+            var tuner = Assert.Single(options.TunerHosts);
+            Assert.Equal(XtreamTunerHost.TunerType, tuner.Type);
+            Assert.Equal(XtreamTunerHost.StableTunerId, tuner.Id);
+            Assert.Equal(1, tuner.TunerCount);
+            Assert.False(XtreamTunerHost.ReconcileTunerHosts(options, true));
+        }
+
+        [Fact]
+        public void ReconcileTunerHosts_UpgradeCollapsesDuplicatesAndPreservesExistingOptionsAndUnrelatedTuners()
+        {
+            var unrelated = new TunerHostInfo { Type = "native-tuner", Id = "native", Url = "http://native" };
+            var existing = new TunerHostInfo
+            {
+                Type = XtreamTunerHost.TunerType,
+                Id = "existing-id",
+                Url = "http://preserved",
+                TunerCount = 4
+            };
+            var duplicate = new TunerHostInfo { Type = XtreamTunerHost.TunerType, Id = "duplicate-id" };
+            var options = new LiveTvOptions { TunerHosts = new[] { unrelated, existing, duplicate } };
+
+            var changed = XtreamTunerHost.ReconcileTunerHosts(options, true);
+
+            Assert.True(changed);
+            Assert.Equal(2, options.TunerHosts.Length);
+            Assert.Same(unrelated, options.TunerHosts[0]);
+            Assert.Same(existing, options.TunerHosts[1]);
+            Assert.Equal("existing-id", existing.Id);
+            Assert.Equal("http://preserved", existing.Url);
+            Assert.Equal(4, existing.TunerCount);
+        }
+
+        [Fact]
+        public void ReconcileTunerHosts_DisabledOrMalformed_RemovesOnlyPluginTuners()
+        {
+            var unrelated = new TunerHostInfo { Type = "native-tuner", Id = "native" };
+            var malformed = new TunerHostInfo { Type = XtreamTunerHost.TunerType, Id = null };
+            var options = new LiveTvOptions { TunerHosts = new[] { unrelated, malformed } };
+
+            Assert.True(XtreamTunerHost.ReconcileTunerHosts(options, false));
+            Assert.Single(options.TunerHosts);
+            Assert.Same(unrelated, options.TunerHosts[0]);
+            Assert.False(XtreamTunerHost.ReconcileTunerHosts(options, false));
         }
 
         // ── OnChannelListChanged: drift-invalidation contract ──────────────────

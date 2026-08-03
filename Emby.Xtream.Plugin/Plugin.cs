@@ -29,12 +29,16 @@ namespace Emby.Xtream.Plugin
             _applicationPaths = applicationPaths;
             _liveTvService = new LiveTvService(logManager.GetLogger("XtreamTuner.LiveTv"));
             _strmSyncService = new StrmSyncService(logManager.GetLogger("XtreamTuner.StrmSync"));
+            XtreamTunerHost.ReconcileConfiguredTunerHost(
+                applicationHost,
+                Configuration.EnableLiveTv,
+                logManager.GetLogger("XtreamTuner.Reconcile"));
         }
 
-        public override string Name => "Xtream Tuner";
+        public override string Name => "m3u-editor for Emby";
 
         public override string Description =>
-            "Xtream-compatible Live TV tuner with EPG, category filtering, and pre-populated media info.";
+            "Xtream-compatible Live TV tuner with optional managed m3u-editor library publishing.";
 
         public override Guid Id => Guid.Parse("b7e3c4a1-9f2d-4e8b-a5c6-d1f0e2b3c4a5");
 
@@ -87,9 +91,13 @@ namespace Emby.Xtream.Plugin
                 new PluginPageInfo
                 {
                     // Alias: Emby's Admin Plugins page derives the settings URL from
-                    // Plugin.Name with spaces stripped → "XtreamTuner". Registering that
-                    // name here ensures the Plugins management page links work as well.
+                    // Plugin.Name with spaces stripped. Keep the legacy alias for upgrades.
                     Name = "XtreamTuner",
+                    EmbeddedResourcePath = "Emby.Xtream.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
+                    Name = "m3u-editorforEmby",
                     EmbeddedResourcePath = "Emby.Xtream.Plugin.Configuration.Web.config.html",
                 },
                 new PluginPageInfo

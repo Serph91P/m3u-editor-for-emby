@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Emby.Xtream.Plugin.Client;
 using Emby.Xtream.Plugin.Client.Models;
+using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
@@ -14,6 +15,7 @@ using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.LiveTv;
+using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.MediaInfo;
 using STJ = System.Text.Json;
 using Emby.Xtream.Plugin.Util;
@@ -34,6 +36,7 @@ namespace Emby.Xtream.Plugin.Service
     public class XtreamTunerHost : BaseTunerHost
     {
         internal const string TunerType = "xtream-tuner";
+        internal const string StableTunerId = "b7e3c4a1-9f2d-4e8b-a5c6-d1f0e2b3c4a5";
 
         private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
@@ -101,9 +104,107 @@ namespace Emby.Xtream.Plugin.Service
         {
             return new TunerHostInfo
             {
+                Id = StableTunerId,
                 Type = Type,
                 TunerCount = 1
             };
+        }
+
+        internal static bool ReconcileTunerHosts(LiveTvOptions options, bool enabled)
+        {
+            if (options == null)
+            {
+                return false;
+            }
+
+            var original = options.TunerHosts ?? new TunerHostInfo[0];
+            var pluginTuners = original.Where(tuner => tuner != null &&
+                string.Equals(tuner.Type, TunerType, StringComparison.OrdinalIgnoreCase)).ToList();
+            var selected = pluginTuners.FirstOrDefault(tuner => !string.IsNullOrWhiteSpace(tuner.Id))
+                ?? pluginTuners.FirstOrDefault();
+            var reconciled = new List<TunerHostInfo>();
+            var selectedAdded = false;
+            var changed = options.TunerHosts == null;
+
+            foreach (var tuner in original)
+            {
+                if (tuner == null)
+                {
+                    changed = true;
+                    continue;
+                }
+
+                if (!string.Equals(tuner.Type, TunerType, StringComparison.OrdinalIgnoreCase))
+                {
+                    reconciled.Add(tuner);
+                    continue;
+                }
+
+                if (!enabled || !ReferenceEquals(tuner, selected) || selectedAdded)
+                {
+                    changed = true;
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(tuner.Id))
+                {
+                    tuner.Id = StableTunerId;
+                    changed = true;
+                }
+
+                if (tuner.TunerCount < 1)
+                {
+                    tuner.TunerCount = 1;
+                    changed = true;
+                }
+
+                reconciled.Add(tuner);
+                selectedAdded = true;
+            }
+
+            if (enabled && !selectedAdded)
+            {
+                reconciled.Add(new TunerHostInfo
+                {
+                    Id = StableTunerId,
+                    Type = TunerType,
+                    TunerCount = 1
+                });
+                changed = true;
+            }
+
+            if (changed || reconciled.Count != original.Length)
+            {
+                options.TunerHosts = reconciled.ToArray();
+                return true;
+            }
+
+            return false;
+        }
+
+        internal static void ReconcileConfiguredTunerHost(
+            IApplicationHost applicationHost,
+            bool enabled,
+            ILogger logger)
+        {
+            try
+            {
+                var configManager = applicationHost.Resolve<IConfigurationManager>();
+                var liveTvOptions = configManager.GetConfiguration("livetv") as LiveTvOptions;
+                if (liveTvOptions != null && ReconcileTunerHosts(liveTvOptions, enabled))
+                {
+                    configManager.SaveConfiguration("livetv", liveTvOptions);
+                    logger?.Info("Reconciled the stable Xtream tuner configuration.");
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                logger?.Warn("Xtream tuner reconciliation was unavailable: {0}", ex.Message);
+            }
+            catch (ArgumentException ex)
+            {
+                logger?.Warn("Xtream tuner reconciliation was unavailable: {0}", ex.Message);
+            }
         }
 
         public override bool SupportsGuideData(TunerHostInfo tuner)

@@ -5,7 +5,7 @@
      data-centerfocus="true"
      data-bindheader="true"
      data-controller="__plugin/xtreamconfigjs"
-     data-title="Xtream Tuner">
+     data-title="m3u-editor for Emby">
 
   <div class="scrollSlider flex-grow flex-direction-column padded-left padded-left-page padded-right padded-top-page padded-bottom-page">
     <form class="xtreamConfigForm auto-center">
@@ -353,6 +353,8 @@
                 <!-- ===== Dashboard ===== -->
                 <div class="tabPanel tabDashboard">
 
+                <p style="margin-top:0; opacity:0.7;">m3u-editor for Emby provides managed publishing when a compatible v1 backend is detected and remains a complete Xtream-compatible tuner for every other backend.</p>
+
                 <div class="updateBanner" style="display:none; background:rgba(82,181,75,0.15); border:1px solid rgba(82,181,75,0.4); border-radius:8px; padding:0.8em 1.2em; margin-bottom:1em;">
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5em;">
                         <div>
@@ -419,6 +421,21 @@
                                 <div style="opacity:0.5;">Loading...</div>
                             </div>
                         </div>
+                    </div>
+
+                    <div class="managedPublishingCard dashboard-card" style="margin-bottom:1.2em;">
+                        <h3>Managed m3u-editor Publishing</h3>
+                        <div class="managedPublishingStatus" style="opacity:0.7;">Checking versioned capability...</div>
+                        <div class="managedPublishingDetails" style="margin-top:0.7em; font-size:0.9em;"></div>
+                        <div class="managedPublishingMappings" style="margin-top:0.7em;"></div>
+                        <div class="managedPublishingWarning" style="display:none; margin-top:0.7em; color:#e6a23c;"></div>
+                        <div class="managedPublishingError" style="display:none; margin-top:0.7em; color:#cc4444;"></div>
+                        <div style="display:flex; align-items:center; gap:0.5em; flex-wrap:wrap; margin-top:0.9em;">
+                            <button class="btnManagedReconcile raised button-submit" is="emby-button" type="button">Reconcile Now</button>
+                            <select is="emby-select" class="managedRollbackMapping" style="min-width:14em;"></select>
+                            <button class="btnManagedRollback raised button-secondary" is="emby-button" type="button" disabled>Rollback Previous Generation</button>
+                        </div>
+                        <div class="managedPublishingResult" style="margin-top:0.5em;"></div>
                     </div>
 
                     <!-- Quick Actions -->

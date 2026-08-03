@@ -62,6 +62,17 @@ namespace Emby.Xtream.Plugin.Api
     {
     }
 
+    [Route("/XtreamTuner/Managed/Reconcile", "POST", Summary = "Reconciles a compatible m3u-editor managed publishing catalog")]
+    public class ReconcileManagedCatalog : IReturn<ManagedActionResult>
+    {
+    }
+
+    [Route("/XtreamTuner/Managed/Rollback", "POST", Summary = "Rolls a managed mapping back to its previous valid generation")]
+    public class RollbackManagedCatalog : IReturn<ManagedActionResult>
+    {
+        public string MappingUuid { get; set; }
+    }
+
     [Route("/XtreamTuner/Sync/Status", "GET", Summary = "Gets current sync progress")]
     public class GetSyncStatus : IReturn<SyncStatusResult>
     {
@@ -251,6 +262,19 @@ namespace Emby.Xtream.Plugin.Api
         public SyncProgressInfo Series { get; set; }
     }
 
+    public class ManagedActionResult
+    {
+        public bool Success { get; set; }
+        public bool Compatible { get; set; }
+        public string Message { get; set; }
+        public int TotalMappings { get; set; }
+        public int AppliedMappings { get; set; }
+        public int FailedMappings { get; set; }
+        public int OmittedVersions { get; set; }
+        public string Revision { get; set; }
+        public string PreviousRevision { get; set; }
+    }
+
     public class SyncProgressInfo
     {
         public string Phase { get; set; }
@@ -270,6 +294,21 @@ namespace Emby.Xtream.Plugin.Api
         public LibraryStats LibraryStats { get; set; }
         public bool AutoSyncOn { get; set; }
         public DateTime? NextSyncTime { get; set; }
+        public ManagedDashboardStatus ManagedPublishing { get; set; }
+    }
+
+    public class ManagedDashboardStatus
+    {
+        public bool Enabled { get; set; }
+        public int ApiVersion { get; set; }
+        public string CatalogRevision { get; set; }
+        public string ActiveGeneration { get; set; }
+        public string PreviousGeneration { get; set; }
+        public string MappingsJson { get; set; }
+        public string DryRunSummary { get; set; }
+        public int OmittedVersions { get; set; }
+        public string LastError { get; set; }
+        public DateTime? LastSuccess { get; set; }
     }
 
     public class LibraryStats
@@ -528,6 +567,82 @@ namespace Emby.Xtream.Plugin.Api
             return result;
         }
 
+        public async Task<object> Post(ReconcileManagedCatalog request)
+        {
+            var config = Plugin.Instance.Configuration;
+            var reconciled = await Plugin.Instance.StrmSyncService.ReconcileManagedAsync(
+                config,
+                () => Plugin.Instance.SaveConfiguration(),
+                null,
+                CancellationToken.None).ConfigureAwait(false);
+            return new ManagedActionResult
+            {
+                Success = reconciled.Success,
+                Compatible = reconciled.Compatible,
+                Message = reconciled.Compatible
+                    ? (reconciled.Success ? "Managed catalog reconcile completed." : reconciled.Error)
+                    : "Compatible m3u-editor publishing capability version 1 was not advertised; generic Xtream mode remains active.",
+                TotalMappings = reconciled.TotalMappings,
+                AppliedMappings = reconciled.AppliedMappings,
+                FailedMappings = reconciled.FailedMappings,
+                OmittedVersions = reconciled.OmittedVersions,
+                Revision = reconciled.CatalogRevision
+            };
+        }
+
+        public async Task<object> Post(RollbackManagedCatalog request)
+        {
+            var config = Plugin.Instance.Configuration;
+            List<ManagedMappingState> mappings;
+            try
+            {
+                mappings = string.IsNullOrWhiteSpace(config.ManagedMappingsJson)
+                    ? new List<ManagedMappingState>()
+                    : System.Text.Json.JsonSerializer.Deserialize<List<ManagedMappingState>>(config.ManagedMappingsJson);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                mappings = new List<ManagedMappingState>();
+            }
+
+            var mapping = mappings?.FirstOrDefault(value =>
+                string.Equals(value.MappingUuid, request.MappingUuid, StringComparison.OrdinalIgnoreCase));
+            if (mapping == null)
+            {
+                return new ManagedActionResult
+                {
+                    Success = false,
+                    Message = "The managed mapping was not found in plugin-owned state."
+                };
+            }
+
+            var rollback = await Plugin.Instance.StrmSyncService.RollbackManagedMappingAsync(
+                mapping.OutputPath,
+                mapping.MappingUuid,
+                CancellationToken.None).ConfigureAwait(false);
+            if (rollback.Success)
+            {
+                config.ManagedActiveGeneration = rollback.Revision ?? string.Empty;
+                config.ManagedPreviousGeneration = rollback.PreviousRevision ?? string.Empty;
+                config.ManagedLastError = string.Empty;
+                Plugin.Instance.SaveConfiguration();
+            }
+            else
+            {
+                config.ManagedLastError = rollback.Error ?? "Managed rollback failed.";
+                Plugin.Instance.SaveConfiguration();
+            }
+
+            return new ManagedActionResult
+            {
+                Success = rollback.Success,
+                Compatible = config.ManagedPublishingEnabled,
+                Message = rollback.Success ? "Previous managed generation restored." : rollback.Error,
+                Revision = rollback.Revision,
+                PreviousRevision = rollback.PreviousRevision
+            };
+        }
+
         public object Get(GetSyncStatus request)
         {
             var syncService = Plugin.Instance.StrmSyncService;
@@ -698,6 +813,21 @@ namespace Emby.Xtream.Plugin.Api
                 IsRunning = syncService.MovieProgress.IsRunning || syncService.SeriesProgress.IsRunning,
                 AutoSyncOn = config.AutoSyncEnabled,
                 NextSyncTime = nextSyncTime,
+                ManagedPublishing = new ManagedDashboardStatus
+                {
+                    Enabled = config.ManagedPublishingEnabled,
+                    ApiVersion = config.ManagedPublishingApiVersion,
+                    CatalogRevision = config.ManagedCatalogRevision,
+                    ActiveGeneration = config.ManagedActiveGeneration,
+                    PreviousGeneration = config.ManagedPreviousGeneration,
+                    MappingsJson = config.ManagedMappingsJson,
+                    DryRunSummary = config.ManagedDryRunSummary,
+                    OmittedVersions = config.ManagedOmittedVersions,
+                    LastError = config.ManagedLastError,
+                    LastSuccess = config.ManagedLastSuccessTicks > 0
+                        ? new DateTime(config.ManagedLastSuccessTicks, DateTimeKind.Utc)
+                        : (DateTime?)null
+                },
                 LibraryStats = new LibraryStats
                 {
                     MovieFolders   = movieFolders,
