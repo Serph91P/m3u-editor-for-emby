@@ -47,7 +47,11 @@ namespace Emby.Xtream.Plugin.Client
                 {
                     try
                     {
-                        using (var response = await _httpClient.GetAsync(requestUrl, timeout.Token).ConfigureAwait(false))
+                        using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
+                        using (var response = await _httpClient.SendAsync(
+                            request,
+                            HttpCompletionOption.ResponseHeadersRead,
+                            timeout.Token).ConfigureAwait(false))
                         {
                             if (!response.IsSuccessStatusCode)
                             {
@@ -118,7 +122,11 @@ namespace Emby.Xtream.Plugin.Client
                 {
                     try
                     {
-                        using (var response = await _httpClient.GetAsync(requestUrl, timeout.Token).ConfigureAwait(false))
+                        using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
+                        using (var response = await _httpClient.SendAsync(
+                            request,
+                            HttpCompletionOption.ResponseHeadersRead,
+                            timeout.Token).ConfigureAwait(false))
                         {
                             if (!response.IsSuccessStatusCode)
                             {
@@ -250,12 +258,17 @@ namespace Emby.Xtream.Plugin.Client
 
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             using (var content = new FormUrlEncodedContent(fields))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, requestUrl))
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                request.Content = content;
                 HttpResponseMessage response;
                 try
                 {
-                    response = await _httpClient.PostAsync(requestUrl, content, timeout.Token).ConfigureAwait(false);
+                    response = await _httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeout.Token).ConfigureAwait(false);
                 }
                 catch (HttpRequestException)
                 {
@@ -385,7 +398,9 @@ namespace Emby.Xtream.Plugin.Client
                 while (true)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var read = await stream.ReadAsync(chunk, 0, chunk.Length, cancellationToken).ConfigureAwait(false);
+                    var remaining = MaximumResponseBytes - buffer.Length;
+                    var readSize = (int)Math.Min(chunk.Length, remaining + 1);
+                    var read = await stream.ReadAsync(chunk, 0, readSize, cancellationToken).ConfigureAwait(false);
                     if (read == 0)
                     {
                         break;

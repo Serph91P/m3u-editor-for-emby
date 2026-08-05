@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
@@ -303,18 +304,25 @@ namespace Emby.Xtream.Plugin.Tests
             }
         }
 
-        [Fact]
-        public async Task GetCatalogAsync_OversizedStream_FailsClosed()
+        [Theory]
+        [InlineData("capability", "GET")]
+        [InlineData("catalog", "GET")]
+        [InlineData("callback", "POST")]
+        public async Task ManagedRequests_IncrementalOversizedResponse_ReadsOnlyThroughSentinel(
+            string requestPath,
+            string expectedMethod)
         {
-            var handler = new FakeHttpHandler();
-            handler.RespondWith("action=m3u_editor_catalog", new string('x', M3uEditorClient.MaximumResponseBytes + 1));
+            var content = new IncrementalContent(M3uEditorClient.MaximumResponseBytes + 8192);
+            var handler = new IncrementalContentHandler(content);
             using (var httpClient = new HttpClient(handler))
             {
                 var client = new M3uEditorClient(httpClient);
-                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
-                    "https://editor.example", "account", "credential", CancellationToken.None));
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => SendManagedRequestAsync(client, requestPath));
 
                 Assert.Contains("response limit", error.Message);
+                Assert.Equal(expectedMethod, handler.Method);
+                Assert.Equal(M3uEditorClient.MaximumResponseBytes + 1L, content.BytesRead);
             }
         }
 
@@ -493,6 +501,165 @@ namespace Emby.Xtream.Plugin.Tests
     }]
   }]
 }";
+
+        private static async Task SendManagedRequestAsync(M3uEditorClient client, string requestPath)
+        {
+            if (requestPath == "capability")
+            {
+                await client.DiscoverCapabilityAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None);
+                return;
+            }
+
+            if (requestPath == "catalog")
+            {
+                await client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None);
+                return;
+            }
+
+            await client.ReportSyncResultAsync(
+                "https://editor.example",
+                "account",
+                "credential",
+                7,
+                "123e4567-e89b-12d3-a456-426614174000",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                true,
+                "summary",
+                null,
+                CancellationToken.None);
+        }
+
+        private sealed class IncrementalContentHandler : HttpMessageHandler
+        {
+            private readonly HttpContent _content;
+
+            public IncrementalContentHandler(HttpContent content)
+            {
+                _content = content;
+            }
+
+            public string Method { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                Method = request.Method.Method;
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = _content
+                });
+            }
+        }
+
+        private sealed class IncrementalContent : HttpContent
+        {
+            private readonly int _length;
+
+            public IncrementalContent(int length)
+            {
+                _length = length;
+            }
+
+            public long BytesRead { get; private set; }
+
+            protected override async Task SerializeToStreamAsync(Stream stream, TransportContext context)
+            {
+                using (var source = CreateStream())
+                {
+                    var buffer = new byte[8192];
+                    int read;
+                    while ((read = await source.ReadAsync(buffer, 0, buffer.Length)) != 0)
+                    {
+                        await stream.WriteAsync(buffer, 0, read);
+                    }
+                }
+            }
+
+            protected override Task<Stream> CreateContentReadStreamAsync()
+            {
+                return Task.FromResult<Stream>(CreateStream());
+            }
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = 0;
+                return false;
+            }
+
+            private Stream CreateStream()
+            {
+                return new IncrementalStream(_length, read => BytesRead += read);
+            }
+        }
+
+        private sealed class IncrementalStream : Stream
+        {
+            private readonly int _length;
+            private readonly Action<int> _recordRead;
+            private int _position;
+
+            public IncrementalStream(int length, Action<int> recordRead)
+            {
+                _length = length;
+                _recordRead = recordRead;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => _length;
+            public override long Position
+            {
+                get { return _position; }
+                set { throw new NotSupportedException(); }
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                var read = Math.Min(count, _length - _position);
+                if (read == 0)
+                {
+                    return 0;
+                }
+
+                Array.Fill(buffer, (byte)'x', offset, read);
+                _position += read;
+                _recordRead(read);
+                return read;
+            }
+
+            public override Task<int> ReadAsync(
+                byte[] buffer,
+                int offset,
+                int count,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(Read(buffer, offset, count));
+            }
+
+            public override void Flush()
+            {
+            }
+
+            public override long Seek(long offset, SeekOrigin origin)
+            {
+                throw new NotSupportedException();
+            }
+
+            public override void SetLength(long value)
+            {
+                throw new NotSupportedException();
+            }
+
+            public override void Write(byte[] buffer, int offset, int count)
+            {
+                throw new NotSupportedException();
+            }
+        }
 
         private sealed class ThrowingHandler : HttpMessageHandler
         {
