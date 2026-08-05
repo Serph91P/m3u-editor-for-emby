@@ -11,6 +11,10 @@ namespace Emby.Xtream.Plugin.Client
 {
     internal static class M3uEditorCatalogValidator
     {
+        internal const int MaximumMappings = 100;
+        internal const int MaximumCatalogItems = 10000;
+        internal const int MaximumVariantsPerItem = 64;
+        internal const int MaximumGeneratedFiles = 50000;
         private static readonly Regex RevisionPattern = new Regex("^[a-f0-9]{64}$", RegexOptions.Compiled);
         private static readonly Regex InvalidFilenamePattern = new Regex("[<>:\"/\\\\|?*\\x00-\\x1F]", RegexOptions.Compiled);
 
@@ -27,14 +31,22 @@ namespace Emby.Xtream.Plugin.Client
             }
 
             ValidateRevision(catalog.Revision, "Managed catalog revision is invalid.");
-            if (catalog.Mappings == null)
+            if (catalog.Mappings == null || catalog.Mappings.Count > MaximumMappings)
             {
                 Fail("Managed catalog mappings are invalid.");
             }
 
             var mappingIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            long totalItems = 0;
+            long totalFiles = 0;
             foreach (var mapping in catalog.Mappings)
             {
+                CountOutput(mapping, ref totalItems, ref totalFiles);
+                if (totalItems > MaximumCatalogItems || totalFiles > MaximumGeneratedFiles)
+                {
+                    Fail("Managed catalog exceeds item or generated file limits.");
+                }
+
                 ValidateMapping(mapping);
                 if (!mappingIds.Add(mapping.MappingUuid))
                 {
@@ -152,7 +164,7 @@ namespace Emby.Xtream.Plugin.Client
 
         private static void ValidateVariants(List<M3uEditorVariant> variants)
         {
-            if (variants == null || variants.Count == 0)
+            if (variants == null || variants.Count == 0 || variants.Count > MaximumVariantsPerItem)
             {
                 Fail("Managed item variants are invalid.");
             }
@@ -176,6 +188,48 @@ namespace Emby.Xtream.Plugin.Client
                 {
                     ValidateSource(failover, sourceIds);
                 }
+            }
+        }
+
+        private static void CountOutput(M3uEditorMapping mapping, ref long itemCount, ref long fileCount)
+        {
+            if (mapping == null || mapping.Items == null)
+            {
+                return;
+            }
+
+            foreach (var item in mapping.Items)
+            {
+                CountItemOutput(item, ref itemCount, ref fileCount);
+            }
+        }
+
+        private static void CountItemOutput(M3uEditorCatalogItem item, ref long itemCount, ref long fileCount)
+        {
+            itemCount++;
+            if (item == null)
+            {
+                return;
+            }
+
+            if (item.Nfo != null)
+            {
+                fileCount++;
+            }
+
+            if (item.Variants != null)
+            {
+                fileCount += Math.Min(8, item.Variants.Count);
+            }
+
+            if (item.Episodes == null)
+            {
+                return;
+            }
+
+            foreach (var episode in item.Episodes)
+            {
+                CountItemOutput(episode, ref itemCount, ref fileCount);
             }
         }
 

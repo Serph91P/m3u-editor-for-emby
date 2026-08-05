@@ -90,6 +90,13 @@ namespace Emby.Xtream.Plugin.Service
 
         private static readonly int MaxHistoryEntries = 10;
         private static readonly HttpClient SharedHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        private static readonly HttpClient ManagedHttpClient = new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
 
         // Increment when naming logic changes so existing installs force a full re-sync on next run.
         internal const int CurrentStrmNamingVersion = 1;
@@ -105,6 +112,7 @@ namespace Emby.Xtream.Plugin.Service
         private readonly ILogger _logger;
         private readonly TmdbLookupService _tmdbLookupService;
         private readonly HttpClient _httpClient;
+        private readonly HttpClient _managedHttpClient;
         private List<SyncHistoryEntry> _syncHistory;
         private readonly object _historyLock = new object();
         private readonly List<FailedSyncItem> _failedItems = new List<FailedSyncItem>();
@@ -131,6 +139,7 @@ namespace Emby.Xtream.Plugin.Service
             _logger = logger;
             _tmdbLookupService = new TmdbLookupService(logger);
             _httpClient = httpClient ?? SharedHttpClient;
+            _managedHttpClient = httpClient ?? ManagedHttpClient;
         }
 
         /// <summary>

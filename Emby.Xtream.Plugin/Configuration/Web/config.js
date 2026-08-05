@@ -488,6 +488,7 @@ function (BaseView, loading) {
 
             // Sync settings
             view.querySelector('.txtStrmLibraryPath').value = config.StrmLibraryPath || '/config/xtream';
+            view.querySelector('.txtManagedApprovedOutputRoots').value = config.ManagedApprovedOutputRoots || '';
             validateStrmPath(view);
             view.querySelector('.chkSmartSkipExisting').checked = config.SmartSkipExisting !== false;
             view.querySelector('.txtSyncParallelism').value = config.SyncParallelism || 3;
@@ -614,6 +615,7 @@ function (BaseView, loading) {
 
             // Sync settings
             config.StrmLibraryPath = view.querySelector('.txtStrmLibraryPath').value.replace(/\/+$/, '') || '/config/xtream';
+            config.ManagedApprovedOutputRoots = view.querySelector('.txtManagedApprovedOutputRoots').value || '';
             config.SmartSkipExisting = view.querySelector('.chkSmartSkipExisting').checked;
             config.SyncParallelism = parseInt(view.querySelector('.txtSyncParallelism').value, 10) || 3;
             config.CleanupOrphans = view.querySelector('.chkCleanupOrphans').checked;

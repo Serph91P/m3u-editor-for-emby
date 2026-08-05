@@ -88,11 +88,11 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
-        public void ManagedDashboardAndActions_RequireEmbyAuthentication()
+        public void ManagedDashboardAndActions_RequireExactAdminRole()
         {
-            Assert.NotEmpty(typeof(GetDashboard).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
-            Assert.NotEmpty(typeof(ReconcileManagedCatalog).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
-            Assert.NotEmpty(typeof(RollbackManagedCatalog).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
+            Assert.Equal("Admin", GetAuthenticationRoles<GetDashboard>());
+            Assert.Equal("Admin", GetAuthenticationRoles<ReconcileManagedCatalog>());
+            Assert.Equal("Admin", GetAuthenticationRoles<RollbackManagedCatalog>());
             Assert.Empty(typeof(GetM3UPlaylist).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
 
             Assert.Equal(
@@ -101,6 +101,14 @@ namespace Emby.Xtream.Plugin.Tests
             Assert.Equal(
                 typeof(object),
                 typeof(XtreamTunerApi).GetMethod("Post", new[] { typeof(RollbackManagedCatalog) }).ReturnType);
+        }
+
+        private static string GetAuthenticationRoles<TRequest>()
+        {
+            var attribute = Assert.Single(typeof(TRequest)
+                .GetCustomAttributes(typeof(AuthenticatedAttribute), true)
+                .Cast<AuthenticatedAttribute>());
+            return attribute.Roles;
         }
 
         [Fact]

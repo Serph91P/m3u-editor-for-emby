@@ -64,13 +64,13 @@ namespace Emby.Xtream.Plugin.Api
     }
 
     [Route("/XtreamTuner/Managed/Reconcile", "POST", Summary = "Reconciles a compatible m3u-editor managed publishing catalog")]
-    [Authenticated]
+    [Authenticated(Roles = "Admin")]
     public class ReconcileManagedCatalog : IReturn<ManagedActionResult>
     {
     }
 
     [Route("/XtreamTuner/Managed/Rollback", "POST", Summary = "Rolls a managed mapping back to its previous valid generation")]
-    [Authenticated]
+    [Authenticated(Roles = "Admin")]
     public class RollbackManagedCatalog : IReturn<ManagedActionResult>
     {
         public string MappingUuid { get; set; }
@@ -82,7 +82,7 @@ namespace Emby.Xtream.Plugin.Api
     }
 
     [Route("/XtreamTuner/Dashboard", "GET", Summary = "Gets dashboard data including sync history and library stats")]
-    [Authenticated]
+    [Authenticated(Roles = "Admin")]
     public class GetDashboard : IReturn<DashboardResult>
     {
         public int? ManagedPage { get; set; }
@@ -748,11 +748,25 @@ namespace Emby.Xtream.Plugin.Api
                 };
             }
 
+            string approvalError;
+            if (!ManagedOutputPolicy.IsApproved(
+                mapping.OutputPath,
+                config.ManagedApprovedOutputRoots,
+                out approvalError))
+            {
+                return new ManagedActionResult
+                {
+                    Success = false,
+                    Message = approvalError
+                };
+            }
+
             var rollback = await Plugin.Instance.StrmSyncService.RollbackManagedMappingAsync(
                 mapping.OutputPath,
                 mapping.MappingUuid,
                 cancellationToken,
-                () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
+                () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan(),
+                config.ManagedApprovedOutputRoots)
                 .ConfigureAwait(false);
             if (rollback.Success)
             {

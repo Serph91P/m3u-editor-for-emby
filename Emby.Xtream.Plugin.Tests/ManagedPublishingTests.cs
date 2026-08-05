@@ -15,6 +15,20 @@ namespace Emby.Xtream.Plugin.Tests
     public class ManagedPublishingTests : SyncTestBase
     {
         [Fact]
+        public async Task PublishManagedMappingAsync_UnapprovedOutputRoot_FailsBeforeWriting()
+        {
+            var mapping = MovieMapping(1);
+            var approved = Path.Combine(TempDir.Path, "approved");
+            Directory.CreateDirectory(approved);
+
+            var result = await MakeService().PublishManagedMappingAsync(mapping, None, approved);
+
+            Assert.False(result.Success);
+            Assert.Contains("approved root", result.Error);
+            Assert.Empty(Directory.GetFiles(TempDir.Path, "*", SearchOption.AllDirectories));
+        }
+
+        [Fact]
         public async Task PublishManagedMappingAsync_MovieVariants_WritesEightVersionsOneNfoAndManifest()
         {
             var mapping = MovieMapping(10);
@@ -691,6 +705,7 @@ namespace Emby.Xtream.Plugin.Tests
             PluginConfiguration config,
             Action refresh)
         {
+            config.BaseUrl = "https://fake-xtream";
             return await service.ReconcileManagedAsync(config, SaveConfig, null, None, refresh);
         }
 

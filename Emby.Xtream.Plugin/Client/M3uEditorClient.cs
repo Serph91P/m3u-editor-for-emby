@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -12,6 +14,7 @@ namespace Emby.Xtream.Plugin.Client
 {
     internal sealed class M3uEditorClient
     {
+        internal const int MaximumResponseBytes = 16 * 1024 * 1024;
         private static readonly Regex RevisionPattern = new Regex("^[a-f0-9]{64}$", RegexOptions.Compiled);
         private static readonly Regex UrlPattern = new Regex("https?://[^\\s]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SecretPattern = new Regex(
@@ -56,7 +59,8 @@ namespace Emby.Xtream.Plugin.Client
                                 return null;
                             }
 
-                            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                            EnsureConfinedResponse(response, requestUrl);
+                            var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
                             try
                             {
                                 using (var document = JsonDocument.Parse(body))
@@ -120,7 +124,8 @@ namespace Emby.Xtream.Plugin.Client
                             {
                                 if ((int)response.StatusCode == 409 && attempt < 2)
                                 {
-                                    var conflictBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                                    EnsureConfinedResponse(response, requestUrl);
+                                    var conflictBody = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
                                     if (IsRetryableCatalogConflict(conflictBody))
                                     {
                                         await Task.Delay(TimeSpan.FromMilliseconds(100d * (attempt + 1)), timeout.Token)
@@ -138,7 +143,8 @@ namespace Emby.Xtream.Plugin.Client
                                     "Managed catalog request failed with HTTP " + (int)response.StatusCode + ".");
                             }
 
-                            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                            EnsureConfinedResponse(response, requestUrl);
+                            var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
                             M3uEditorCatalog catalog;
                             try
                             {
@@ -283,7 +289,8 @@ namespace Emby.Xtream.Plugin.Client
                             "Managed sync result request failed with HTTP " + (int)response.StatusCode + ".");
                     }
 
-                    var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    EnsureConfinedResponse(response, requestUrl);
+                    var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
                     M3uEditorResponse<M3uEditorSyncResult> envelope;
                     try
                     {
@@ -332,14 +339,68 @@ namespace Emby.Xtream.Plugin.Client
             Uri uri;
             if (string.IsNullOrWhiteSpace(baseUrl) ||
                 !Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out uri) ||
-                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+                uri.Scheme != Uri.UriSchemeHttps ||
                 !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
                 !string.IsNullOrEmpty(uri.Fragment))
             {
-                throw new InvalidOperationException("The managed backend base URL is invalid.");
+                throw new InvalidOperationException("The managed backend base URL must be a confined HTTPS origin.");
             }
 
             return baseUrl.Trim().TrimEnd('/');
+        }
+
+        private static void EnsureConfinedResponse(HttpResponseMessage response, string requestUrl)
+        {
+            var status = (int)response.StatusCode;
+            if (status >= 300 && status < 400)
+            {
+                throw new InvalidOperationException("Managed backend redirects are not allowed.");
+            }
+
+            var actual = response.RequestMessage == null ? null : response.RequestMessage.RequestUri;
+            Uri requested;
+            if (actual != null && Uri.TryCreate(requestUrl, UriKind.Absolute, out requested) &&
+                (!string.Equals(actual.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                 !string.Equals(actual.Host, requested.Host, StringComparison.OrdinalIgnoreCase) ||
+                 actual.Port != requested.Port))
+            {
+                throw new InvalidOperationException("Managed backend response origin changed.");
+            }
+        }
+
+        private static async Task<string> ReadLimitedBodyAsync(
+            HttpResponseMessage response,
+            CancellationToken cancellationToken)
+        {
+            var declared = response.Content.Headers.ContentLength;
+            if (declared.HasValue && declared.Value > MaximumResponseBytes)
+            {
+                throw new InvalidOperationException("Managed backend response limit exceeded.");
+            }
+
+            using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+            using (var buffer = new MemoryStream())
+            {
+                var chunk = new byte[8192];
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var read = await stream.ReadAsync(chunk, 0, chunk.Length, cancellationToken).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    if (buffer.Length + read > MaximumResponseBytes)
+                    {
+                        throw new InvalidOperationException("Managed backend response limit exceeded.");
+                    }
+
+                    buffer.Write(chunk, 0, read);
+                }
+
+                return Encoding.UTF8.GetString(buffer.ToArray());
+            }
         }
 
         private static string RedactCallbackText(string value, string username, string password)

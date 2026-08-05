@@ -22,6 +22,7 @@ namespace Emby.Xtream.Plugin
         public string ManagedActiveGeneration { get; set; } = string.Empty;
         public string ManagedPreviousGeneration { get; set; } = string.Empty;
         public string ManagedMappingsJson { get; set; } = string.Empty;
+        public string ManagedApprovedOutputRoots { get; set; } = string.Empty;
         public string ManagedDryRunSummary { get; set; } = string.Empty;
         public int ManagedOmittedVersions { get; set; }
         public string ManagedLastError { get; set; } = string.Empty;

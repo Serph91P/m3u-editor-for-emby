@@ -32,6 +32,7 @@ namespace Emby.Xtream.Plugin.Tests
             Username              = "user",
             Password              = "pass",
             StrmLibraryPath       = TempDir.Path,
+            ManagedApprovedOutputRoots = TempDir.Path,
             SmartSkipExisting     = false,
             CleanupOrphans        = false,
             OrphanSafetyThreshold = 0.0,

@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Emby.Xtream.Plugin.Client;
+using Emby.Xtream.Plugin.Client.Models;
 using Emby.Xtream.Plugin.Tests.Fakes;
 using Xunit;
 
@@ -267,6 +270,54 @@ namespace Emby.Xtream.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData("http://editor.example")]
+        [InlineData("https://editor.example?next=https://other.example")]
+        [InlineData("https://editor.example/#fragment")]
+        [InlineData("https://account@editor.example")]
+        public async Task ManagedRequests_NonConfinedOrigin_FailBeforeSendingCredentials(string baseUrl)
+        {
+            var handler = new FakeHttpHandler();
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    baseUrl, "account", "credential", CancellationToken.None));
+
+                Assert.Contains("HTTPS", error.Message);
+                Assert.Empty(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task GetCatalogAsync_OversizedDeclaredResponse_FailsClosed()
+        {
+            var handler = new DeclaredLengthHandler(M3uEditorClient.MaximumResponseBytes + 1L);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None));
+
+                Assert.Contains("response limit", error.Message);
+            }
+        }
+
+        [Fact]
+        public async Task GetCatalogAsync_OversizedStream_FailsClosed()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_catalog", new string('x', M3uEditorClient.MaximumResponseBytes + 1));
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None));
+
+                Assert.Contains("response limit", error.Message);
+            }
+        }
+
         [Fact]
         public async Task GetCatalogAsync_TransportError_DoesNotExposeAuthenticatedUrl()
         {
@@ -319,6 +370,25 @@ namespace Emby.Xtream.Plugin.Tests
                 Assert.False(accepts(@"\managed\movies"));
                 Assert.False(accepts(@"\\server\share\movies"));
             }
+        }
+
+        [Fact]
+        public void Validate_ExcessiveMappingCount_FailsClosed()
+        {
+            var catalog = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            var mapping = catalog.Mappings[0];
+            catalog.Mappings = Enumerable.Repeat(mapping, M3uEditorCatalogValidator.MaximumMappings + 1).ToList();
+
+            var error = Assert.Throws<InvalidOperationException>(() => M3uEditorCatalogValidator.Validate(catalog));
+
+            Assert.Contains("mappings", error.Message);
+        }
+
+        [Fact]
+        public void SafeFilename_EnforcesLengthLimit()
+        {
+            Assert.True(M3uEditorCatalogValidator.IsSafeFilename(new string('a', 240)));
+            Assert.False(M3uEditorCatalogValidator.IsSafeFilename(new string('a', 241)));
         }
 
         public static IEnumerable<object[]> InvalidCatalogs
@@ -400,6 +470,28 @@ namespace Emby.Xtream.Plugin.Tests
             {
                 return Task.FromException<HttpResponseMessage>(new HttpRequestException(
                     "Transport failed at https://sensitive.invalid/ for account credential"));
+            }
+        }
+
+        private sealed class DeclaredLengthHandler : HttpMessageHandler
+        {
+            private readonly long _length;
+
+            public DeclaredLengthHandler(long length)
+            {
+                _length = length;
+            }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                var content = new ByteArrayContent(new byte[0]);
+                content.Headers.ContentLength = _length;
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = content
+                });
             }
         }
     }

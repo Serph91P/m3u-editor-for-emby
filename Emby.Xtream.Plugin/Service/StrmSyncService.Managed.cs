@@ -117,7 +117,7 @@ namespace Emby.Xtream.Plugin.Service
 
             var result = new ManagedReconcileResult { Success = true };
             var refreshRequired = false;
-            var client = new M3uEditorClient(_httpClient);
+            var client = new M3uEditorClient(_managedHttpClient);
             try
             {
                 progress?.Report(0);
@@ -155,7 +155,15 @@ namespace Emby.Xtream.Plugin.Service
                     cancellationToken.ThrowIfCancellationRequested();
                     var mapping = catalog.Mappings[index];
                     ManagedPublishResult published;
-                    if (OverlapsEnabledLegacyRoot(config, mapping))
+                    string approvalError;
+                    if (!ManagedOutputPolicy.IsApproved(
+                        mapping.TargetLibrary.OutputPath,
+                        config.ManagedApprovedOutputRoots,
+                        out approvalError))
+                    {
+                        published = Failed(mapping.Revision, approvalError);
+                    }
+                    else if (OverlapsEnabledLegacyRoot(config, mapping))
                     {
                         published = Failed(
                             mapping.Revision,
@@ -163,7 +171,10 @@ namespace Emby.Xtream.Plugin.Service
                     }
                     else
                     {
-                        published = await PublishManagedMappingAsync(mapping, cancellationToken).ConfigureAwait(false);
+                        published = await PublishManagedMappingAsync(
+                            mapping,
+                            cancellationToken,
+                            config.ManagedApprovedOutputRoots).ConfigureAwait(false);
                     }
                     var activeGenerationChanged = published.Success && !published.Duplicate;
 
@@ -487,8 +498,18 @@ namespace Emby.Xtream.Plugin.Service
 
         internal async Task<ManagedPublishResult> PublishManagedMappingAsync(
             M3uEditorMapping mapping,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string approvedOutputRoots = null)
         {
+            string approvalError;
+            if (approvedOutputRoots != null && !ManagedOutputPolicy.IsApproved(
+                mapping == null || mapping.TargetLibrary == null ? null : mapping.TargetLibrary.OutputPath,
+                approvedOutputRoots,
+                out approvalError))
+            {
+                return Failed(mapping == null ? null : mapping.Revision, approvalError);
+            }
+
             M3uEditorCatalogValidator.Validate(new M3uEditorCatalog
             {
                 ApiVersion = 1,
@@ -519,8 +540,18 @@ namespace Emby.Xtream.Plugin.Service
             string outputRoot,
             string mappingUuid,
             CancellationToken cancellationToken,
-            Action refresh = null)
+            Action refresh = null,
+            string approvedOutputRoots = null)
         {
+            string approvalError;
+            if (approvedOutputRoots != null && !ManagedOutputPolicy.IsApproved(
+                outputRoot,
+                approvedOutputRoots,
+                out approvalError))
+            {
+                return Failed(null, approvalError);
+            }
+
             Guid parsedMappingUuid;
             if (string.IsNullOrWhiteSpace(outputRoot) || !Guid.TryParse(mappingUuid, out parsedMappingUuid))
             {
