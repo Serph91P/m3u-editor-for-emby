@@ -15,6 +15,17 @@ namespace Emby.Xtream.Plugin.Client
         internal const int MaximumCatalogItems = 10000;
         internal const int MaximumVariantsPerItem = 64;
         internal const int MaximumGeneratedFiles = 50000;
+        internal const int MaximumIdentifierCharacters = 512;
+        internal const int MaximumProviderIdCharacters = 64;
+        internal const int MaximumDisplayTextCharacters = 4096;
+        internal const int MaximumNfoPlotCharacters = 256 * 1024;
+        internal const int MaximumPlaybackUrlCharacters = 8192;
+        internal const int MaximumOutputPathCharacters = 1024;
+        internal const int MaximumRelativePathCharacters = 512;
+        internal const int MaximumFilenameCharacters = 240;
+        internal const int MaximumGroupsOrGenres = 256;
+        internal const int MaximumTechnicalMetadataCharacters = 64 * 1024;
+        internal const int MaximumFailoverSources = 64;
         private static readonly Regex RevisionPattern = new Regex("^[a-f0-9]{64}$", RegexOptions.Compiled);
         private static readonly Regex InvalidFilenamePattern = new Regex("[<>:\"/\\\\|?*\\x00-\\x1F]", RegexOptions.Compiled);
 
@@ -69,7 +80,9 @@ namespace Emby.Xtream.Plugin.Client
             }
 
             ValidateRevision(mapping.Revision, "Managed mapping revision is invalid.");
-            if (mapping.TargetLibrary == null || string.IsNullOrWhiteSpace(mapping.TargetLibrary.Name))
+            if (mapping.TargetLibrary == null ||
+                !HasBoundedText(mapping.TargetLibrary.Id, MaximumIdentifierCharacters, false) ||
+                !HasBoundedText(mapping.TargetLibrary.Name, MaximumDisplayTextCharacters, true))
             {
                 Fail("Managed target library is invalid.");
             }
@@ -87,6 +100,7 @@ namespace Emby.Xtream.Plugin.Client
             }
 
             if (mapping.Options == null ||
+                !HasBoundedText(mapping.Options.Naming, MaximumIdentifierCharacters, false) ||
                 (!string.Equals(mapping.Options.Cleanup, "replace", StringComparison.Ordinal) &&
                  !string.Equals(mapping.Options.Cleanup, "keep", StringComparison.Ordinal) &&
                  !string.Equals(mapping.Options.Cleanup, "disabled", StringComparison.Ordinal)))
@@ -115,9 +129,15 @@ namespace Emby.Xtream.Plugin.Client
 
         private static void ValidateItem(M3uEditorCatalogItem item, string expectedType)
         {
-            if (item == null || string.IsNullOrWhiteSpace(item.CanonicalId) ||
+            if (item == null || !HasBoundedText(item.CanonicalId, MaximumIdentifierCharacters, true) ||
+                !HasBoundedText(item.SeriesCanonicalId, MaximumIdentifierCharacters, false) ||
                 !string.Equals(item.MediaType, expectedType, StringComparison.Ordinal) ||
-                string.IsNullOrWhiteSpace(item.DisplayTitle))
+                !HasBoundedXmlText(item.DisplayTitle, MaximumDisplayTextCharacters, true) ||
+                !HasBoundedText(item.DisplayTitleSource, MaximumIdentifierCharacters, false) ||
+                !HasBoundedXmlText(item.OriginalTitle, MaximumDisplayTextCharacters, false) ||
+                !HasBoundedText(item.OriginalTitleSource, MaximumIdentifierCharacters, false) ||
+                item.Groups == null || item.Groups.Count > MaximumGroupsOrGenres ||
+                item.Groups.Any(group => !HasBoundedXmlText(group, MaximumDisplayTextCharacters, true)))
             {
                 Fail("Managed catalog item media type or identity is invalid.");
             }
@@ -172,14 +192,15 @@ namespace Emby.Xtream.Plugin.Client
             var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var variant in variants)
             {
-                if (variant == null || !IsSafeFilename(variant.Key) || !keys.Add(variant.Key))
+                if (variant == null || !IsSafeFilename(variant.Key) || !keys.Add(variant.Key) ||
+                    !IsTechnicalMetadataWithinLimit(variant.TechnicalMetadata))
                 {
                     Fail("Managed item contains a duplicate or invalid variant filename.");
                 }
 
                 var sourceIds = new HashSet<int>();
                 ValidateSource(variant.Preferred, sourceIds);
-                if (variant.Failover == null)
+                if (variant.Failover == null || variant.Failover.Count > MaximumFailoverSources)
                 {
                     Fail("Managed variant failover list is invalid.");
                 }
@@ -237,7 +258,8 @@ namespace Emby.Xtream.Plugin.Client
         {
             Uri uri;
             if (source == null || source.SourceId < 1 || !sourceIds.Add(source.SourceId) ||
-                string.IsNullOrWhiteSpace(source.PlaybackUrl) ||
+                !HasBoundedText(source.PlaybackUrl, MaximumPlaybackUrlCharacters, true) ||
+                !string.Equals(source.PlaybackUrl, source.PlaybackUrl.Trim(), StringComparison.Ordinal) ||
                 !Uri.TryCreate(source.PlaybackUrl, UriKind.Absolute, out uri) ||
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             {
@@ -251,7 +273,8 @@ namespace Emby.Xtream.Plugin.Client
                 (ids.Tmdb.HasValue && ids.Tmdb.Value < 1) ||
                 (ids.Tvdb.HasValue && ids.Tvdb.Value < 1) ||
                 (!string.IsNullOrEmpty(ids.Imdb) &&
-                 (ids.Imdb.Length > 64 || ids.Imdb.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-' && ch != '_' && ch != '.'))))
+                 (ids.Imdb.Length > MaximumProviderIdCharacters ||
+                  ids.Imdb.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-' && ch != '_' && ch != '.'))))
             {
                 Fail("Managed catalog provider ID is invalid.");
             }
@@ -259,10 +282,10 @@ namespace Emby.Xtream.Plugin.Client
 
         private static void ValidateNfo(M3uEditorNfo nfo)
         {
-            if (nfo == null || string.IsNullOrWhiteSpace(nfo.Title) ||
-                !HasValidXmlCharacters(nfo.Title) ||
-                !HasValidXmlCharacters(nfo.OriginalTitle) ||
-                !HasValidXmlCharacters(nfo.Plot))
+            if (nfo == null ||
+                !HasBoundedXmlText(nfo.Title, MaximumDisplayTextCharacters, true) ||
+                !HasBoundedXmlText(nfo.OriginalTitle, MaximumDisplayTextCharacters, false) ||
+                !HasBoundedXmlText(nfo.Plot, MaximumNfoPlotCharacters, false))
             {
                 Fail("Managed catalog NFO metadata is invalid.");
             }
@@ -276,14 +299,15 @@ namespace Emby.Xtream.Plugin.Client
             }
 
             if (nfo.Genres.ValueKind == JsonValueKind.Array &&
-                nfo.Genres.EnumerateArray().Any(genre => genre.ValueKind != JsonValueKind.String ||
-                    !HasValidXmlCharacters(genre.GetString())))
+                (nfo.Genres.GetArrayLength() > MaximumGroupsOrGenres ||
+                 nfo.Genres.EnumerateArray().Any(genre => genre.ValueKind != JsonValueKind.String ||
+                    !HasBoundedXmlText(genre.GetString(), MaximumDisplayTextCharacters, true))))
             {
                 Fail("Managed catalog NFO genres are invalid.");
             }
 
             if (nfo.Genres.ValueKind == JsonValueKind.String &&
-                !HasValidXmlCharacters(nfo.Genres.GetString()))
+                !HasBoundedXmlText(nfo.Genres.GetString(), MaximumNfoPlotCharacters, false))
             {
                 Fail("Managed catalog NFO genres are invalid.");
             }
@@ -307,9 +331,30 @@ namespace Emby.Xtream.Plugin.Client
             }
         }
 
+        private static bool HasBoundedText(string value, int maximumCharacters, bool required)
+        {
+            if (value == null)
+            {
+                return !required;
+            }
+
+            return value.Length <= maximumCharacters && (!required || !string.IsNullOrWhiteSpace(value));
+        }
+
+        private static bool HasBoundedXmlText(string value, int maximumCharacters, bool required)
+        {
+            return HasBoundedText(value, maximumCharacters, required) && HasValidXmlCharacters(value);
+        }
+
+        private static bool IsTechnicalMetadataWithinLimit(JsonElement metadata)
+        {
+            return metadata.ValueKind == JsonValueKind.Undefined ||
+                   metadata.GetRawText().Length <= MaximumTechnicalMetadataCharacters;
+        }
+
         private static bool IsAbsolutePath(string path)
         {
-            if (string.IsNullOrWhiteSpace(path) || path.Length > 1024 || path.IndexOf('\0') >= 0)
+            if (string.IsNullOrWhiteSpace(path) || path.Length > MaximumOutputPathCharacters || path.IndexOf('\0') >= 0)
             {
                 return false;
             }
@@ -326,7 +371,7 @@ namespace Emby.Xtream.Plugin.Client
 
         internal static bool IsSafeRelativePath(string path)
         {
-            if (string.IsNullOrWhiteSpace(path) || path.Length > 512 || path.IndexOf('\0') >= 0 ||
+            if (string.IsNullOrWhiteSpace(path) || path.Length > MaximumRelativePathCharacters || path.IndexOf('\0') >= 0 ||
                 path[0] == '/' || path[0] == '\\' ||
                 (path.Length >= 2 && path[1] == ':'))
             {
@@ -339,7 +384,7 @@ namespace Emby.Xtream.Plugin.Client
 
         internal static bool IsSafeFilename(string filename)
         {
-            return !string.IsNullOrWhiteSpace(filename) && filename.Length <= 240 &&
+            return !string.IsNullOrWhiteSpace(filename) && filename.Length <= MaximumFilenameCharacters &&
                    filename != "." && filename != ".." && !InvalidFilenamePattern.IsMatch(filename);
         }
 

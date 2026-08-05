@@ -48,6 +48,9 @@ namespace Emby.Xtream.Plugin.Tests
         protected StrmSyncService MakeService() =>
             new StrmSyncService(new NullLogger(), HttpClient);
 
+        protected StrmSyncService MakeService(HttpClient httpClient) =>
+            new StrmSyncService(new NullLogger(), httpClient);
+
         // ----- JSON factory helpers -----
 
         protected static string VodStreamsJson(params object[] streams) =>

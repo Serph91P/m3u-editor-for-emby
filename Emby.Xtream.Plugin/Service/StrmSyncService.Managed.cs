@@ -97,11 +97,14 @@ namespace Emby.Xtream.Plugin.Service
     {
         private const string ManagedMetadataDirectoryName = ".m3u-editor-for-emby";
         private const int MaximumVisibleVersions = 8;
+        internal const int MaximumGeneratedFileBytes = 1024 * 1024;
+        internal const long MaximumGeneratedBytes = 8L * 1024L * 1024L;
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> ManagedRootLocks =
             new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
 
         internal Action<string> ManagedPhaseHook { get; set; }
         internal Action<string, string> ManagedFileMoveHook { get; set; }
+        internal Func<PluginConfiguration> ManagedConfigurationProvider { get; set; }
 
         internal async Task<ManagedReconcileResult> ReconcileManagedAsync(
             PluginConfiguration config,
@@ -336,17 +339,33 @@ namespace Emby.Xtream.Plugin.Service
         {
             if (!string.IsNullOrEmpty(published.PreviousRevision))
             {
-                await RollbackManagedMappingAsync(
+                var rollback = await RollbackManagedMappingAsync(
                     mapping.TargetLibrary.OutputPath,
                     mapping.MappingUuid,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    null,
+                    null).ConfigureAwait(false);
+                if (!rollback.Success)
+                {
+                    return Failed(mapping.Revision, rollback.Error, published);
+                }
             }
             else if (!published.Duplicate)
             {
-                RemoveOnlyManagedGeneration(mapping.TargetLibrary.OutputPath, mapping.MappingUuid);
+                RemoveOnlyManagedGeneration(
+                    mapping.TargetLibrary.OutputPath,
+                    mapping.MappingUuid);
             }
 
             return Failed(mapping.Revision, "Managed sync callback failed; the prior generation was restored.", published);
+        }
+
+        private string ResolveCurrentApprovedOutputRoots()
+        {
+            var current = ManagedConfigurationProvider == null
+                ? Plugin.InstanceOrNull?.Configuration
+                : ManagedConfigurationProvider();
+            return current == null ? null : current.ManagedApprovedOutputRoots;
         }
 
         private static async Task ReportManagedFailure(
@@ -475,7 +494,9 @@ namespace Emby.Xtream.Plugin.Service
             return false;
         }
 
-        private static void RemoveOnlyManagedGeneration(string outputRoot, string mappingUuid)
+        private void RemoveOnlyManagedGeneration(
+            string outputRoot,
+            string mappingUuid)
         {
             var root = Path.GetFullPath(outputRoot)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -486,6 +507,15 @@ namespace Emby.Xtream.Plugin.Service
                 !ManifestFilesAreValid(root, manifest))
             {
                 throw new InvalidOperationException("The failed managed generation could not be safely removed.");
+            }
+
+            string approvalError;
+            if (!ManagedOutputPolicy.IsApproved(
+                root,
+                ResolveCurrentApprovedOutputRoots(),
+                out approvalError))
+            {
+                throw new InvalidOperationException(approvalError);
             }
 
             foreach (var file in manifest.Files)
@@ -540,13 +570,13 @@ namespace Emby.Xtream.Plugin.Service
             string outputRoot,
             string mappingUuid,
             CancellationToken cancellationToken,
-            Action refresh = null,
-            string approvedOutputRoots = null)
+            Action refresh,
+            string approvedOutputRoots)
         {
             string approvalError;
-            if (approvedOutputRoots != null && !ManagedOutputPolicy.IsApproved(
+            if (!ManagedOutputPolicy.IsApproved(
                 outputRoot,
-                approvedOutputRoots,
+                ResolveCurrentApprovedOutputRoots(),
                 out approvalError))
             {
                 return Failed(null, approvalError);
@@ -568,6 +598,14 @@ namespace Emby.Xtream.Plugin.Service
 
             try
             {
+                if (!ManagedOutputPolicy.IsApproved(
+                    root,
+                    ResolveCurrentApprovedOutputRoots(),
+                    out approvalError))
+                {
+                    return Failed(null, approvalError);
+                }
+
                 var rolledBack = RollbackManagedMapping(root, mappingUuid, cancellationToken);
                 if (!rolledBack.Success || refresh == null)
                 {
@@ -581,6 +619,14 @@ namespace Emby.Xtream.Plugin.Service
                 }
                 catch (InvalidOperationException)
                 {
+                    if (!ManagedOutputPolicy.IsApproved(
+                        root,
+                        ResolveCurrentApprovedOutputRoots(),
+                        out approvalError))
+                    {
+                        return Failed(rolledBack.Revision, approvalError, rolledBack);
+                    }
+
                     var restored = RollbackManagedMapping(root, mappingUuid, CancellationToken.None);
                     return Failed(
                         restored.Revision,
@@ -589,6 +635,14 @@ namespace Emby.Xtream.Plugin.Service
                 }
                 catch (ArgumentException)
                 {
+                    if (!ManagedOutputPolicy.IsApproved(
+                        root,
+                        ResolveCurrentApprovedOutputRoots(),
+                        out approvalError))
+                    {
+                        return Failed(rolledBack.Revision, approvalError, rolledBack);
+                    }
+
                     var restored = RollbackManagedMapping(root, mappingUuid, CancellationToken.None);
                     return Failed(
                         restored.Revision,
@@ -732,7 +786,6 @@ namespace Emby.Xtream.Plugin.Service
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                EnsureWritableManagedRoot(root);
                 var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
                 EnsureNoReparsePoint(root, metadataRoot);
                 var activeManifestPath = Path.Combine(metadataRoot, "active.json");
@@ -741,9 +794,6 @@ namespace Emby.Xtream.Plugin.Service
                 {
                     throw new InvalidOperationException("Managed metadata path contains files not owned by this plugin.");
                 }
-
-                Directory.CreateDirectory(metadataRoot);
-
                 var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
                 activeManifest = ReadManifest(activeManifestPath);
                 previousManifest = ReadManifest(previousManifestPath);
@@ -754,12 +804,14 @@ namespace Emby.Xtream.Plugin.Service
                 }
 
                 plan = BuildManagedPlan(mapping, result);
+                ValidateGeneratedOutputBudget(plan);
                 if (activeManifest != null &&
                     !string.Equals(mapping.Options.Cleanup, "replace", StringComparison.Ordinal))
                 {
                     RetainStaleManagedFiles(root, plan, activeManifest);
                 }
 
+                ValidateGeneratedOutputBudget(plan);
                 ValidatePlan(root, plan, activeManifest);
 
                 if (activeManifest != null &&
@@ -776,6 +828,8 @@ namespace Emby.Xtream.Plugin.Service
                 }
 
                 ComputeDiff(plan, activeManifest, result);
+                EnsureWritableManagedRoot(root);
+                Directory.CreateDirectory(metadataRoot);
                 stagingRoot = Path.Combine(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(stagingRoot);
                 WriteAndValidateStaging(stagingRoot, plan, cancellationToken);
@@ -1128,6 +1182,7 @@ namespace Emby.Xtream.Plugin.Service
             var plannedPaths = new HashSet<string>(
                 plan.Select(file => file.RelativePath),
                 StringComparer.OrdinalIgnoreCase);
+            var plannedBytes = GetGeneratedOutputBytes(plan);
             foreach (var staleFile in activeManifest.Files)
             {
                 if (plannedPaths.Contains(staleFile.RelativePath))
@@ -1135,6 +1190,12 @@ namespace Emby.Xtream.Plugin.Service
                     continue;
                 }
 
+                if (staleFile.Length > MaximumGeneratedFileBytes)
+                {
+                    throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
+                }
+
+                plannedBytes = AddGeneratedBytes(plannedBytes, staleFile.Length);
                 var content = File.ReadAllText(CombineUnderRoot(root, staleFile.RelativePath), Encoding.UTF8);
                 plan.Add(new ManagedPlannedFile
                 {
@@ -1146,6 +1207,48 @@ namespace Emby.Xtream.Plugin.Service
             }
 
             plan.Sort((left, right) => string.CompareOrdinal(left.RelativePath, right.RelativePath));
+        }
+
+        private static void ValidateGeneratedOutputBudget(IEnumerable<ManagedPlannedFile> plan)
+        {
+            GetGeneratedOutputBytes(plan);
+        }
+
+        private static long GetGeneratedOutputBytes(IEnumerable<ManagedPlannedFile> plan)
+        {
+            long total = 0;
+            foreach (var file in plan)
+            {
+                var fileBytes = Encoding.UTF8.GetByteCount(file.Content);
+                if (fileBytes > MaximumGeneratedFileBytes)
+                {
+                    throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
+                }
+
+                total = AddGeneratedBytes(total, fileBytes);
+            }
+
+            return total;
+        }
+
+        private static long AddGeneratedBytes(long total, long fileBytes)
+        {
+            long next;
+            try
+            {
+                next = checked(total + fileBytes);
+            }
+            catch (OverflowException)
+            {
+                throw new InvalidOperationException("Managed publication aggregate generated byte limit exceeded.");
+            }
+
+            if (next > MaximumGeneratedBytes)
+            {
+                throw new InvalidOperationException("Managed publication aggregate generated byte limit exceeded.");
+            }
+
+            return next;
         }
 
         private static void WriteAndValidateStaging(

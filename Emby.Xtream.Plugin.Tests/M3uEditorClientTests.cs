@@ -385,6 +385,38 @@ namespace Emby.Xtream.Plugin.Tests
         }
 
         [Fact]
+        public void Validate_NfoPlotAtFieldLimit_Accepts()
+        {
+            var catalog = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            catalog.Mappings[0].Items[0].Nfo.Plot = new string('a', 256 * 1024);
+
+            M3uEditorCatalogValidator.Validate(catalog);
+        }
+
+        [Fact]
+        public void Validate_NfoPlotOneCharacterOverFieldLimit_FailsClosed()
+        {
+            var catalog = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            catalog.Mappings[0].Items[0].Nfo.Plot = new string('a', (256 * 1024) + 1);
+
+            var error = Assert.Throws<InvalidOperationException>(() => M3uEditorCatalogValidator.Validate(catalog));
+
+            Assert.Contains("NFO metadata", error.Message);
+        }
+
+        [Fact]
+        public void Validate_PlaybackUrlOneCharacterOverFieldLimit_FailsClosed()
+        {
+            var catalog = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            catalog.Mappings[0].Items[0].Variants[0].Preferred.PlaybackUrl =
+                "https://editor.example/" + new string('a', 8193 - "https://editor.example/".Length);
+
+            var error = Assert.Throws<InvalidOperationException>(() => M3uEditorCatalogValidator.Validate(catalog));
+
+            Assert.Contains("playback URL", error.Message);
+        }
+
+        [Fact]
         public void SafeFilename_EnforcesLengthLimit()
         {
             Assert.True(M3uEditorCatalogValidator.IsSafeFilename(new string('a', 240)));
