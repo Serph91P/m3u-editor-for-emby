@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout main (for the script)
+      - name: Checkout manifest-generator source
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
           path: source
 
       - name: Checkout gh-pages
