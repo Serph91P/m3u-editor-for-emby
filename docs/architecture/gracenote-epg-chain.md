@@ -33,7 +33,7 @@ Stores per-channel metadata including `tvc_guide_stationid` (Gracenote station I
 
 The plugin reads channel data from Dispatcharr's API at runtime to build its `_stationIdMap` (stream ID → Gracenote station ID).
 
-### Xtream Tuner Plugin (Emby Plugin, C# DLL)
+### m3u-editor for Emby plugin (Emby Plugin, C# DLL)
 
 The plugin is the orchestrator. At runtime it:
 
@@ -108,7 +108,7 @@ This works because the plugin resolves `IListingsProvider` via Emby's DI contain
 | `station_id` (Gracenote) | `45507` | Gracenote DB, Dispatcharr (`tvc_guide_stationid`), Plugin (`_stationIdMap`) | A specific Gracenote station (e.g. ESPN2 HD) |
 | `lineup_id` | `USA-CT06404-X` | Gracenote DB, Emby (listing provider `ListingsId`) | A Gracenote lineup/package (e.g. Comcast Hartford CT) |
 | `stream_id` (Xtream) | `14035` | Xtream provider, Plugin (`_tunerChannelIdToStreamId`) | An IPTV stream in the Xtream Codes provider |
-| `ManagementId` (Emby) | `abc_xtream-tuner_14035` | Emby internal | Emby's internal composite ID for a channel |
+| `ManagementId` (Emby) | `abc_m3u-editor_14035` | Emby internal | Emby's internal composite ID for a channel |
 | `ListingsChannelId` | `45507` | `ChannelInfo` property | Links a channel to a Gracenote station for EPG |
 
 ## Prerequisites

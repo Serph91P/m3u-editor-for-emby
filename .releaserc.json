@@ -25,10 +25,10 @@
     }],
     ["@semantic-release/github", {
       "assets": [
-        { "path": "artifacts/Emby.Xtream.Plugin.dll", "label": "Emby.Xtream.Plugin.dll" },
-        { "path": "artifacts/emby-xtream-${nextRelease.version}.zip", "label": "emby-xtream-${nextRelease.version}.zip" },
-        { "path": "artifacts/emby-xtream-${nextRelease.version}.sha256", "label": "SHA256 checksum" },
-        { "path": "artifacts/emby-xtream-${nextRelease.version}.md5", "label": "MD5 checksum" }
+        { "path": "artifacts/Emby.M3uEditor.Plugin.dll", "label": "Emby.M3uEditor.Plugin.dll" },
+        { "path": "artifacts/m3u-editor-for-emby-${nextRelease.version}.zip", "label": "m3u-editor-for-emby-${nextRelease.version}.zip" },
+        { "path": "artifacts/m3u-editor-for-emby-${nextRelease.version}.sha256", "label": "SHA256 checksum" },
+        { "path": "artifacts/m3u-editor-for-emby-${nextRelease.version}.md5", "label": "MD5 checksum" }
       ]
     }]
   ]

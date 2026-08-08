@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-22
 **Status**: ACTIVE
-**Affects**: `config.js` (loadDashboard callback), `XtreamTunerApi.cs` (DashboardResult), `config.html` (version label)
+**Affects**: `config.js` (loadDashboard callback), `M3uEditorApi.cs` (DashboardResult), `config.html` (version label)
 
 ---
 
@@ -27,7 +27,7 @@ if old JS writes config fields the new backend doesn't expect.
 
 ### 1. Rename page registration on each release
 
-Rename the HTML/JS page name (e.g. `xtreamconfig` → `xtreamconfig2`) so the browser fetches a
+Rename the HTML/JS page name (e.g. `m3ueditorconfig` → `m3ueditorconfig2`) so the browser fetches a
 completely new URL with no cache history.
 
 **Tried and failed.** Emby's SPA uses hash-based navigation (`#!/configurationpage?name=...`).
@@ -53,7 +53,7 @@ justify the build complexity.
 ### 3. localStorage version tracking (chosen)
 
 After the Dashboard API responds, compare `data.PluginVersion` against
-`localStorage['xtream-plugin-version']`. On mismatch (and a previous version was stored),
+`localStorage['m3u-editor-for-emby-plugin-version']`. On mismatch (and a previous version was stored),
 pre-warm the cache with `fetch({ cache: 'reload' })` and reload the page.
 
 ## Decision
@@ -62,18 +62,18 @@ pre-warm the cache with `fetch({ cache: 'reload' })` and reload the page.
 
 ### How It Works
 
-1. The Dashboard API (`/emby/xtream/dashboard`) now returns `PluginVersion` - the assembly
+1. The Dashboard API (`/emby/M3uEditor/Dashboard`) now returns `PluginVersion` - the assembly
    version read from `typeof(Plugin).Assembly.GetName().Version`.
 
 2. On every dashboard load, `config.js` compares `data.PluginVersion` against
-   `localStorage.getItem('xtream-plugin-version')`.
+   `localStorage.getItem('m3u-editor-for-emby-plugin-version')`.
 
 3. **Version match** (or first visit): store the version, continue normally.
 
 4. **Version mismatch** (update detected):
-   - Set `sessionStorage['xtream-cache-bust'] = '1'` (reload-loop guard)
-   - Fetch both `configurationpage?name=xtreamconfig&v=...` and
-     `configurationpage?name=xtreamconfigjs&v=...` with `{ cache: 'reload' }`
+   - Set `sessionStorage['m3u-editor-for-emby-cache-bust'] = '1'` (reload-loop guard)
+   - Fetch both `configurationpage?name=m3ueditorconfig&v=...` and
+     `configurationpage?name=m3ueditorconfigjs&v=...` with `{ cache: 'reload' }`
    - Call `location.reload()` after both fetches complete
    - After reload: versions now match, `sessionStorage` guard is cleared
 
@@ -82,7 +82,7 @@ pre-warm the cache with `fetch({ cache: 'reload' })` and reload the page.
 
 ### Files Changed
 
-- **`XtreamTunerApi.cs`**: Added `PluginVersion` property to `DashboardResult` class;
+- **`M3uEditorApi.cs`**: Added `PluginVersion` property to `DashboardResult` class;
   populated from `typeof(Plugin).Assembly.GetName().Version?.ToString()`.
 
 - **`config.js`**: 18 lines in the `loadDashboard` callback - localStorage check, fetch
@@ -131,7 +131,7 @@ If users report issues (infinite reloads, broken page after update, etc.):
 
 1. **Quick disable** - remove or comment out the 18-line block in `config.js` between
    `// Auto-bust browser cache when plugin was updated.` and
-   `sessionStorage.removeItem('xtream-cache-bust');` (inclusive). The `PluginVersion` field
+   `sessionStorage.removeItem('m3u-editor-for-emby-cache-bust');` (inclusive). The `PluginVersion` field
    in the API response is harmless and can stay.
 
 2. **Full revert** - also remove `PluginVersion` from `DashboardResult` and the assembly
@@ -142,8 +142,8 @@ If users report issues (infinite reloads, broken page after update, etc.):
    due to sessionStorage guard, but just in case):
    ```
    // In browser console:
-   sessionStorage.removeItem('xtream-cache-bust');
-   localStorage.removeItem('xtream-plugin-version');
+    sessionStorage.removeItem('m3u-editor-for-emby-cache-bust');
+    localStorage.removeItem('m3u-editor-for-emby-plugin-version');
    ```
 
 ## Bugs Found During Deployment
@@ -236,7 +236,7 @@ When verifying the cache-bust and update banner in future releases:
    the actual error object
 4. **Verify the API directly** with curl if the banner doesn't appear:
    ```bash
-   curl -s "http://<host>:8097/emby/XtreamTuner/CheckUpdate" \
+   curl -s "http://<host>:8097/emby/M3uEditor/CheckUpdate" \
      -H "X-Emby-Token: <token>" | python3 -m json.tool
    ```
 5. **Check `UpdateAvailable`**: if `false` despite a newer release, check `LastInstalledVersion`

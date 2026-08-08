@@ -22,6 +22,7 @@ BUGS.md
 
 # Test artifacts
 .playwright-mcp/
+TestResults/
 
 # Dev tools & scripts
 InspectSDK/
@@ -30,13 +31,13 @@ tools/*.sh
 tools/*.csx
 tools/results/
 
-# Documentation (local working/scratch docs — ADRs in docs/decisions/ are committed)
+# Documentation (local working/scratch docs - ADRs in docs/decisions/ are committed)
 docs/*.md
 docs/play-timing-analysis.md
 
 # Screenshots (scratch reference images)
 *.png
-!Emby.Xtream.Plugin/thumb.png
+!Emby.M3uEditor.Plugin/thumb.png
 
 # Bug logs (local only)
 logs/
@@ -63,4 +64,4 @@ package-lock.json
 artifacts/
 .hermes/
 streamtv.xml
-xtream-tuner-log.txt
+m3u-editor-log.txt

@@ -30,7 +30,7 @@ Users search the local Gracenote database by channel name, call sign, or lineup.
 
 ## How "Scan Missing Listings" Works
 
-This is the most relevant feature for the Xtream Tuner Plugin. The algorithm:
+This is the most relevant feature for the m3u-editor for Emby plugin. The algorithm:
 
 1. **Fetch Emby channels** - `GET /emby/LiveTv/Manage/Channels?Fields=ManagementId,ListingsId,Name,ChannelNumber,Id`
 2. **Filter** - keep only channels where `ListingsId` is empty/null
@@ -56,7 +56,7 @@ This works for **M3U tuner** channels where the ManagementId format includes `tv
 | Tuner | ManagementId | Last segment | Is Gracenote ID? |
 |---|---|---|---|
 | M3U | `abc123_m3u_51529` | `51529` | Yes |
-| Xtream | `abc123_xtream-tuner_14035` | `14035` | No (stream ID) |
+| Xtream | `abc123_m3u-editor_14035` | `14035` | No (stream ID) |
 
 For custom tuners like Xtream, the last segment is an internal stream ID. Since both stream IDs and Gracenote station IDs are large integers, collisions occur - the set-cover algorithm then selects dozens of irrelevant regional lineups.
 
@@ -64,7 +64,7 @@ See [ADR-006](../decisions/006-channel-identifiarr-managementid-bug.md) for the 
 
 ### Interaction with DetachListingProviders
 
-The Xtream Tuner Plugin's `DetachListingProviders()` removes all listing provider associations from the Xtream tuner. This means **every** Xtream channel will always have `ListingsId` empty in Emby. Consequently, "Scan Missing Listings" processes all channels on every run, not just new ones.
+The m3u-editor for Emby plugin's `DetachListingProviders()` removes all listing provider associations from the m3u-editor tuner. This means **every** Xtream channel will always have `ListingsId` empty in Emby. Consequently, "Scan Missing Listings" processes all channels on every run, not just new ones.
 
 This is a known limitation. When adding new channels with Gracenote IDs, the practical workflow is: clear existing Emby EPG sources, then re-run "Scan Missing Listings" to re-add the correct minimal set.
 

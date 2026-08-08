@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="logo.svg" width="180" alt="Xtream Tuner" />
+  <img src="logo.svg" width="180" alt="m3u-editor for Emby" />
 </p>
 
-<h1 align="center">Xtream Tuner</h1>
+<h1 align="center">m3u-editor for Emby</h1>
 
 <p align="center">
   An Emby Server plugin that turns any Xtream-compatible IPTV service into a full Live TV, Movies, and Series library - with EPG, metadata matching, and a built-in dashboard.
@@ -89,26 +89,33 @@ A configuration UI embedded in Emby's plugin settings with five tabs.
 
 ## Installation
 
-### Option A — Plugin Repository (recommended, auto-updates)
+### Option A - Plugin Repository (recommended, auto-updates)
 
 Add one (or both) of the following URLs in Emby under
 **Dashboard → Plugins → Repositories → Add Repository**, then install
-*Xtream Live TV* from the Catalog.
+*m3u-editor for Emby* from the Catalog.
 
 | Channel | URL                                                              |
 | ------- | ---------------------------------------------------------------- |
-| Stable  | `https://serph91p.github.io/emby-xtream/manifest.json`           |
-| Beta    | `https://serph91p.github.io/emby-xtream/manifest-beta.json`      |
+| Stable  | `https://serph91p.github.io/m3u-editor-for-emby/manifest.json`           |
+| Beta    | `https://serph91p.github.io/m3u-editor-for-emby/manifest-beta.json`      |
 
 Stable releases come from the `main` branch, beta releases from `develop`.
 Add the beta URL **in addition** to the stable URL if you want both
 channels to compete (Emby always offers the highest version available).
 
-### Option B — Manual download
+Upgrades preserve the plugin GUID and serialized configuration property names.
+The built-in dashboard updater writes the new assembly to the currently loaded
+DLL path, so an installation using an earlier on-disk filename keeps that
+filename. This project does not claim to rename or remove that path; clean
+installations use `Emby.M3uEditor.Plugin.dll`. Existing configured STRM output
+paths are also retained.
+
+### Option B - Manual download
 
 #### Step 1: Download the Plugin
 
-Download `Emby.Xtream.Plugin.dll` from the [latest release](../../releases/latest).
+Download `Emby.M3uEditor.Plugin.dll` from the [latest release](../../releases/latest).
 
 > Only the single DLL file is needed - no other dependencies.
 
@@ -118,12 +125,12 @@ Download `Emby.Xtream.Plugin.dll` from the [latest release](../../releases/lates
 Requires .NET SDK 6.0+:
 
 ```bash
-git clone https://github.com/firestaerter3/emby-xtream.git
-cd emby-xtream/Emby.Xtream.Plugin
+git clone https://github.com/Serph91P/m3u-editor-for-emby.git
+cd m3u-editor-for-emby/Emby.M3uEditor.Plugin
 bash build.sh
 ```
 
-The compiled DLL will be at `Emby.Xtream.Plugin/out/Emby.Xtream.Plugin.dll`.
+The compiled DLL will be at `Emby.M3uEditor.Plugin/out/Emby.M3uEditor.Plugin.dll`.
 
 </details>
 
@@ -133,23 +140,23 @@ Copy the DLL to your Emby Server's plugins directory and restart.
 
 **Docker (most common):**
 ```bash
-docker cp Emby.Xtream.Plugin.dll emby:/config/plugins/
+docker cp Emby.M3uEditor.Plugin.dll emby:/config/plugins/
 docker restart emby
 ```
 
 **Bare metal (Linux):**
 ```bash
-cp Emby.Xtream.Plugin.dll /var/lib/emby/plugins/
+cp Emby.M3uEditor.Plugin.dll /var/lib/emby/plugins/
 systemctl restart emby-server
 ```
 
 **Bare metal (macOS/Windows):**
-Copy `Emby.Xtream.Plugin.dll` to your Emby data directory under `plugins/`, then restart Emby Server.
+Copy `Emby.M3uEditor.Plugin.dll` to your Emby data directory under `plugins/`, then restart Emby Server.
 
 ### Step 3: Configure the Plugin
 
 1. Open Emby's web UI
-2. Go to **Settings > Plugins > Xtream Tuner**
+2. Go to **Settings > Plugins > m3u-editor for Emby**
 3. Enter your Xtream server details:
    - **Server URL** - e.g. `http://your-provider:port`
    - **Username** and **Password**
@@ -165,7 +172,7 @@ Copy `Emby.Xtream.Plugin.dll` to your Emby data directory under `plugins/`, then
 5. Configure **EPG** settings (days to fetch, cache duration)
 6. Click **Save**
 7. Go to **Emby Settings > Live TV** and add a new tuner:
-   - Type: **Xtream Tuner**
+   - Type: **m3u-editor for Emby**
    - It will auto-discover the plugin's M3U and EPG endpoints
 
 ### Step 5: Set Up Movies (Optional)
@@ -178,7 +185,7 @@ Copy `Emby.Xtream.Plugin.dll` to your Emby data directory under `plugins/`, then
    - **Multiple Folders** - one folder per category, auto-named
    - **Custom** - click "Add Folder", name it, assign categories
 5. Click **Sync Movies Now**
-6. In Emby, add a new **Movies** library pointing to the STRM output path (default: `/config/xtream/Movies`)
+6. In Emby, add a new **Movies** library pointing to the STRM output path (default: `/config/m3u-editor-for-emby/Movies`)
 
 ### Step 6: Set Up Series (Optional)
 
@@ -186,7 +193,7 @@ Copy `Emby.Xtream.Plugin.dll` to your Emby data directory under `plugins/`, then
 2. Check **Enable Series / TV Shows**
 3. Same workflow as Movies - refresh categories, select, choose folder mode
 4. Click **Sync Series Now**
-5. In Emby, add a new **TV Shows** library pointing to `/config/xtream/Shows`
+5. In Emby, add a new **TV Shows** library pointing to `/config/m3u-editor-for-emby/Shows`
 
 ### Step 7: Dispatcharr Integration (Optional)
 
@@ -214,7 +221,7 @@ Download the latest DLL from [Releases](../../releases/latest), replace the file
 | **EPG Cache** | 30 min | How long to cache EPG data (5-1440 min) |
 | **EPG Days** | 2 | Days of guide data to fetch (1-14) |
 | **M3U Cache** | 15 min | How long to cache channel playlists (1-1440 min) |
-| **STRM Library Path** | `/config/xtream` | Where STRM files are written |
+| **STRM Library Path** | `/config/m3u-editor-for-emby` | Where STRM files are written. Existing configured paths are preserved during upgrades. |
 | **Smart Skip** | On | Skip existing STRM files during sync |
 | **Sync Parallelism** | 3 | Concurrent operations during sync (1-10) |
 | **Cleanup Orphans** | Off | Remove STRM files not in source |

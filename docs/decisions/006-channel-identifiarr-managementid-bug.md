@@ -27,13 +27,13 @@ The `ManagementId` format varies by tuner type:
 | Tuner | ManagementId example | Last segment | Is Gracenote ID? |
 |---|---|---|---|
 | M3U | `abc123_m3u_51529` | `51529` | Yes (from `tvg-id`) |
-| Xtream | `abc123_xtream-tuner_14035` | `14035` | No (internal stream ID) |
+| Xtream | `abc123_m3u-editor_14035` | `14035` | No (internal stream ID) |
 
-For the Xtream Tuner Plugin (and any custom tuner), the last segment is an internal identifier, not a Gracenote station ID. Since both stream IDs and Gracenote station IDs are large integers, collisions occur - the set-cover algorithm finds dozens of irrelevant regional lineups to "cover" phantom stations.
+For the m3u-editor for Emby plugin (and any custom tuner), the last segment is an internal identifier, not a Gracenote station ID. Since both stream IDs and Gracenote station IDs are large integers, collisions occur - the set-cover algorithm finds dozens of irrelevant regional lineups to "cover" phantom stations.
 
 **Observed**: 44 Gracenote lineup providers added for a setup with only 12 channels that actually have Gracenote IDs.
 
-Combined with [ADR-005](005-detach-listing-providers.md) (`DetachListingProviders`), this problem is amplified: since the Xtream tuner is detached from all listing providers, **every** Xtream channel shows as missing `ListingsId`, so every run processes the full channel list.
+Combined with [ADR-005](005-detach-listing-providers.md) (`DetachListingProviders`), this problem is amplified: since the m3u-editor tuner is detached from all listing providers, **every** Xtream channel shows as missing `ListingsId`, so every run processes the full channel list.
 
 ## Decision
 
@@ -73,7 +73,7 @@ for ch in missing_channels:
                 station_ids.add(station_id)
 ```
 
-Moonshine's alternative workaround (hardcoding `'xtream-tuner' not in mgmt_id`) works but is tuner-specific. The mutual-exclusion approach is generic.
+Moonshine's alternative workaround (hardcoding `'m3u-editor' not in mgmt_id`) works but is tuner-specific. The mutual-exclusion approach is generic.
 
 ## Consequences
 
@@ -84,7 +84,7 @@ Moonshine's alternative workaround (hardcoding `'xtream-tuner' not in mgmt_id`) 
 
 ## Rejected Alternative
 
-[PR #21 on emby-xtream](https://github.com/firestaerter3/emby-xtream/pull/21) proposed absorbing Channel Identifiarr's entire Gracenote matching engine (SQLite reader, fuzzy matching, ~600 lines of C#) into the plugin itself. This was rejected because:
+[PR #21 on m3u-editor-for-emby](https://github.com/Serph91P/m3u-editor-for-emby/pull/21) proposed absorbing Channel Identifiarr's entire Gracenote matching engine (SQLite reader, fuzzy matching, ~600 lines of C#) into the plugin itself. This was rejected because:
 
 - It added a `Microsoft.Data.Sqlite` native dependency, significantly increasing DLL size
 - It duplicated Channel Identifiarr's matching algorithm (imperfectly - used LCS instead of Python's `SequenceMatcher`)

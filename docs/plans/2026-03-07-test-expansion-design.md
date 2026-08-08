@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-07
 **Status**: Approved
-**Scope**: `Emby.Xtream.Plugin.Tests`
+**Scope**: `Emby.M3uEditor.Plugin.Tests`
 
 ---
 
@@ -10,7 +10,7 @@
 
 Expand the test suite from pure-logic unit tests to full integration coverage of:
 - `StrmSyncService.SyncMoviesAsync` / `SyncSeriesAsync` (file I/O + delta logic)
-- `XtreamTunerHost` (stream URL selection, media source construction)
+- `M3uEditorTunerHost` (stream URL selection, media source construction)
 - `NfoWriter`, `ComputeChannelListHash`, `ParseTvdbOverrides`, folder name builders
 
 Target: ~55 tests across 5 files, zero external test dependencies (xUnit only).
@@ -27,7 +27,7 @@ expose factory helpers. All new integration test classes inherit from the approp
 
 ## Section 1 - Shared Harness
 
-### `Emby.Xtream.Plugin.Tests/Fakes/FakeHttpHandler.cs`
+### `Emby.M3uEditor.Plugin.Tests/Fakes/FakeHttpHandler.cs`
 
 `HttpMessageHandler` subclass. Tests register responses before the sync runs:
 
@@ -41,12 +41,12 @@ handler.RespondWithSequence("/get_series", payloads);           // ordered respo
 - Unmatched requests throw `InvalidOperationException` so missing stubs are caught immediately
 - Exposes `List<string> ReceivedUrls` for assertions
 
-### `Emby.Xtream.Plugin.Tests/Fakes/TempDirectory.cs`
+### `Emby.M3uEditor.Plugin.Tests/Fakes/TempDirectory.cs`
 
 `IDisposable` wrapper around a unique subdirectory under `Path.GetTempPath()`. Deleted
 recursively in `Dispose()`. Exposes `string Path` for use as `StrmLibraryPath`.
 
-### `Emby.Xtream.Plugin.Tests/SyncTestBase.cs`
+### `Emby.M3uEditor.Plugin.Tests/SyncTestBase.cs`
 
 Base class for sync integration tests. Provides:
 
@@ -64,9 +64,9 @@ Base class for sync integration tests. Provides:
 - `Action SaveConfig` - delegate that increments `SaveConfigCallCount`; passed to sync calls
 - `VodStream(...)` / `SeriesInfo(...)` / `EpisodeInfo(...)` factory methods for test data JSON
 
-### `Emby.Xtream.Plugin.Tests/TunerTestBase.cs`
+### `Emby.M3uEditor.Plugin.Tests/TunerTestBase.cs`
 
-Same pattern for `XtreamTunerHost` tests. Pre-built config includes both Xtream and Dispatcharr
+Same pattern for `M3uEditorTunerHost` tests. Pre-built config includes both Xtream and Dispatcharr
 settings. Exposes a `BuildStats(streamId, audioCodec, ...)` factory for `StreamStatsInfo`.
 
 ### Sentinel content pattern
@@ -139,7 +139,7 @@ All internal HTTP calls that currently use `SharedHttpClient` switch to `_httpCl
 - No interface extraction, no DI container, no mocking framework
 - `writtenPaths` comparer is already `StringComparer.OrdinalIgnoreCase` - correct, no change
 - `NfoWriter` - writes to a real path; tested via `TempDirectory`
-- No changes to `XtreamTunerHost` constructor or public API beyond `HttpClient` injection
+- No changes to `M3uEditorTunerHost` constructor or public API beyond `HttpClient` injection
 
 ---
 
@@ -232,7 +232,7 @@ All internal HTTP calls that currently use `SharedHttpClient` switch to `_httpCl
 
 ---
 
-### `XtreamTunerHostTests` - new file (~10 tests)
+### `M3uEditorTunerHostTests` - new file (~10 tests)
 
 - **Dispatcharr path** - Dispatcharr enabled → `MediaSourceInfo.Path` is
   `/proxy/ts/stream/{uuid}`, `SupportsProbing = false`, `AnalyzeDurationMs = 0`
@@ -257,7 +257,7 @@ All internal HTTP calls that currently use `SharedHttpClient` switch to `_httpCl
 | `StrmSyncServiceTests` (additions) | ~20 |
 | `SyncMoviesIntegrationTests` | ~10 |
 | `SyncSeriesIntegrationTests` | ~10 |
-| `XtreamTunerHostTests` | ~10 |
+| `M3uEditorTunerHostTests` | ~10 |
 | **Total new** | **~50** |
 | Existing | 192 |
 | **Grand total** | **~242** |

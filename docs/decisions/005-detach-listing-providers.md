@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-22
 **Status**: ADOPTED (v1.4.61), REVISED (v1.4.69)
-**Affects**: `XtreamTunerHost.DetachListingProviders()`, `GetChannelsInternal()`, `ClearWrongChannelArtwork()`
+**Affects**: `M3uEditorTunerHost.DetachListingProviders()`, `GetChannelsInternal()`, `ClearWrongChannelArtwork()`
 
 ---
 
@@ -32,7 +32,7 @@ For channels without Gracenote IDs, explicitly mapped them to an empty `provider
 
 ### 3. Detach listing providers + direct fetch (v1.4.61) - ADOPTED
 
-Remove the Xtream tuner from all listing provider associations entirely, then fetch Gracenote programs directly from within `GetProgramsInternal()`.
+Remove the m3u-editor tuner from all listing provider associations entirely, then fetch Gracenote programs directly from within `GetProgramsInternal()`.
 
 ## Decision
 
@@ -41,8 +41,8 @@ Adopted approach 3. The implementation has three parts:
 ### DetachListingProviders()
 
 Resolves `IConfigurationManager` via DI, reads `LiveTvOptions`, and for each listing provider:
-- If `EnableAllTuners` is true: sets it to false and populates `EnabledTuners` with all non-Xtream tuner IDs
-- If the Xtream tuner ID is in `EnabledTuners`: removes it
+- If `EnableAllTuners` is true: sets it to false and populates `EnabledTuners` with all non-m3u-editor tuner IDs
+- If the m3u-editor tuner ID is in `EnabledTuners`: removes it
 
 Saves the modified configuration. Runs automatically after every channel refresh.
 
@@ -60,7 +60,7 @@ If no Gracenote data is returned, falls back to Xtream EPG.
 
 Emby downloads artwork from listing providers during auto-mapping. Even though we detach the providers, artwork cached during the brief auto-mapping window persists. This method:
 1. Resolves `ILibraryManager` via DI
-2. Queries all `LiveTvChannel` items belonging to the Xtream tuner (via reflection)
+2. Queries all `LiveTvChannel` items belonging to the m3u-editor tuner (via reflection)
 3. Clears `ImageInfos` on **all** Xtream channels (including Gracenote-matched ones, since Emby's auto-mapper can assign wrong artwork to those too) and calls `UpdateItem` with `ItemUpdateType.ImageUpdate`
 
 `ClearWrongChannelArtwork()` is a recovery operation only. Normal cache and guide refresh paths must not call it because clearing Emby's `ImageInfos` removes the user's backend-provided channel logos and makes Emby fall back to EPG artwork.

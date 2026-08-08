@@ -2,20 +2,20 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add ~50 integration tests covering `SyncMoviesAsync`, `SyncSeriesAsync`, `XtreamTunerHost`, `NfoWriter`, folder naming, and pure-logic gaps via a shared `FakeHttpHandler` + `TempDirectory` harness.
+**Goal:** Add ~50 integration tests covering `SyncMoviesAsync`, `SyncSeriesAsync`, `M3uEditorTunerHost`, `NfoWriter`, folder naming, and pure-logic gaps via a shared `FakeHttpHandler` + `TempDirectory` harness.
 
 **Architecture:** A `FakeHttpHandler` intercepts all `HttpClient` calls with canned JSON responses. A `TempDirectory` fixture owns the filesystem root. `SyncTestBase` and `TunerTestBase` wire both together. Production code is refactored to accept `PluginConfiguration` and `Action saveConfig` as parameters instead of reading from `Plugin.Instance`.
 
 **Tech Stack:** xUnit, C# 7.3 (netstandard2.0 plugin, net10.0 tests), no new NuGet dependencies.
 
-**Run tests with:** `dotnet test Emby.Xtream.Plugin.Tests/`
+**Run tests with:** `dotnet test Emby.M3uEditor.Plugin.Tests/`
 
 ---
 
 ## Task 1: Create `TempDirectory` fixture
 
 **Files:**
-- Create: `Emby.Xtream.Plugin.Tests/Fakes/TempDirectory.cs`
+- Create: `Emby.M3uEditor.Plugin.Tests/Fakes/TempDirectory.cs`
 
 **Step 1: Create the file**
 
@@ -23,7 +23,7 @@
 using System;
 using System.IO;
 
-namespace Emby.Xtream.Plugin.Tests.Fakes
+namespace Emby.M3uEditor.Plugin.Tests.Fakes
 {
     /// <summary>
     /// Creates a unique temp directory for a test and deletes it on Dispose.
@@ -51,14 +51,14 @@ namespace Emby.Xtream.Plugin.Tests.Fakes
 **Step 2: Build**
 
 ```bash
-dotnet build Emby.Xtream.Plugin.Tests/
+dotnet build Emby.M3uEditor.Plugin.Tests/
 ```
 Expected: Build succeeded, 0 errors.
 
 **Step 3: Commit**
 
 ```bash
-git add Emby.Xtream.Plugin.Tests/Fakes/TempDirectory.cs
+git add Emby.M3uEditor.Plugin.Tests/Fakes/TempDirectory.cs
 git commit -m "test: add TempDirectory fixture"
 ```
 
@@ -67,7 +67,7 @@ git commit -m "test: add TempDirectory fixture"
 ## Task 2: Create `FakeHttpHandler`
 
 **Files:**
-- Create: `Emby.Xtream.Plugin.Tests/Fakes/FakeHttpHandler.cs`
+- Create: `Emby.M3uEditor.Plugin.Tests/Fakes/FakeHttpHandler.cs`
 
 **Step 1: Create the file**
 
@@ -80,7 +80,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Emby.Xtream.Plugin.Tests.Fakes
+namespace Emby.M3uEditor.Plugin.Tests.Fakes
 {
     /// <summary>
     /// Intercepts HttpClient calls and returns pre-registered responses.
@@ -142,14 +142,14 @@ namespace Emby.Xtream.Plugin.Tests.Fakes
 **Step 2: Build**
 
 ```bash
-dotnet build Emby.Xtream.Plugin.Tests/
+dotnet build Emby.M3uEditor.Plugin.Tests/
 ```
 Expected: 0 errors.
 
 **Step 3: Commit**
 
 ```bash
-git add Emby.Xtream.Plugin.Tests/Fakes/FakeHttpHandler.cs
+git add Emby.M3uEditor.Plugin.Tests/Fakes/FakeHttpHandler.cs
 git commit -m "test: add FakeHttpHandler for intercepting HTTP in tests"
 ```
 
@@ -160,7 +160,7 @@ git commit -m "test: add FakeHttpHandler for intercepting HTTP in tests"
 This is the only substantial production code change. All `Plugin.Instance.*` calls are extracted from `StrmSyncService`. No behaviour changes.
 
 **Files:**
-- Modify: `Emby.Xtream.Plugin/Service/StrmSyncService.cs`
+- Modify: `Emby.M3uEditor.Plugin/Service/StrmSyncService.cs`
 
 **Step 1: Add `_httpClient` instance field + constructor overload**
 
@@ -255,7 +255,7 @@ Update the two call sites inside `SyncMoviesAsync` to pass `config`.
 **Step 6: Build**
 
 ```bash
-dotnet build Emby.Xtream.Plugin/
+dotnet build Emby.M3uEditor.Plugin/
 ```
 Expected: 0 errors.
 
@@ -288,16 +288,16 @@ await svc.SyncSeriesAsync(
 **Step 8: Build and test**
 
 ```bash
-dotnet test Emby.Xtream.Plugin.Tests/
+dotnet test Emby.M3uEditor.Plugin.Tests/
 ```
 Expected: all 192 existing tests still pass, 0 failures.
 
 **Step 9: Commit**
 
 ```bash
-git add Emby.Xtream.Plugin/Service/StrmSyncService.cs \
-        Emby.Xtream.Plugin/Service/SyncMoviesTask.cs \
-        Emby.Xtream.Plugin/Service/SyncSeriesTask.cs
+git add Emby.M3uEditor.Plugin/Service/StrmSyncService.cs \
+        Emby.M3uEditor.Plugin/Service/SyncMoviesTask.cs \
+        Emby.M3uEditor.Plugin/Service/SyncSeriesTask.cs
 git commit -m "refactor: inject HttpClient and saveConfig into StrmSyncService for testability"
 ```
 
@@ -306,7 +306,7 @@ git commit -m "refactor: inject HttpClient and saveConfig into StrmSyncService f
 ## Task 4: Create `SyncTestBase`
 
 **Files:**
-- Create: `Emby.Xtream.Plugin.Tests/SyncTestBase.cs`
+- Create: `Emby.M3uEditor.Plugin.Tests/SyncTestBase.cs`
 
 **Step 1: Create the file**
 
@@ -315,12 +315,12 @@ using System;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
-using Emby.Xtream.Plugin.Client.Models;
-using Emby.Xtream.Plugin.Service;
-using Emby.Xtream.Plugin.Tests.Fakes;
+using Emby.M3uEditor.Plugin.Client.Models;
+using Emby.M3uEditor.Plugin.Service;
+using Emby.M3uEditor.Plugin.Tests.Fakes;
 using MediaBrowser.Model.Logging;
 
-namespace Emby.Xtream.Plugin.Tests
+namespace Emby.M3uEditor.Plugin.Tests
 {
     public abstract class SyncTestBase : IDisposable
     {
@@ -420,14 +420,14 @@ namespace Emby.Xtream.Plugin.Tests
 **Step 2: Build**
 
 ```bash
-dotnet build Emby.Xtream.Plugin.Tests/
+dotnet build Emby.M3uEditor.Plugin.Tests/
 ```
 Expected: 0 errors. Note: `NullLogger` is already used in `DispatcharrClientTests` - it lives in the test project.
 
 **Step 3: Commit**
 
 ```bash
-git add Emby.Xtream.Plugin.Tests/SyncTestBase.cs
+git add Emby.M3uEditor.Plugin.Tests/SyncTestBase.cs
 git commit -m "test: add SyncTestBase with FakeHttpHandler + TempDirectory wiring"
 ```
 
@@ -436,7 +436,7 @@ git commit -m "test: add SyncTestBase with FakeHttpHandler + TempDirectory wirin
 ## Task 5: Pure-logic tests - folder naming, `ParseTvdbOverrides`, `ComputeChannelListHash`, naming version, `NfoWriter`
 
 **Files:**
-- Modify: `Emby.Xtream.Plugin.Tests/StrmSyncServiceTests.cs`
+- Modify: `Emby.M3uEditor.Plugin.Tests/StrmSyncServiceTests.cs`
 
 Add the following test methods after the existing `StripEpisodeTitleDuplicate_ReturnsExpected` theory. Each group is a separate `[Theory]` or `[Fact]`.
 
@@ -540,15 +540,15 @@ public void ParseTvdbOverrides_NonNumericId_Skipped()
 [Fact]
 public void ComputeChannelListHash_SameChannelsDifferentOrder_SameHash()
 {
-    var a = new System.Collections.Generic.List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+    var a = new System.Collections.Generic.List<Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo>
     {
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 2, Name = "B" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 2, Name = "B" },
     };
-    var b = new System.Collections.Generic.List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+    var b = new System.Collections.Generic.List<Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo>
     {
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 2, Name = "B" },
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 2, Name = "B" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
     };
     Assert.Equal(StrmSyncService.ComputeChannelListHash(a), StrmSyncService.ComputeChannelListHash(b));
 }
@@ -556,14 +556,14 @@ public void ComputeChannelListHash_SameChannelsDifferentOrder_SameHash()
 [Fact]
 public void ComputeChannelListHash_AddingChannel_ChangeHash()
 {
-    var a = new System.Collections.Generic.List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+    var a = new System.Collections.Generic.List<Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo>
     {
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
     };
-    var b = new System.Collections.Generic.List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+    var b = new System.Collections.Generic.List<Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo>
     {
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 2, Name = "B" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "A" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 2, Name = "B" },
     };
     Assert.NotEqual(StrmSyncService.ComputeChannelListHash(a), StrmSyncService.ComputeChannelListHash(b));
 }
@@ -571,13 +571,13 @@ public void ComputeChannelListHash_AddingChannel_ChangeHash()
 [Fact]
 public void ComputeChannelListHash_NameChanged_ChangeHash()
 {
-    var a = new System.Collections.Generic.List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+    var a = new System.Collections.Generic.List<Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo>
     {
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC One" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC One" },
     };
-    var b = new System.Collections.Generic.List<Emby.Xtream.Plugin.Client.Models.LiveStreamInfo>
+    var b = new System.Collections.Generic.List<Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo>
     {
-        new Emby.Xtream.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC Two" },
+        new Emby.M3uEditor.Plugin.Client.Models.LiveStreamInfo { StreamId = 1, Name = "BBC Two" },
     };
     Assert.NotEqual(StrmSyncService.ComputeChannelListHash(a), StrmSyncService.ComputeChannelListHash(b));
 }
@@ -585,21 +585,21 @@ public void ComputeChannelListHash_NameChanged_ChangeHash()
 
 **Step 4: Add naming version upgrade tests**
 
-These require the refactored `CheckAndUpgradeNamingVersion(config, saveConfig)` - make it `internal` (it already is `private`; change to `internal` so tests can call it directly). Add `[assembly: InternalsVisibleTo("Emby.Xtream.Plugin.Tests")]` to `StrmSyncService.cs` if not already present - check first.
+These require the refactored `CheckAndUpgradeNamingVersion(config, saveConfig)` - make it `internal` (it already is `private`; change to `internal` so tests can call it directly). Add `[assembly: InternalsVisibleTo("Emby.M3uEditor.Plugin.Tests")]` to `StrmSyncService.cs` if not already present - check first.
 
 Actually, simpler: test `CheckAndUpgradeNamingVersion` indirectly through the integration tests in Task 6/7 (the "naming version upgrade bypasses smart-skip" tests). The unit-level assertions (saveConfig called once, returns true) can be tested by making it `internal` and using `InternalsVisibleTo`.
 
 Check whether `InternalsVisibleTo` is already configured:
 
 ```bash
-grep -r "InternalsVisibleTo" "/Users/rolandbo@backbase.com/Documents/Coding Projects/Emby/Emby.Xtream.Plugin/"
+grep -r "InternalsVisibleTo" "/Users/rolandbo@backbase.com/Documents/Coding Projects/Emby/Emby.M3uEditor.Plugin/"
 ```
 
 If not present, add to the plugin's `.csproj`:
 ```xml
 <ItemGroup>
   <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
-    <_Parameter1>Emby.Xtream.Plugin.Tests</_Parameter1>
+    <_Parameter1>Emby.M3uEditor.Plugin.Tests</_Parameter1>
   </AssemblyAttribute>
 </ItemGroup>
 ```
@@ -673,10 +673,10 @@ public void CheckAndUpgradeNamingVersion_CalledTwice_SecondIsNoOp()
 [Fact]
 public void NfoWriter_Movie_WritesFileWithTmdbId()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "movie.nfo");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteMovieNfo(path, "The Matrix", "603", 1999);
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteMovieNfo(path, "The Matrix", "603", 1999);
         Assert.True(System.IO.File.Exists(path));
         var content = System.IO.File.ReadAllText(path);
         Assert.Contains("<uniqueid type=\"tmdb\" default=\"true\">603</uniqueid>", content);
@@ -686,10 +686,10 @@ public void NfoWriter_Movie_WritesFileWithTmdbId()
 [Fact]
 public void NfoWriter_Movie_NoTmdbId_FileNotCreated()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "movie.nfo");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteMovieNfo(path, "The Matrix", null, 1999);
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteMovieNfo(path, "The Matrix", null, 1999);
         Assert.False(System.IO.File.Exists(path));
     }
 }
@@ -697,11 +697,11 @@ public void NfoWriter_Movie_NoTmdbId_FileNotCreated()
 [Fact]
 public void NfoWriter_Movie_FileAlreadyExists_NotOverwritten()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "movie.nfo");
         System.IO.File.WriteAllText(path, "SENTINEL");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteMovieNfo(path, "The Matrix", "603", 1999);
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteMovieNfo(path, "The Matrix", "603", 1999);
         Assert.Equal("SENTINEL", System.IO.File.ReadAllText(path));
     }
 }
@@ -709,10 +709,10 @@ public void NfoWriter_Movie_FileAlreadyExists_NotOverwritten()
 [Fact]
 public void NfoWriter_Movie_EscapesXmlSpecialChars()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "movie.nfo");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteMovieNfo(path, "Tom & Jerry <1940>", "12345", null);
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteMovieNfo(path, "Tom & Jerry <1940>", "12345", null);
         var content = System.IO.File.ReadAllText(path);
         Assert.Contains("Tom &amp; Jerry &lt;1940&gt;", content);
     }
@@ -721,10 +721,10 @@ public void NfoWriter_Movie_EscapesXmlSpecialChars()
 [Fact]
 public void NfoWriter_Show_TvdbOnly_IsDefault()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "tvshow.nfo");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", "81189", null);
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", "81189", null);
         var content = System.IO.File.ReadAllText(path);
         Assert.Contains("<uniqueid type=\"tvdb\" default=\"true\">81189</uniqueid>", content);
     }
@@ -733,10 +733,10 @@ public void NfoWriter_Show_TvdbOnly_IsDefault()
 [Fact]
 public void NfoWriter_Show_TvdbAndTmdb_TvdbIsDefault()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "tvshow.nfo");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", "81189", "1396");
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", "81189", "1396");
         var content = System.IO.File.ReadAllText(path);
         Assert.Contains("type=\"tvdb\" default=\"true\"", content);
         Assert.Contains("type=\"tmdb\">1396", content);
@@ -747,10 +747,10 @@ public void NfoWriter_Show_TvdbAndTmdb_TvdbIsDefault()
 [Fact]
 public void NfoWriter_Show_TmdbOnly_IsDefault()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "tvshow.nfo");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", null, "1396");
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", null, "1396");
         var content = System.IO.File.ReadAllText(path);
         Assert.Contains("<uniqueid type=\"tmdb\" default=\"true\">1396</uniqueid>", content);
     }
@@ -759,10 +759,10 @@ public void NfoWriter_Show_TmdbOnly_IsDefault()
 [Fact]
 public void NfoWriter_Show_NoIds_FileNotCreated()
 {
-    using (var tmp = new Emby.Xtream.Plugin.Tests.Fakes.TempDirectory())
+    using (var tmp = new Emby.M3uEditor.Plugin.Tests.Fakes.TempDirectory())
     {
         var path = System.IO.Path.Combine(tmp.Path, "tvshow.nfo");
-        Emby.Xtream.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", null, null);
+        Emby.M3uEditor.Plugin.Service.NfoWriter.WriteShowNfo(path, "Breaking Bad", null, null);
         Assert.False(System.IO.File.Exists(path));
     }
 }
@@ -771,16 +771,16 @@ public void NfoWriter_Show_NoIds_FileNotCreated()
 **Step 6: Run tests**
 
 ```bash
-dotnet test Emby.Xtream.Plugin.Tests/
+dotnet test Emby.M3uEditor.Plugin.Tests/
 ```
 Expected: all previous tests pass + all new tests pass. Zero failures.
 
 **Step 7: Commit**
 
 ```bash
-git add Emby.Xtream.Plugin.Tests/StrmSyncServiceTests.cs \
-        Emby.Xtream.Plugin/Emby.Xtream.Plugin.csproj \
-        Emby.Xtream.Plugin/Service/StrmSyncService.cs
+git add Emby.M3uEditor.Plugin.Tests/StrmSyncServiceTests.cs \
+        Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj \
+        Emby.M3uEditor.Plugin/Service/StrmSyncService.cs
 git commit -m "test: add folder naming, NfoWriter, hash, and naming-version unit tests"
 ```
 
@@ -789,18 +789,18 @@ git commit -m "test: add folder naming, NfoWriter, hash, and naming-version unit
 ## Task 6: `SyncMoviesIntegrationTests`
 
 **Files:**
-- Create: `Emby.Xtream.Plugin.Tests/SyncMoviesIntegrationTests.cs`
+- Create: `Emby.M3uEditor.Plugin.Tests/SyncMoviesIntegrationTests.cs`
 
 **Step 1: Create the file with all movie sync tests**
 
 ```csharp
 using System.IO;
 using System.Threading.Tasks;
-using Emby.Xtream.Plugin.Service;
-using Emby.Xtream.Plugin.Tests.Fakes;
+using Emby.M3uEditor.Plugin.Service;
+using Emby.M3uEditor.Plugin.Tests.Fakes;
 using Xunit;
 
-namespace Emby.Xtream.Plugin.Tests
+namespace Emby.M3uEditor.Plugin.Tests
 {
     public class SyncMoviesIntegrationTests : SyncTestBase
     {
@@ -977,21 +977,21 @@ namespace Emby.Xtream.Plugin.Tests
 **Step 2: Run tests**
 
 ```bash
-dotnet test Emby.Xtream.Plugin.Tests/ --filter "SyncMoviesIntegrationTests"
+dotnet test Emby.M3uEditor.Plugin.Tests/ --filter "SyncMoviesIntegrationTests"
 ```
 Expected: all 9 tests pass.
 
 **Step 3: Run full suite**
 
 ```bash
-dotnet test Emby.Xtream.Plugin.Tests/
+dotnet test Emby.M3uEditor.Plugin.Tests/
 ```
 Expected: 0 failures.
 
 **Step 4: Commit**
 
 ```bash
-git add Emby.Xtream.Plugin.Tests/SyncMoviesIntegrationTests.cs
+git add Emby.M3uEditor.Plugin.Tests/SyncMoviesIntegrationTests.cs
 git commit -m "test: add SyncMovies integration tests (happy path, smart-skip, orphans, threshold)"
 ```
 
@@ -1000,17 +1000,17 @@ git commit -m "test: add SyncMovies integration tests (happy path, smart-skip, o
 ## Task 7: `SyncSeriesIntegrationTests`
 
 **Files:**
-- Create: `Emby.Xtream.Plugin.Tests/SyncSeriesIntegrationTests.cs`
+- Create: `Emby.M3uEditor.Plugin.Tests/SyncSeriesIntegrationTests.cs`
 
 **Step 1: Create the file**
 
 ```csharp
 using System.IO;
 using System.Threading.Tasks;
-using Emby.Xtream.Plugin.Service;
+using Emby.M3uEditor.Plugin.Service;
 using Xunit;
 
-namespace Emby.Xtream.Plugin.Tests
+namespace Emby.M3uEditor.Plugin.Tests
 {
     public class SyncSeriesIntegrationTests : SyncTestBase
     {
@@ -1189,35 +1189,35 @@ namespace Emby.Xtream.Plugin.Tests
 **Step 2: Run tests**
 
 ```bash
-dotnet test Emby.Xtream.Plugin.Tests/ --filter "SyncSeriesIntegrationTests"
+dotnet test Emby.M3uEditor.Plugin.Tests/ --filter "SyncSeriesIntegrationTests"
 ```
 Expected: all 8 tests pass.
 
 **Step 3: Commit**
 
 ```bash
-git add Emby.Xtream.Plugin.Tests/SyncSeriesIntegrationTests.cs
+git add Emby.M3uEditor.Plugin.Tests/SyncSeriesIntegrationTests.cs
 git commit -m "test: add SyncSeries integration tests (smart-skip, orphan cleanup, multi-season)"
 ```
 
 ---
 
-## Task 8: `XtreamTunerHostTests` - skip for now, mark as future work
+## Task 8: `M3uEditorTunerHostTests` - skip for now, mark as future work
 
-`XtreamTunerHost` has a deeper dependency on the Emby `ITunerHost` interface and static `_stats` cache that requires more significant refactoring to make testable (the stats are stored in a static `ConcurrentDictionary` keyed by tuner ID). This is better addressed as a separate design effort once the sync tests are bedded in.
+`M3uEditorTunerHost` has a deeper dependency on the Emby `ITunerHost` interface and static `_stats` cache that requires more significant refactoring to make testable (the stats are stored in a static `ConcurrentDictionary` keyed by tuner ID). This is better addressed as a separate design effort once the sync tests are bedded in.
 
 Document this as a follow-up:
 
 **Files:**
-- Create: `Emby.Xtream.Plugin.Tests/XtreamTunerHostTests.cs`
+- Create: `Emby.M3uEditor.Plugin.Tests/M3uEditorTunerHostTests.cs`
 
 ```csharp
-// TODO: XtreamTunerHost integration tests - tracked as follow-up.
+// TODO: M3uEditorTunerHost integration tests - tracked as follow-up.
 // The stream stats cache (_streamStats) is static and shared across test runs,
 // making isolation difficult without refactoring the stats lifecycle.
 // See docs/plans/2026-03-07-test-expansion-design.md Section 3 for scenario list.
 
-namespace Emby.Xtream.Plugin.Tests
+namespace Emby.M3uEditor.Plugin.Tests
 {
     // placeholder
 }
@@ -1226,8 +1226,8 @@ namespace Emby.Xtream.Plugin.Tests
 **Step 1: Commit placeholder**
 
 ```bash
-git add Emby.Xtream.Plugin.Tests/XtreamTunerHostTests.cs
-git commit -m "test: placeholder for XtreamTunerHost tests (follow-up)"
+git add Emby.M3uEditor.Plugin.Tests/M3uEditorTunerHostTests.cs
+git commit -m "test: placeholder for M3uEditorTunerHost tests (follow-up)"
 ```
 
 ---
@@ -1237,7 +1237,7 @@ git commit -m "test: placeholder for XtreamTunerHost tests (follow-up)"
 **Step 1: Run the full test suite**
 
 ```bash
-dotnet test Emby.Xtream.Plugin.Tests/
+dotnet test Emby.M3uEditor.Plugin.Tests/
 ```
 Expected: ≥ 240 tests, 0 failures.
 
@@ -1253,14 +1253,14 @@ git push origin main
 
 | File | Change |
 |------|--------|
-| `Emby.Xtream.Plugin/Service/StrmSyncService.cs` | Add `_httpClient` field + ctor overload; replace all `SharedHttpClient` uses; add `saveConfig` param to 3 methods; make `CheckAndUpgradeNamingVersion` internal |
-| `Emby.Xtream.Plugin/Service/SyncMoviesTask.cs` | Update call to `SyncMoviesAsync` |
-| `Emby.Xtream.Plugin/Service/SyncSeriesTask.cs` | Update call to `SyncSeriesAsync` |
-| `Emby.Xtream.Plugin/Emby.Xtream.Plugin.csproj` | Add `InternalsVisibleTo` |
-| `Emby.Xtream.Plugin.Tests/Fakes/TempDirectory.cs` | New |
-| `Emby.Xtream.Plugin.Tests/Fakes/FakeHttpHandler.cs` | New |
-| `Emby.Xtream.Plugin.Tests/SyncTestBase.cs` | New |
-| `Emby.Xtream.Plugin.Tests/StrmSyncServiceTests.cs` | Add ~25 tests |
-| `Emby.Xtream.Plugin.Tests/SyncMoviesIntegrationTests.cs` | New - 9 tests |
-| `Emby.Xtream.Plugin.Tests/SyncSeriesIntegrationTests.cs` | New - 8 tests |
-| `Emby.Xtream.Plugin.Tests/XtreamTunerHostTests.cs` | New - placeholder |
+| `Emby.M3uEditor.Plugin/Service/StrmSyncService.cs` | Add `_httpClient` field + ctor overload; replace all `SharedHttpClient` uses; add `saveConfig` param to 3 methods; make `CheckAndUpgradeNamingVersion` internal |
+| `Emby.M3uEditor.Plugin/Service/SyncMoviesTask.cs` | Update call to `SyncMoviesAsync` |
+| `Emby.M3uEditor.Plugin/Service/SyncSeriesTask.cs` | Update call to `SyncSeriesAsync` |
+| `Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj` | Add `InternalsVisibleTo` |
+| `Emby.M3uEditor.Plugin.Tests/Fakes/TempDirectory.cs` | New |
+| `Emby.M3uEditor.Plugin.Tests/Fakes/FakeHttpHandler.cs` | New |
+| `Emby.M3uEditor.Plugin.Tests/SyncTestBase.cs` | New |
+| `Emby.M3uEditor.Plugin.Tests/StrmSyncServiceTests.cs` | Add ~25 tests |
+| `Emby.M3uEditor.Plugin.Tests/SyncMoviesIntegrationTests.cs` | New - 9 tests |
+| `Emby.M3uEditor.Plugin.Tests/SyncSeriesIntegrationTests.cs` | New - 8 tests |
+| `Emby.M3uEditor.Plugin.Tests/M3uEditorTunerHostTests.cs` | New - placeholder |

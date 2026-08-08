@@ -20,8 +20,8 @@ export async function login(page: Page): Promise<void> {
   await page.goto(url);
 
   // Emby may show either:
-  //   (a) a user-picker screen — tile buttons for each user, then a password field
-  //   (b) a manual login form — username + password text inputs
+  //   (a) a user-picker screen - tile buttons for each user, then a password field
+  //   (b) a manual login form - username + password text inputs
   // Detect which one by waiting for the first element to appear.
   const pickerOrForm = await Promise.race([
     page.waitForSelector(`button:has-text("${username}")`, { timeout: 10_000 })
@@ -31,7 +31,7 @@ export async function login(page: Page): Promise<void> {
   ]);
 
   if (pickerOrForm === 'picker') {
-    // Click the user tile — Emby then shows only a password field.
+    // Click the user tile - Emby then shows only a password field.
     await page.click(`button:has-text("${username}")`);
     await page.waitForSelector('#txtManualPassword, input[name="password"], input[type="password"]', {
       timeout: 10_000,
@@ -48,7 +48,7 @@ export async function login(page: Page): Promise<void> {
     await page.click('button[type="submit"], .btnSubmit, button:has-text("Sign in"), button:has-text("Login")');
   }
 
-  // Wait for the home page — not just any URL containing #! (which would match the
+  // Wait for the home page - not just any URL containing #! (which would match the
   // intermediate #!/startup/manuallogin.html page and return before login completes).
   await page.waitForURL(url => url.href.includes('#!/home'), { timeout: 15_000 });
 }
@@ -88,9 +88,9 @@ export interface StreamSession {
  * Close an active Emby live stream via the server API.
  *
  * Mirrors the three-step `close_stream()` in tools/benchmark_livetv.py:
- *   1. LiveStreams/Close   — disposes the ILiveStream (drops Dispatcharr connection)
- *   2. Sessions/Playing/Stopped — releases tuner locks
- *   3. Videos/ActiveEncodings DELETE — kills transcoding processes for this browser device
+ *   1. LiveStreams/Close   - disposes the ILiveStream (drops Dispatcharr connection)
+ *   2. Sessions/Playing/Stopped - releases tuner locks
+ *   3. Videos/ActiveEncodings DELETE - kills transcoding processes for this browser device
  *
  * All calls are fire-and-forget; failures are silently ignored so the benchmark
  * continues even if Emby is in a bad state.

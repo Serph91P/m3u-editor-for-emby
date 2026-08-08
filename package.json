@@ -1,11 +1,11 @@
 {
-  "name": "emby-xtream-release",
+  "name": "m3u-editor-for-emby-release",
   "version": "0.0.0-managed-by-semantic-release",
   "private": true,
-  "description": "Release tooling only — Emby plugin code is C#",
+  "description": "Release tooling only - Emby plugin code is C#",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Serph91P/emby-xtream.git"
+    "url": "git+https://github.com/Serph91P/m3u-editor-for-emby.git"
   },
   "devDependencies": {
     "semantic-release": "^24.2.0",

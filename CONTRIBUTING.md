@@ -1,4 +1,4 @@
-# Contributing to Emby Xtream Plugin
+# Contributing to m3u-editor for Emby plugin
 
 ## Architecture
 
@@ -63,10 +63,10 @@ Never leave changes in the working tree when starting unrelated work. An uncommi
 ### Building
 
 ```bash
-cd Emby.Xtream.Plugin
+cd Emby.M3uEditor.Plugin
 bash build.sh
 ```
 
-Output: `Emby.Xtream.Plugin/out/Emby.Xtream.Plugin.dll`
+Output: `Emby.M3uEditor.Plugin/out/Emby.M3uEditor.Plugin.dll`
 
 Requires .NET SDK 6.0+.
