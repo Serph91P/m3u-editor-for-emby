@@ -15,6 +15,19 @@ namespace Emby.Xtream.Plugin
         public string DetectedBackendName { get; set; } = string.Empty;
         public long LastBackendDetectionTicks { get; set; }
 
+        // Versioned m3u-editor managed publishing state. Existing Xtream settings remain authoritative.
+        public bool ManagedPublishingEnabled { get; set; }
+        public int ManagedPublishingApiVersion { get; set; }
+        public string ManagedCatalogRevision { get; set; } = string.Empty;
+        public string ManagedActiveGeneration { get; set; } = string.Empty;
+        public string ManagedPreviousGeneration { get; set; } = string.Empty;
+        public string ManagedMappingsJson { get; set; } = string.Empty;
+        public string ManagedApprovedOutputRoots { get; set; } = string.Empty;
+        public string ManagedDryRunSummary { get; set; } = string.Empty;
+        public int ManagedOmittedVersions { get; set; }
+        public string ManagedLastError { get; set; } = string.Empty;
+        public long ManagedLastSuccessTicks { get; set; }
+
         // Live TV
         public bool EnableLiveTv { get; set; } = true;
         public string LiveTvOutputFormat { get; set; } = "ts";

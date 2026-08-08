@@ -32,6 +32,7 @@ namespace Emby.Xtream.Plugin.Tests
             Username              = "user",
             Password              = "pass",
             StrmLibraryPath       = TempDir.Path,
+            ManagedApprovedOutputRoots = TempDir.Path,
             SmartSkipExisting     = false,
             CleanupOrphans        = false,
             OrphanSafetyThreshold = 0.0,
@@ -46,6 +47,9 @@ namespace Emby.Xtream.Plugin.Tests
 
         protected StrmSyncService MakeService() =>
             new StrmSyncService(new NullLogger(), HttpClient);
+
+        protected StrmSyncService MakeService(HttpClient httpClient) =>
+            new StrmSyncService(new NullLogger(), httpClient);
 
         // ----- JSON factory helpers -----
 

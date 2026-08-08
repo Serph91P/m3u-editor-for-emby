@@ -19,6 +19,7 @@ namespace Emby.Xtream.Plugin.Tests.Fakes
             = new List<(string, Queue<(string, HttpStatusCode)>)>();
 
         public List<string> ReceivedUrls { get; } = new List<string>();
+        public List<string> ReceivedBodies { get; } = new List<string>();
 
         /// <summary>Register a single response for URLs containing <paramref name="urlSubstring"/>.</summary>
         public void RespondWith(string urlSubstring, string body, HttpStatusCode status = HttpStatusCode.OK)
@@ -41,6 +42,9 @@ namespace Emby.Xtream.Plugin.Tests.Fakes
         {
             var url = request.RequestUri?.ToString() ?? string.Empty;
             ReceivedUrls.Add(url);
+            ReceivedBodies.Add(request.Content == null
+                ? string.Empty
+                : request.Content.ReadAsStringAsync().GetAwaiter().GetResult());
 
             foreach (var (urlSubstring, queue) in _rules)
             {

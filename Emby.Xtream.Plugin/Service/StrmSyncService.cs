@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Emby.Xtream.Plugin.Api;
 using Emby.Xtream.Plugin.Client.Models;
 using MediaBrowser.Model.Logging;
 using STJ = System.Text.Json;
@@ -71,7 +72,7 @@ namespace Emby.Xtream.Plugin.Service
         public DateTime FailedAt { get; set; } = DateTime.UtcNow;
     }
 
-    public class StrmSyncService
+    public partial class StrmSyncService
     {
         private static readonly STJ.JsonSerializerOptions JsonOptions = new STJ.JsonSerializerOptions
         {
@@ -89,6 +90,13 @@ namespace Emby.Xtream.Plugin.Service
 
         private static readonly int MaxHistoryEntries = 10;
         private static readonly HttpClient SharedHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        private static readonly HttpClient ManagedHttpClient = new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
 
         // Increment when naming logic changes so existing installs force a full re-sync on next run.
         internal const int CurrentStrmNamingVersion = 1;
@@ -104,10 +112,13 @@ namespace Emby.Xtream.Plugin.Service
         private readonly ILogger _logger;
         private readonly TmdbLookupService _tmdbLookupService;
         private readonly HttpClient _httpClient;
+        private readonly HttpClient _managedHttpClient;
         private List<SyncHistoryEntry> _syncHistory;
         private readonly object _historyLock = new object();
         private readonly List<FailedSyncItem> _failedItems = new List<FailedSyncItem>();
         private readonly object _failedItemsLock = new object();
+        internal ManagedActionJobCoordinator ManagedActionJobs { get; } =
+            new ManagedActionJobCoordinator(TimeSpan.FromMinutes(10));
 
         private SyncProgress _movieProgress = new SyncProgress();
         private SyncProgress _seriesProgress = new SyncProgress();
@@ -128,6 +139,7 @@ namespace Emby.Xtream.Plugin.Service
             _logger = logger;
             _tmdbLookupService = new TmdbLookupService(logger);
             _httpClient = httpClient ?? SharedHttpClient;
+            _managedHttpClient = httpClient ?? ManagedHttpClient;
         }
 
         /// <summary>
@@ -283,6 +295,15 @@ namespace Emby.Xtream.Plugin.Service
 
             try
             {
+                if (HasManagedOwnershipConflict(config, "movies"))
+                {
+                    movieSyncSuccess = false;
+                    _movieProgress.AbortReason =
+                        "Legacy movie sync is blocked because a managed mapping owns an overlapping output root.";
+                    _movieProgress.Phase = "Managed ownership conflict";
+                    return;
+                }
+
                 EnsureStrmLibraryPath(config.StrmLibraryPath);
 
                 var folderMappings = FolderMappingParser.Parse(config.MovieFolderMappings);
@@ -635,6 +656,16 @@ namespace Emby.Xtream.Plugin.Service
 
             try
             {
+                if (HasManagedOwnershipConflict(config, "tvshows"))
+                {
+                    seriesSyncSuccess = false;
+                    _seriesProgress.AbortReason =
+                        "Legacy series sync is blocked because a managed mapping owns an overlapping output root.";
+                    _seriesProgress.Phase = "Managed ownership conflict";
+                    _episodeProgress.IsRunning = false;
+                    return;
+                }
+
                 EnsureStrmLibraryPath(config.StrmLibraryPath);
 
                 var folderMappings = FolderMappingParser.Parse(config.SeriesFolderMappings);
