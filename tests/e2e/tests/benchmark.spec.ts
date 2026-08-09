@@ -8,12 +8,12 @@
  *   BENCHMARK_MODE=no-stats    npm run benchmark
  *
  * Measurements per channel:
- *   infoTime   — click channel tile → play dialog visible
- *   streamTime — click Play → video reaches readyState >= 2
+ *   infoTime   - click channel tile → play dialog visible
+ *   streamTime - click Play → video reaches readyState >= 2
  *
  * Structure: 1 cold pass, 5s pause, 3 warm passes.
  *   Between every two measurements: 5s gap for stream teardown (BETWEEN_STREAMS_MS).
- * No assertions — purely observational data for the report.
+ * No assertions - purely observational data for the report.
  *
  * Navigation: uses the Channels tab (non-virtualized grid) rather than the Guide
  * timeline, so channels like BBC ONE and CNN are always reachable via
@@ -69,7 +69,7 @@ function emptySession(): StreamSession {
 /** Navigate to the Live TV Channels tab (non-virtualized grid). */
 async function goToChannels(page: Page): Promise<void> {
   if (channelsUrl) {
-    // Direct navigation — works regardless of scroll position or current page.
+    // Direct navigation - works regardless of scroll position or current page.
     await page.goto(channelsUrl);
     // Wait for the SPA router to finish routing to the channels tab.
     // Without this, waitForSelector can fire on home-page .card elements if the
@@ -97,7 +97,7 @@ async function goToChannels(page: Page): Promise<void> {
 /**
  * Close any open overlay (video player or channel-info dialog).
  *
- * Emby's video player is a persistent SPA overlay — it does NOT close
+ * Emby's video player is a persistent SPA overlay - it does NOT close
  * automatically when the hash/route changes. We must explicitly dismiss it
  * before navigating, otherwise it stays on top of the Channels grid and
  * findChannelButton searches inside the player instead of the grid.
@@ -140,12 +140,12 @@ async function returnToChannels(page: Page): Promise<void> {
   if (await page.getByRole('button', { name: 'Play on another device' }).count() > 0) {
     await page.reload();
     await page.waitForSelector(CHANNELS_GRID, { state: 'attached', timeout: 30_000 });
-    // Wait for Emby to fully initialise — it can auto-resume the last stream from
+    // Wait for Emby to fully initialise - it can auto-resume the last stream from
     // stored state, which would re-show the player chrome. We need to detect this
     // before proceeding, otherwise mouse.wheel below would land on the chrome overlay.
     await page.waitForTimeout(1_500);
     if (await page.getByRole('button', { name: 'Play on another device' }).count() > 0) {
-      // Emby auto-resumed from stored state — clear storage and reload a second time.
+      // Emby auto-resumed from stored state - clear storage and reload a second time.
       await page.evaluate(() => {
         sessionStorage.clear();
         const keysToRemove = Object.keys(localStorage).filter(k =>
@@ -160,7 +160,7 @@ async function returnToChannels(page: Page): Promise<void> {
 
   // Scroll the channels virtual-scroll container back to position 0.
   // We use mouse.wheel here (not window.scrollTo) because the channels list is
-  // a separate scrollable container — window.scrollTo only moves the page frame.
+  // a separate scrollable container - window.scrollTo only moves the page frame.
   // At this point the player chrome has been cleared (above), so the wheel event
   // safely targets the channels grid rather than a player overlay.
   await page.mouse.move(640, 400);
@@ -181,7 +181,7 @@ async function returnToChannels(page: Page): Promise<void> {
  *
  * Channel buttons have accessible names like "109 BBC ONE" or "101 NPO 1".
  * We match the name ending with the channel string (word-boundary anchor) to
- * avoid false substring matches — e.g. "NPO 1" must NOT match "NPO 1 EXTRA 71".
+ * avoid false substring matches - e.g. "NPO 1" must NOT match "NPO 1 EXTRA 71".
  */
 async function findChannelButton(page: Page, channel: string) {
   const escaped = channel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -222,7 +222,7 @@ async function measureChannel(page: Page, channel: string): Promise<TimingPair> 
   // Wait for the video to reach HAVE_CURRENT_DATA (readyState ≥ 2).
   //
   // Note on waitForFunction call signature:
-  //   page.waitForFunction(fn, arg, options) — arg must be passed explicitly so
+  //   page.waitForFunction(fn, arg, options) - arg must be passed explicitly so
   //   that { timeout, polling } lands in the options slot, not the arg slot.
   //   Passing undefined as arg is safe because the fn ignores its argument.
   //
@@ -241,11 +241,11 @@ async function measureChannel(page: Page, channel: string): Promise<TimingPair> 
     );
     streamTime = (performance.now() - t1) / 1000;
   } catch {
-    // Stream failed — dismiss any error dialog so the benchmark can continue.
+    // Stream failed - dismiss any error dialog so the benchmark can continue.
     const gotIt = page.getByRole('button', { name: 'Got It' });
     if (await gotIt.count() > 0) await gotIt.click();
     streamTime = -1;
-    console.log(`  [WARN] stream failed for ${channel} — recorded streamTime = -1`);
+    console.log(`  [WARN] stream failed for ${channel} - recorded streamTime = -1`);
   }
 
   // Close the server-side live stream regardless of success or failure.

@@ -43,6 +43,6 @@
   <line x1="296" y1="332" x2="326" y2="372" stroke="#52B54B" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
   <line x1="176" y1="372" x2="336" y2="372" stroke="#52B54B" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
 
-  <!-- Text: XT -->
-  <text x="256" y="440" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="56" fill="#52B54B" letter-spacing="8">XTREAM</text>
+  <!-- Product mark -->
+  <text x="256" y="440" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="64" fill="#52B54B" letter-spacing="10">M3U</text>
 </svg>

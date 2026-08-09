@@ -3,11 +3,11 @@
  *
  * Measures three timings per channel:
  *
- *   infoTime    — click channel in guide → play/record dialog appears.
+ *   infoTime    - click channel in guide → play/record dialog appears.
  *                 Catches: slow GetChannelStreamMediaSources, EnsureStatsLoadedAsync delay,
  *                 or repeated Dispatcharr API calls (BUG-007).
  *
- *   streamTime  — click play → video element reaches HAVE_CURRENT_DATA (readyState >= 2).
+ *   streamTime  - click play → video element reaches HAVE_CURRENT_DATA (readyState >= 2).
  *                 Catches: probe storm / teardown issues (FFprobe, Range: bytes=0-1).
  *
  * Thresholds (seconds):
@@ -126,7 +126,7 @@ test.describe('channel switch performance', () => {
 
       // ── Info screen time ───────────────────────────────────────────────────
 
-      // The guide uses virtual scrolling — off-screen channels are not rendered.
+      // The guide uses virtual scrolling - off-screen channels are not rendered.
       // Scroll the channel column until the target button appears in the DOM.
       const channelBtn = page.getByRole('button', { name: channel }).first();
       // Locate the first guide channel cell for mouse-wheel scroll positioning.
@@ -198,7 +198,7 @@ test.describe('channel switch performance', () => {
         if (videoOk) {
           await returnToGuide(page, guideUrl);
         } else {
-          // Error dialog was already dismissed — still on the guide, no navigation needed.
+          // Error dialog was already dismissed - still on the guide, no navigation needed.
           await page.evaluate(() => { localStorage.removeItem('guide-tagids'); });
         }
       }

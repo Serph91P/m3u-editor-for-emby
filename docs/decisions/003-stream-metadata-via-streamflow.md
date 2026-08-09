@@ -11,7 +11,7 @@ direct-played or must be transcoded. The relevant fields are:
   scrubber positioning and DVR buffer alignment
 
 An M3U tuner gets all of these by probing the stream via ffprobe at stream-open time.
-The Xtream plugin serves channels through a Dispatcharr proxy (`/proxy/ts/stream/<uuid>`),
+The plugin serves channels through a Dispatcharr proxy (`/proxy/ts/stream/<uuid>`),
 which cannot be probed safely.
 
 ## Problem

@@ -33,16 +33,16 @@ jobs:
 
       - name: Restore dependencies
         run: |
-          dotnet restore Emby.Xtream.Plugin/Emby.Xtream.Plugin.csproj
-          dotnet restore Emby.Xtream.Plugin.Tests/Emby.Xtream.Plugin.Tests.csproj
+          dotnet restore Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj
+          dotnet restore Emby.M3uEditor.Plugin.Tests/Emby.M3uEditor.Plugin.Tests.csproj
 
       - name: Build
         run: |
-          dotnet build --no-restore --configuration Release Emby.Xtream.Plugin/Emby.Xtream.Plugin.csproj
-          dotnet build --no-restore --configuration Release Emby.Xtream.Plugin.Tests/Emby.Xtream.Plugin.Tests.csproj
+          dotnet build --no-restore --configuration Release Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj
+          dotnet build --no-restore --configuration Release Emby.M3uEditor.Plugin.Tests/Emby.M3uEditor.Plugin.Tests.csproj
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal --logger "trx;LogFileName=test-results.trx" Emby.Xtream.Plugin.Tests/Emby.Xtream.Plugin.Tests.csproj
+        run: dotnet test --no-build --configuration Release --verbosity normal --logger "trx;LogFileName=test-results.trx" Emby.M3uEditor.Plugin.Tests/Emby.M3uEditor.Plugin.Tests.csproj
 
       - name: Upload test results
         if: always()
@@ -72,8 +72,8 @@ jobs:
 
       - name: Build for CodeQL
         run: |
-          dotnet build --configuration Release Emby.Xtream.Plugin/Emby.Xtream.Plugin.csproj
-          dotnet build --configuration Release Emby.Xtream.Plugin.Tests/Emby.Xtream.Plugin.Tests.csproj
+          dotnet build --configuration Release Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj
+          dotnet build --configuration Release Emby.M3uEditor.Plugin.Tests/Emby.M3uEditor.Plugin.Tests.csproj
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

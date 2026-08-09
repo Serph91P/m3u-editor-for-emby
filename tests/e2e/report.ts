@@ -53,7 +53,7 @@ function loadLatestPerMode(resultsDir: string): Partial<Record<Mode, BenchmarkFi
 
   const files = fs.readdirSync(resultsDir)
     .filter(f => f.startsWith('benchmark-') && f.endsWith('.json'))
-    .sort(); // lexicographic sort — date suffix means latest is last
+    .sort(); // lexicographic sort - date suffix means latest is last
 
   for (const file of files) {
     try {

@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-20
 **Status**: REVERTED - see Outcome section
-**Affects**: `XtreamTunerHost.BuildStreamUrl()`
+**Affects**: `M3uEditorTunerHost.BuildStreamUrl()`
 
 ---
 

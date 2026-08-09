@@ -20,7 +20,7 @@ Emby manifest schema (per plugin entry):
           "version": "1.0.23.0",                # 4-segment version
           "changelog": "...",
           "targetAbi": "4.8.0.0",
-          "sourceUrl": "https://.../Emby.Xtream.Plugin.dll",
+          "sourceUrl": "https://.../Emby.M3uEditor.Plugin.dll",
           "checksum": "<md5>",
           "timestamp": "2026-05-04T12:34:56Z"
         }
@@ -48,19 +48,19 @@ from typing import Any
 # ---------- Plugin metadata (must match Plugin.cs) ----------
 
 PLUGIN_GUID = "b7e3c4a1-9f2d-4e8b-a5c6-d1f0e2b3c4a5"
-PLUGIN_NAME = "Xtream Live TV"
-PLUGIN_DESCRIPTION = "Xtream Codes Live TV / EPG / VOD provider for Emby"
+PLUGIN_NAME = "m3u-editor for Emby"
+PLUGIN_DESCRIPTION = "Live TV, EPG, VOD, and managed library publishing for Emby"
 PLUGIN_OVERVIEW = (
-    "Adds Xtream Codes (M3U/EPG) as a Live TV tuner host inside Emby, "
-    "with channel sync, EPG caching, optional STRM library, and Dispatcharr stats integration."
+    "Connects Emby to Xtream-compatible backends for Live TV, EPG, VOD, series, "
+    "and optional managed m3u-editor library publishing."
 )
 PLUGIN_OWNER = "Serph91P"
 PLUGIN_CATEGORY = "Live TV"
 PLUGIN_IMAGE_URL = (
-    "https://raw.githubusercontent.com/Serph91P/emby-xtream/main/Emby.Xtream.Plugin/thumb.png"
+    "https://raw.githubusercontent.com/Serph91P/m3u-editor-for-emby/main/Emby.M3uEditor.Plugin/thumb.png"
 )
 TARGET_ABI = "4.8.0.0"
-DLL_ASSET_NAME = "Emby.Xtream.Plugin.dll"
+DLL_ASSET_NAME = "Emby.M3uEditor.Plugin.dll"
 
 # ---------- Helpers ----------
 
@@ -76,7 +76,7 @@ def gh_get(path: str, token: str) -> Any:
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
-            "User-Agent": "emby-xtream-manifest-generator",
+            "User-Agent": "m3u-editor-for-emby-manifest-generator",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
@@ -135,7 +135,7 @@ def md5_of_url(url: str, token: str) -> str:
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/octet-stream",
-            "User-Agent": "emby-xtream-manifest-generator",
+            "User-Agent": "m3u-editor-for-emby-manifest-generator",
         },
     )
     h = hashlib.md5()
@@ -198,9 +198,14 @@ def build_manifest(versions: list[dict]) -> list[dict]:
     ]
 
 
+def partition_versions(entries: list[dict]) -> tuple[list[dict], list[dict]]:
+    stable = [entry for entry in entries if not entry["_prerelease"]]
+    return stable, list(entries)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", "Serph91P/emby-xtream"))
+    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", "Serph91P/m3u-editor-for-emby"))
     ap.add_argument("--out", default=".", help="output directory")
     args = ap.parse_args()
 
@@ -227,8 +232,7 @@ def main() -> int:
     # Sort newest first by published_at.
     entries.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
 
-    stable = [e for e in entries if not e["_prerelease"]]
-    all_entries = entries  # stable + prerelease
+    stable, all_entries = partition_versions(entries)
 
     stable_path = out_dir / "manifest.json"
     beta_path = out_dir / "manifest-beta.json"
