@@ -31,10 +31,6 @@ tools/*.sh
 tools/*.csx
 tools/results/
 
-# Documentation (local working/scratch docs - ADRs in docs/decisions/ are committed)
-docs/*.md
-docs/play-timing-analysis.md
-
 # Screenshots (scratch reference images)
 *.png
 !Emby.M3uEditor.Plugin/thumb.png

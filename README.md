@@ -36,8 +36,7 @@ Sync on-demand movies as STRM files that Emby treats as a native movie library.
 - **STRM file generation** - one file per movie, Emby handles metadata and artwork
 - **Folder organization modes:**
   - **Single folder** - all movies in one `Movies/` directory
-  - **Multiple folders** - auto-organized by provider category name
-  - **Custom mapping** - define your own folders and assign categories to each
+  - **Multiple folders** - define your own folders and assign categories to each
 - **TMDB metadata matching** - appends `[tmdbid=123]` to folder names for instant Emby identification
 - **TMDB fallback lookup** - queries Emby's metadata providers when the Xtream source lacks a TMDB ID
 - **Category selection** - pick specific VOD categories to sync, or sync all
@@ -52,7 +51,7 @@ Full series support with proper season/episode structure.
 - **TVDb / TMDB ID folder naming** - `Show Name [tvdbid=81189]` for reliable metadata matching
 - **Manual ID overrides** - force a specific TVDb ID for shows that don't auto-match
 - **Metadata fallback lookup** - searches Emby's providers when no ID is available
-- **Same folder modes as movies** - single, multiple, or custom category mapping
+- **Same folder modes as movies** - Single Folder or Multiple Folders
 
 ### Smart Sync Engine
 
@@ -89,35 +88,34 @@ A configuration UI embedded in Emby's plugin settings with five tabs.
 
 ## Installation
 
-### Option A - Plugin Repository (recommended, auto-updates)
+The first installation must be completed manually because the plugin is not yet
+available inside Emby. After the first installation and restart, use the
+plugin's built-in updater for ordinary updates.
 
-Add one (or both) of the following URLs in Emby under
-**Dashboard → Plugins → Repositories → Add Repository**, then install
-*m3u-editor for Emby* from the Catalog.
+The manual procedure below follows Emby's
+[official manual plugin installation instructions](https://emby.media/support/articles/Plugins-Duplicate.html#manual-install-of-plugins).
 
-| Channel | URL                                                              |
-| ------- | ---------------------------------------------------------------- |
-| Stable  | `https://serph91p.github.io/m3u-editor-for-emby/manifest.json`           |
-| Beta    | `https://serph91p.github.io/m3u-editor-for-emby/manifest-beta.json`      |
+### First Installation
 
-Stable releases come from the `main` branch, beta releases from `develop`.
-Add the beta URL **in addition** to the stable URL if you want both
-channels to compete (Emby always offers the highest version available).
+1. Download `Emby.M3uEditor.Plugin.dll` or the versioned ZIP from the
+   [latest release](https://github.com/Serph91P/m3u-editor-for-emby/releases/latest).
+2. Stop Emby Server.
+3. Locate the `plugins` directory directly below the
+   [Emby Server Data Folder](https://emby.media/support/articles/Server-Data-Folder.html).
+4. If `Emby.M3uEditor.Plugin.dll` already exists, rename it, for example to
+   `Emby.M3uEditor.Plugin.dll.old`. Do not overwrite a loaded plugin DLL.
+5. If you downloaded an archive, extract it and locate the single
+   `Emby.M3uEditor.Plugin.dll` file. No other files are required.
+6. Copy the new `Emby.M3uEditor.Plugin.dll` directly into the `plugins`
+   directory.
+7. Start Emby Server.
 
-Upgrades preserve the plugin GUID and serialized configuration property names.
-The built-in dashboard updater writes the new assembly to the currently loaded
-DLL path, so an installation using an earlier on-disk filename keeps that
-filename. This project does not claim to rename or remove that path; clean
-installations use `Emby.M3uEditor.Plugin.dll`. Existing configured STRM output
-paths are also retained.
+On Linux and NAS platforms, you may need to make the DLL ownership and
+permissions match the adjacent plugin DLLs.
 
-### Option B - Manual download
-
-#### Step 1: Download the Plugin
-
-Download `Emby.M3uEditor.Plugin.dll` from the [latest release](../../releases/latest).
-
-> Only the single DLL file is needed - no other dependencies.
+For Docker installations, the Emby Server Data Folder is commonly mounted at
+`/config`, making the destination `/config/plugins/`. Always confirm the data
+folder used by your installation.
 
 <details>
 <summary><strong>Build from source (alternative)</strong></summary>
@@ -134,36 +132,18 @@ The compiled DLL will be at `Emby.M3uEditor.Plugin/out/Emby.M3uEditor.Plugin.dll
 
 </details>
 
-#### Step 2: Install the Plugin
-
-Copy the DLL to your Emby Server's plugins directory and restart.
-
-**Docker (most common):**
-```bash
-docker cp Emby.M3uEditor.Plugin.dll emby:/config/plugins/
-docker restart emby
-```
-
-**Bare metal (Linux):**
-```bash
-cp Emby.M3uEditor.Plugin.dll /var/lib/emby/plugins/
-systemctl restart emby-server
-```
-
-**Bare metal (macOS/Windows):**
-Copy `Emby.M3uEditor.Plugin.dll` to your Emby data directory under `plugins/`, then restart Emby Server.
-
-### Step 3: Configure the Plugin
+### Configure the Plugin
 
 1. Open Emby's web UI
-2. Go to **Settings > Plugins > m3u-editor for Emby**
-3. Enter your Xtream server details:
+2. Open **Server Dashboard > Plugins > My Plugins**
+3. Open the menu for **m3u-editor for Emby** and select **Settings**
+4. Enter your Xtream server details:
    - **Server URL** - e.g. `http://your-provider:port`
    - **Username** and **Password**
-4. Click **Test Connection** to verify
-5. Click **Save**
+5. Click **Test Connection** to verify
+6. Click **Save**
 
-### Step 4: Set Up Live TV
+### Set Up Live TV
 
 1. Switch to the **Live TV** tab
 2. Choose your **Stream Format** (MPEG-TS recommended)
@@ -171,23 +151,22 @@ Copy `Emby.M3uEditor.Plugin.dll` to your Emby data directory under `plugins/`, t
 4. Select the categories you want
 5. Configure **EPG** settings (days to fetch, cache duration)
 6. Click **Save**
-7. Go to **Emby Settings > Live TV** and add a new tuner:
-   - Type: **m3u-editor for Emby**
-   - It will auto-discover the plugin's M3U and EPG endpoints
+7. Go to **Server Dashboard > Live TV** and verify the automatically registered
+   **m3u-editor for Emby** tuner. The plugin manages this tuner; do not add a
+   separate M3U tuner.
 
-### Step 5: Set Up Movies (Optional)
+### Set Up Movies (Optional)
 
 1. Switch to the **Movies** tab
 2. Check **Enable VOD Movies**
 3. Click **Refresh Categories** to load VOD categories
 4. Choose a **Folder Organization** mode:
    - **Single Folder** - select categories, all movies go to `Movies/`
-   - **Multiple Folders** - one folder per category, auto-named
-   - **Custom** - click "Add Folder", name it, assign categories
+   - **Multiple Folders** - add folders, name them, and assign categories
 5. Click **Sync Movies Now**
 6. In Emby, add a new **Movies** library pointing to the STRM output path (default: `/config/m3u-editor-for-emby/Movies`)
 
-### Step 6: Set Up Series (Optional)
+### Set Up Series (Optional)
 
 1. Switch to the **Series** tab
 2. Check **Enable Series / TV Shows**
@@ -195,7 +174,7 @@ Copy `Emby.M3uEditor.Plugin.dll` to your Emby data directory under `plugins/`, t
 4. Click **Sync Series Now**
 5. In Emby, add a new **TV Shows** library pointing to `/config/m3u-editor-for-emby/Shows`
 
-### Step 7: Dispatcharr Integration (Optional)
+### Dispatcharr Integration (Optional)
 
 If you use [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) for stream management:
 
@@ -209,7 +188,26 @@ If you use [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) for stream 
 
 ### Updating the Plugin
 
-Download the latest DLL from [Releases](../../releases/latest), replace the file in your plugins directory, and restart Emby. Your configuration is preserved across updates.
+For ordinary updates after the first installation, open **m3u-editor for Emby**
+in Emby's plugin settings. When the dashboard shows an update banner, select
+**Update Now**, then restart Emby Server when prompted. The built-in updater
+preserves the loaded DLL path and existing configuration, including configured
+STRM output paths.
+
+Use manual replacement only when the built-in updater is unavailable or fails:
+
+1. Download the latest release.
+2. Stop Emby Server.
+3. In the `plugins` directory directly below the Emby Server Data Folder,
+   rename the installed DLL to `Emby.M3uEditor.Plugin.dll.old` instead of
+   overwriting it.
+4. If the download is an archive, extract it and locate the single
+   `Emby.M3uEditor.Plugin.dll`.
+5. Copy the new `Emby.M3uEditor.Plugin.dll` directly into that directory.
+6. Start Emby Server.
+
+On Linux and NAS platforms, make ownership and permissions match the adjacent
+plugin DLLs if necessary.
 
 ---
 
@@ -233,4 +231,9 @@ Download the latest DLL from [Releases](../../releases/latest), replace the file
 
 ## License
 
-MIT
+The plugin source is licensed under the MIT License.
+
+The project logo is from
+[`m3ue/m3u-editor`'s `public/logo.svg`](https://github.com/m3ue/m3u-editor/blob/master/public/logo.svg)
+and is licensed under
+[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
