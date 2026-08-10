@@ -5,7 +5,14 @@
 <h1 align="center">m3u-editor for Emby</h1>
 
 <p align="center">
-  An Emby Server plugin that turns any Xtream-compatible IPTV service into a full Live TV, Movies, and Series library - with EPG, metadata matching, and a built-in dashboard.
+  The deeply integrated Emby Server companion for <a href="https://github.com/m3ue/m3u-editor">m3u-editor</a>, bringing its Live TV, EPG, movies, series, metadata, and publishing workflows into Emby.
+</p>
+
+<p align="center">
+  <a href="https://github.com/m3ue/m3u-editor"><strong>m3u-editor</strong></a> |
+  <a href="https://github.com/m3ue/m3u-proxy"><strong>m3u-proxy</strong></a> |
+  <a href="https://github.com/m3ue/m3u-tv"><strong>m3u-tv</strong></a> |
+  <a href="https://github.com/m3ue/m3u-editor-docs-v2"><strong>Documentation</strong></a>
 </p>
 
 <p align="center">
@@ -14,75 +21,132 @@
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT License" />
 </p>
 
+This plugin connects Emby Server to the Xtream API output produced by
+[m3u-editor](https://github.com/m3ue/m3u-editor). It detects m3u-editor,
+imports its Live TV and EPG data, builds Emby movie and series libraries, and
+uses m3u-editor stream probe metadata when available. Other Xtream-compatible
+servers remain supported as a secondary compatibility path.
+
+The linked [m3u-proxy](https://github.com/m3ue/m3u-proxy) and
+[m3u-tv](https://github.com/m3ue/m3u-tv) projects are part of the wider m3ue
+ecosystem. This Emby plugin does not require or directly consume either one.
+
 ---
+
+## m3u-editor Integration
+
+### Xtream API Output
+
+The plugin uses m3u-editor's Xtream-compatible protocol to consume the content
+that m3u-editor prepares for clients:
+
+- Live TV channels, groups, stream URLs, and XMLTV EPG data
+- Movie and series categories
+- VOD movie streams and series episode details
+- Provider IDs and metadata used to organize Emby libraries
+- Stream probe metadata exposed by m3u-editor in `stream_stats`
+
+The plugin identifies m3u-editor from its URL and Xtream API response markers.
+If m3u-editor supplies codec, resolution, bitrate, and related probe data, the
+plugin passes that information to Emby and bypasses Emby's FFprobe step for the
+covered channels. Channels without probe data continue through Emby's standard
+analysis path.
+
+### Managed Publishing Capability
+
+When the configured compatible m3u-editor backend explicitly advertises the
+managed library publishing v1 capability, the plugin can reconcile an
+m3u-editor-provided catalog directly into Emby library folders. This path
+supports:
+
+- m3u-editor library mappings with admin-approved local output roots
+- Preferred sources and failover sources for each media variant
+- Local STRM and NFO generation
+- Revisioned generations with an active and previous revision
+- Result callbacks to m3u-editor after each mapping is applied
+- Automatic restoration of the prior generation when a callback fails
+- Manual rollback to the previous generation
+- Optional Emby library refresh after a successful generation change
+
+Managed publishing is capability-gated. It is not assumed to be available in
+every public m3u-editor release. When the backend does not advertise the
+required v1 actions and features, the plugin keeps using its standard Xtream
+library sync path.
 
 ## Features
 
-### Live TV & EPG
+### Live TV and EPG
 
-Full Live TV integration with Emby's native TV guide.
+Bring m3u-editor's channel output into Emby's native Live TV experience.
 
+- **Managed tuner registration** with no separate Emby M3U tuner required
 - **M3U playlist generation** with channel metadata, logos, and EPG channel IDs
-- **XMLTV electronic program guide** with configurable fetch window (1-14 days)
-- **Category-based filtering** - select which channel groups to include
-- **Stream format selection** - MPEG-TS or HLS (M3U8)
-- **Adult content filtering** - opt-in toggle for adult-flagged channels
-- **Automatic caching** - M3U (15 min) and EPG (30 min) with thread-safe invalidation
+- **XMLTV electronic program guide** with a configurable 1 to 14 day window
+- **Category filtering** for m3u-editor channel groups
+- **Stream format selection** for MPEG-TS or HLS (`m3u8`)
+- **Adult content filtering** for adult-flagged channels
+- **Automatic caching** for M3U and EPG responses
 
-### VOD Movie Library
+### Movie Library
 
-Sync on-demand movies as STRM files that Emby treats as a native movie library.
+Sync m3u-editor VOD output as STRM files that Emby treats as a movie library.
 
-- **STRM file generation** - one file per movie, Emby handles metadata and artwork
-- **Folder organization modes:**
-  - **Single folder** - all movies in one `Movies/` directory
-  - **Multiple folders** - define your own folders and assign categories to each
-- **TMDB metadata matching** - appends `[tmdbid=123]` to folder names for instant Emby identification
-- **TMDB fallback lookup** - queries Emby's metadata providers when the Xtream source lacks a TMDB ID
-- **Category selection** - pick specific VOD categories to sync, or sync all
-- **Danger zone** - one-click delete of all synced movie content
+- **Single folder mode** for one `Movies/` directory
+- **Multiple folder mode** with categories assigned to custom folders
+- **TMDB folder naming** such as `[tmdbid=123]` for Emby matching
+- **Metadata fallback lookup** through Emby's providers when m3u-editor output
+  does not contain a TMDB ID
+- **Category selection** for specific m3u-editor VOD groups or all groups
+- **Orphan cleanup** for content no longer present in the selected output
 
-### TV Series Library
+### Series Library
 
-Full series support with proper season/episode structure.
+Create native Emby season and episode structures from m3u-editor series data.
 
-- **Season/Episode STRM files** - `Show Name/Season 01/Show Name - S01E01 - Episode Title.strm`
-- **Series detail fetching** - pulls episode lists per series from the Xtream API
-- **TVDb / TMDB ID folder naming** - `Show Name [tvdbid=81189]` for reliable metadata matching
-- **Manual ID overrides** - force a specific TVDb ID for shows that don't auto-match
-- **Metadata fallback lookup** - searches Emby's providers when no ID is available
-- **Same folder modes as movies** - Single Folder or Multiple Folders
+- **Season and episode STRM files** using Emby-friendly folder layouts
+- **Series detail fetching** through the Xtream API protocol
+- **TVDb and TMDB folder naming** for reliable metadata matching
+- **Manual ID overrides** for series that do not match automatically
+- **Single or multiple folder modes** matching the movie workflow
 
-### Smart Sync Engine
+### Sync Engine
 
-Efficient sync that doesn't re-download what you already have.
-
-- **Smart skip** - skips writing STRM files that already exist on disk
-- **Configurable parallelism** - 1-10 concurrent operations (default 3)
-- **Orphan cleanup** - automatically removes STRM files for content no longer in the source
-- **Cross-listing deduplication** - movies/series appearing in multiple categories are synced once
-- **Content name cleaning** - strips provider prefix tags (e.g. `|UK|`, `|FR|`) and custom terms from titles
-- **Real-time progress** - Phase, Total, Completed, Skipped, Failed counters polled every 500ms
-
-### Dispatcharr Integration
-
-Optional integration with [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) for IPTV stream management.
-
-- **Stream proxy routing** - routes Live TV through Dispatcharr's proxy for connection management
-- **Pre-populated media info** - fetches codec, resolution, and bitrate from Dispatcharr's stream stats (requires [Streamflow](https://github.com/krinkuto11/streamflow) configured in Dispatcharr to generate per-channel metadata)
-- **FFprobe bypass** - skips Emby's stream analysis when stats are available (faster channel switching)
-- **JWT authentication** - automatic token refresh with retry and exponential backoff
-- **Graceful fallback** - reverts to direct Xtream URLs if Dispatcharr is unavailable
+- **Smart skip** for unchanged STRM files
+- **Configurable parallelism** from 1 to 10 concurrent operations
+- **Orphan cleanup** for files removed from the selected m3u-editor output
+- **Cross-listing deduplication** across categories
+- **Content name cleaning** for provider prefixes and custom terms
+- **Real-time progress** with completed, skipped, and failed counters
 
 ### Built-in Dashboard
 
-A configuration UI embedded in Emby's plugin settings with five tabs.
+The configuration UI is embedded in Emby's plugin settings.
 
-- **Dashboard** - last sync status, sync history (last 10), library stats, live progress bar
-- **Settings** - server connection, sync tuning, name cleaning, metadata matching
-- **Movies** - enable/disable, folder mode, category selection with search, sync button
-- **Series** - same layout as movies with series-specific options
-- **Live TV** - stream format, EPG settings, catch-up, Dispatcharr, category filtering
+- **Dashboard** with backend detection, sync history, library statistics, and
+  managed publishing status
+- **Settings** for the m3u-editor connection, sync behavior, name cleaning, and
+  metadata matching
+- **Movies and Series** tabs for category selection, folder mapping, and sync
+- **Live TV** controls for stream format, EPG, catch-up, and category filtering
+- **Managed publishing** controls for approved roots, reconcile, and rollback
+
+### Optional Dispatcharr Integration
+
+[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) remains an optional,
+separate integration for stream proxying and connection management.
+
+- Routes Live TV, movie, and series playback through Dispatcharr when enabled
+- Uses Dispatcharr stream statistics for codec, resolution, and bitrate when
+  available
+- Supports FFprobe bypass when Dispatcharr has per-stream probe data
+- Refreshes JWT authentication automatically
+- Falls back to the configured m3u-editor Xtream URLs if Dispatcharr is
+  unavailable
+
+Dispatcharr requires
+[Streamflow](https://github.com/krinkuto11/streamflow) to generate the
+per-channel metadata used by its FFprobe bypass path. This is separate from
+probe metadata supplied directly by m3u-editor.
 
 ---
 
@@ -92,7 +156,7 @@ The first installation must be completed manually because the plugin is not yet
 available inside Emby. After the first installation and restart, use the
 plugin's built-in updater for ordinary updates.
 
-The manual procedure below follows Emby's
+The manual procedure follows Emby's
 [official manual plugin installation instructions](https://emby.media/support/articles/Plugins-Duplicate.html#manual-install-of-plugins).
 
 ### First Installation
@@ -132,59 +196,93 @@ The compiled DLL will be at `Emby.M3uEditor.Plugin/out/Emby.M3uEditor.Plugin.dll
 
 </details>
 
+## Connect m3u-editor
+
+### Prepare the Xtream API Output
+
+1. In m3u-editor, create a **Playlist Auth** and assign it to the playlist you
+   want Emby to use.
+2. Open that playlist's Xtream API information in m3u-editor.
+3. Copy the Xtream API base URL and the assigned Playlist Auth username and
+   password. Use the base URL without `/player_api.php` and without a trailing
+   slash.
+
+The plugin communicates with m3u-editor through the Xtream-compatible protocol.
+Playlist Auth credentials restrict the connection to the playlists assigned to
+that auth in m3u-editor.
+
 ### Configure the Plugin
 
-1. Open Emby's web UI
-2. Open **Server Dashboard > Plugins > My Plugins**
-3. Open the menu for **m3u-editor for Emby** and select **Settings**
-4. Enter your Xtream server details:
-   - **Server URL** - e.g. `http://your-provider:port`
-   - **Username** and **Password**
-5. Click **Test Connection** to verify
-6. Click **Save**
+1. Open Emby's web UI.
+2. Open **Server Dashboard > Plugins > My Plugins**.
+3. Open the menu for **m3u-editor for Emby** and select **Settings**.
+4. Under **Xtream Connection**, enter the m3u-editor details:
+   - **Server URL**: the m3u-editor Xtream API base URL
+   - **Username**: the Playlist Auth username
+   - **Password**: the Playlist Auth password
+5. Select **Test Connection** and confirm that m3u-editor is detected.
+6. Select **Save**.
+
+Use HTTPS when available. Managed publishing requires a confined HTTPS origin.
 
 ### Set Up Live TV
 
-1. Switch to the **Live TV** tab
-2. Choose your **Stream Format** (MPEG-TS recommended)
-3. Click **Refresh Categories** to load channel groups
-4. Select the categories you want
-5. Configure **EPG** settings (days to fetch, cache duration)
-6. Click **Save**
+1. Switch to the **Live TV** tab.
+2. Choose the stream format. MPEG-TS is recommended.
+3. Select **Refresh Categories** to load m3u-editor channel groups.
+4. Select the categories to include.
+5. Configure the EPG window and cache duration.
+6. Select **Save**.
 7. Go to **Server Dashboard > Live TV** and verify the automatically registered
-   **m3u-editor for Emby** tuner. The plugin manages this tuner; do not add a
+   **m3u-editor for Emby** tuner. The plugin manages this tuner, so do not add a
    separate M3U tuner.
 
 ### Set Up Movies (Optional)
 
-1. Switch to the **Movies** tab
-2. Check **Enable VOD Movies**
-3. Click **Refresh Categories** to load VOD categories
-4. Choose a **Folder Organization** mode:
-   - **Single Folder** - select categories, all movies go to `Movies/`
-   - **Multiple Folders** - add folders, name them, and assign categories
-5. Click **Sync Movies Now**
-6. In Emby, add a new **Movies** library pointing to the STRM output path (default: `/config/m3u-editor-for-emby/Movies`)
+1. Switch to the **Movies** tab and enable VOD movies.
+2. Refresh the m3u-editor VOD categories and select the categories to include.
+3. Choose **Single Folder** or define category mappings with **Multiple
+   Folders**.
+4. Select **Sync Movies Now**.
+5. In Emby, add a Movies library pointing to the STRM output path. The default
+   movie path is `/config/m3u-editor-for-emby/Movies`.
 
 ### Set Up Series (Optional)
 
-1. Switch to the **Series** tab
-2. Check **Enable Series / TV Shows**
-3. Same workflow as Movies - refresh categories, select, choose folder mode
-4. Click **Sync Series Now**
-5. In Emby, add a new **TV Shows** library pointing to `/config/m3u-editor-for-emby/Shows`
+1. Switch to the **Series** tab and enable series.
+2. Refresh the m3u-editor series categories and select the categories to
+   include.
+3. Choose the folder organization mode and select **Sync Series Now**.
+4. In Emby, add a TV Shows library pointing to
+   `/config/m3u-editor-for-emby/Shows` by default.
+
+### Managed Publishing (When Available)
+
+If the dashboard reports a compatible managed publishing v1 backend:
+
+1. Add each local path that m3u-editor may manage to **Approved managed output
+   roots**.
+2. Make sure a managed root does not overlap an enabled standard movie or
+   series sync root.
+3. Select **Reconcile Now** to apply the advertised m3u-editor mappings.
+4. Add the resulting folders as Emby libraries if they are not already
+   configured.
+5. Use **Rollback Previous Generation** only when you need to restore the prior
+   managed revision.
+
+If the capability is not advertised, continue with the standard movie and
+series setup above.
 
 ### Dispatcharr Integration (Optional)
 
-If you use [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) for stream management:
+1. Open the **Live TV** tab and expand **Dispatcharr Integration**.
+2. Enable Dispatcharr.
+3. Enter the Dispatcharr URL, username, and password.
+4. Select **Test Dispatcharr** and save the configuration.
 
-1. Go to **Live TV** tab > **Dispatcharr** section
-2. Check **Enable Dispatcharr**
-3. Enter Dispatcharr URL, username, and password
-4. Click **Test Dispatcharr** to verify
-5. Save - Live TV streams will now route through Dispatcharr's proxy
-
-> **Note:** For the plugin to receive codec/resolution metadata and skip FFprobe, [Streamflow](https://github.com/krinkuto11/streamflow) must be enabled and configured in Dispatcharr. Without Streamflow generating per-channel stream stats, the plugin falls back to standard stream handling.
+Live TV, movie, and series streams will route through Dispatcharr while it is
+available. The primary content connection remains the m3u-editor Xtream API
+output configured above.
 
 ### Updating the Plugin
 
@@ -216,18 +314,30 @@ plugin DLLs if necessary.
 | Setting | Default | Description |
 |---|---|---|
 | **Stream Format** | MPEG-TS | Live TV container format (`ts` or `m3u8`) |
-| **EPG Cache** | 30 min | How long to cache EPG data (5-1440 min) |
-| **EPG Days** | 2 | Days of guide data to fetch (1-14) |
-| **M3U Cache** | 15 min | How long to cache channel playlists (1-1440 min) |
-| **STRM Library Path** | `/config/m3u-editor-for-emby` | Where STRM files are written. Existing configured paths are preserved during upgrades. |
-| **Smart Skip** | On | Skip existing STRM files during sync |
-| **Sync Parallelism** | 3 | Concurrent operations during sync (1-10) |
-| **Cleanup Orphans** | Off | Remove STRM files not in source |
-| **TMDB Folder Naming** | Off | Append `[tmdbid=X]` to movie/series folders |
+| **EPG Cache** | 30 min | How long to cache m3u-editor EPG data (5 to 1440 min) |
+| **EPG Days** | 2 | Days of guide data to fetch (1 to 14) |
+| **M3U Cache** | 15 min | How long to cache generated channel playlists (1 to 1440 min) |
+| **STRM Library Path** | `/config/m3u-editor-for-emby` | Standard movie and series STRM output root. Existing paths are preserved during upgrades. |
+| **Smart Skip** | On | Skip unchanged STRM files during standard sync |
+| **Sync Parallelism** | 3 | Concurrent operations during standard sync (1 to 10) |
+| **Cleanup Orphans** | Off | Remove STRM files no longer present in the selected m3u-editor output |
+| **TMDB Folder Naming** | Off | Append provider IDs to movie and series folders |
 | **Fallback Lookup** | Off | Query Emby's metadata providers for missing IDs |
-| **Name Cleaning** | Off | Strip prefix tags and custom terms from titles |
+| **Name Cleaning** | Off | Strip provider prefixes and custom terms from titles |
+| **Approved managed output roots** | Empty | Local roots that a compatible managed publishing backend may write |
 
 ---
+
+## m3ue Ecosystem
+
+- [m3u-editor](https://github.com/m3ue/m3u-editor): IPTV playlist, EPG, VOD,
+  series, and Xtream API output management
+- [m3u-proxy](https://github.com/m3ue/m3u-proxy): streaming proxy and failover
+  service used across the wider ecosystem
+- [m3u-tv](https://github.com/m3ue/m3u-tv): cross-platform TV client for
+  m3u-editor
+- [m3u-editor documentation](https://github.com/m3ue/m3u-editor-docs-v2):
+  setup and feature documentation for m3u-editor and m3u-proxy
 
 ## License
 
