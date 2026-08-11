@@ -12,7 +12,7 @@
 set -euo pipefail
 
 VERSION="${1:?usage: inject-version.sh <version>}"
-CSPROJ="Emby.Xtream.Plugin/Emby.Xtream.Plugin.csproj"
+CSPROJ="Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj"
 
 if [[ ! -f "$CSPROJ" ]]; then
   echo "ERROR: $CSPROJ not found (cwd=$(pwd))" >&2

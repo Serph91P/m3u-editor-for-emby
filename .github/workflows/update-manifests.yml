@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout main (for the script)
+      - name: Checkout manifest-generator source
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
           path: source
 
       - name: Checkout gh-pages
@@ -42,7 +42,7 @@ jobs:
             cd pages
             git init -b gh-pages
             git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-            echo "# emby-xtream plugin repository manifests" > README.md
+            echo "# m3u-editor-for-emby plugin repository manifests" > README.md
             git add README.md
             git -c user.email="github-actions[bot]@users.noreply.github.com" \
                 -c user.name="github-actions[bot]" \

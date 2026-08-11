@@ -1,4 +1,4 @@
-# Contributing to Emby Xtream Plugin
+# Contributing to m3u-editor for Emby plugin
 
 ## Architecture
 
@@ -37,19 +37,6 @@ If the Emby guide shows no channels despite having data, check browser localStor
 
 ---
 
-## Architecture Decision Records (ADRs)
-
-Significant decisions are recorded in `docs/decisions/NNN-title.md`. Create a new ADR when:
-- Choosing between multiple viable approaches (especially after trying alternatives that failed)
-- Making a change driven by a non-obvious root cause
-- Reversing or replacing a previous approach
-
-Each ADR should cover: Context, Problem, Alternatives considered, Decision, and Consequences. See `docs/decisions/001-bypass-dispatcharr-proxy.md` as the template.
-
-Numbering: sequential, zero-padded to 3 digits (`001`, `002`, ...).
-
----
-
 ## Development Workflow
 
 ### One concern per branch
@@ -63,10 +50,10 @@ Never leave changes in the working tree when starting unrelated work. An uncommi
 ### Building
 
 ```bash
-cd Emby.Xtream.Plugin
+cd Emby.M3uEditor.Plugin
 bash build.sh
 ```
 
-Output: `Emby.Xtream.Plugin/out/Emby.Xtream.Plugin.dll`
+Output: `Emby.M3uEditor.Plugin/out/Emby.M3uEditor.Plugin.dll`
 
 Requires .NET SDK 6.0+.
