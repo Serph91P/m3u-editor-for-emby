@@ -46,15 +46,23 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ConfigurationPages_UseOnlyNewIdentity()
+        public void UpgradeFromXtreamAssembly_PreservesConfigurationAndDashboardPageAliases()
         {
             var plugin = (Plugin)RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
+            plugin.SetAttributes(
+                "/plugins/Emby.M3uEditor.Plugin.dll",
+                "/plugins/data/m3u-editor-for-emby",
+                new Version(1, 4, 0, 0));
             var pageNames = plugin.GetPages().Select(page => page.Name).ToArray();
 
+            Assert.Equal("Emby.Xtr" + "eam.Plugin.xml", plugin.ConfigurationFileName);
             Assert.Contains("m3ueditorconfig", pageNames);
             Assert.Contains("m3ueditorconfigjs", pageNames);
             Assert.Contains("m3u-editorforEmby", pageNames);
-            Assert.Equal(3, pageNames.Length);
+            Assert.Contains("xtr" + "eamconfig", pageNames);
+            Assert.Contains("xtr" + "eamconfigjs", pageNames);
+            Assert.Contains("Xtr" + "eamTuner", pageNames);
+            Assert.Equal(6, pageNames.Length);
         }
 
         [Fact]
