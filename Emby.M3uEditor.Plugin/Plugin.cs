@@ -76,6 +76,11 @@ namespace Emby.M3uEditor.Plugin
 
         public ImageFormat ThumbImageFormat => ImageFormat.Png;
 
+        // The plugin GUID deliberately survived the v1.4.0 rebrand. Keep the
+        // configuration filename stable as well, because Emby otherwise derives
+        // a new path from Emby.M3uEditor.Plugin.dll and bypasses existing installs.
+        public override string ConfigurationFileName => "Emby.Xtream.Plugin.xml";
+
         public IEnumerable<PluginPageInfo> GetPages()
         {
             return new[]
@@ -95,7 +100,23 @@ namespace Emby.M3uEditor.Plugin
                 },
                 new PluginPageInfo
                 {
+                    // Keep the old Admin Plugins entry point available for upgrades.
+                    Name = "XtreamTuner",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
+                    Name = "xtreamconfig",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
                     Name = GetJsPageName(),
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
+                },
+                new PluginPageInfo
+                {
+                    Name = "xtreamconfigjs",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
                 },
             };
