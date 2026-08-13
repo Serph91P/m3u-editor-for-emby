@@ -395,7 +395,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public async Task ReconcileManagedAsync_CompatibleCatalog_PublishesAndReportsExactRevision()
+        public async Task ReconcileManagedAsync_SuccessEnablesPublishingOnlyAfterRefresh()
         {
             var mapping = MovieMapping(1);
             var catalogRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -427,6 +427,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(File.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
                 Assert.Equal(1, Handler.ReceivedBodies.Count(body => body.Contains("status=success")));
                 Assert.Equal(0, SaveConfigCallCount);
+                Assert.False(config.ManagedPublishingEnabled);
                 refreshCount++;
             });
 
@@ -833,7 +834,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public async Task ReconcileManagedAsync_RefreshFailure_PersistsDisabledState()
+        public async Task ReconcileManagedAsync_RefreshRuntimeFailure_PersistsSanitizedDisabledState()
         {
             ConfigureReconcile(MovieMapping(1));
             var config = DefaultConfig();
@@ -859,7 +860,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     () =>
                     {
                         refreshInvoked = true;
-                        throw new ObjectDisposedException("refresh", "sensitive refresh failure");
+                        throw new InvalidOperationException("/private/library/path");
                     });
             }
             catch (Exception ex)
@@ -872,6 +873,33 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("Managed reconcile failed.", savedError);
             Assert.Null(refreshError);
             Assert.False(result.Success);
+            Assert.Equal("Managed reconcile failed.", result.Error);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_CallerCancellationDuringRefresh_Propagates()
+        {
+            ConfigureReconcile(MovieMapping(1));
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            using (var cancellation = new CancellationTokenSource())
+            {
+                config.BaseUrl = "https://fake-xtream";
+
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => MakeService().ReconcileManagedAsync(
+                    config,
+                    SaveConfig,
+                    null,
+                    cancellation.Token,
+                    () =>
+                    {
+                        cancellation.Cancel();
+                        cancellation.Token.ThrowIfCancellationRequested();
+                    }));
+
+                Assert.False(config.ManagedPublishingEnabled);
+                Assert.Equal(0, SaveConfigCallCount);
+            }
         }
 
         [Fact]

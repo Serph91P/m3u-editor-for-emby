@@ -1387,11 +1387,19 @@ namespace Emby.M3uEditor.Plugin.Api
 
         private static bool IsWritableDirectory(string path)
         {
+            var testFile = System.IO.Path.Combine(
+                path,
+                ".xtream_write_test_" + Guid.NewGuid().ToString("N"));
+            FileStream probe = null;
             try
             {
-                var testFile = System.IO.Path.Combine(path, ".xtream_write_test");
-                File.WriteAllText(testFile, string.Empty);
-                File.Delete(testFile);
+                probe = new FileStream(
+                    testFile,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    1,
+                    FileOptions.DeleteOnClose);
                 return true;
             }
             catch (IOException)
@@ -1401,6 +1409,22 @@ namespace Emby.M3uEditor.Plugin.Api
             catch (UnauthorizedAccessException)
             {
                 return false;
+            }
+            finally
+            {
+                if (probe != null)
+                {
+                    try
+                    {
+                        probe.Dispose();
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                    }
+                }
             }
         }
 

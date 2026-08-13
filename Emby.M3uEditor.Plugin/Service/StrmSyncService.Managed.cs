@@ -340,7 +340,22 @@ namespace Emby.M3uEditor.Plugin.Service
                         throw new InvalidOperationException("Managed library refresh is unavailable.");
                     }
 
-                    refresh();
+                    try
+                    {
+                        refresh();
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception)
+                    {
+                        return RecordManagedReconcileFailure(
+                            config,
+                            saveConfig,
+                            result,
+                            "Managed reconcile failed.");
+                    }
                 }
 
                 config.ManagedMappingsJson = JsonSerializer.Serialize(states, JsonOptions);
