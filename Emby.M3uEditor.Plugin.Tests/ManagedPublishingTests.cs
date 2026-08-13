@@ -833,6 +833,48 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task ReconcileManagedAsync_RefreshFailure_PersistsDisabledState()
+        {
+            ConfigureReconcile(MovieMapping(1));
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            var savedEnabled = true;
+            string savedError = null;
+            var refreshInvoked = false;
+            Exception refreshError = null;
+            ManagedReconcileResult result = null;
+
+            config.BaseUrl = "https://fake-xtream";
+            try
+            {
+                result = await MakeService().ReconcileManagedAsync(
+                    config,
+                    () =>
+                    {
+                        savedEnabled = config.ManagedPublishingEnabled;
+                        savedError = config.ManagedLastError;
+                    },
+                    null,
+                    None,
+                    () =>
+                    {
+                        refreshInvoked = true;
+                        throw new ObjectDisposedException("refresh", "sensitive refresh failure");
+                    });
+            }
+            catch (Exception ex)
+            {
+                refreshError = ex;
+            }
+
+            Assert.True(refreshInvoked);
+            Assert.False(savedEnabled);
+            Assert.Equal("Managed reconcile failed.", savedError);
+            Assert.Null(refreshError);
+            Assert.False(result.Success);
+        }
+
+        [Fact]
         public void HasManagedOwnershipConflict_OverlappingPersistedMapping_BlocksLegacyWriter()
         {
             var config = DefaultConfig();

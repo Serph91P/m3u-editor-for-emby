@@ -378,9 +378,17 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, "Managed backend request timed out.");
             }
+            catch (ObjectDisposedException)
+            {
+                return RecordManagedReconcileFailure(config, saveConfig, result, "Managed reconcile failed.");
+            }
             catch (InvalidOperationException ex)
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, ex.Message);
+            }
+            catch (Exception)
+            {
+                return RecordManagedReconcileFailure(config, saveConfig, result, "Managed reconcile failed.");
             }
         }
 
