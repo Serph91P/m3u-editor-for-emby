@@ -96,7 +96,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void TrackedTree_ContainsNoPriorProductIdentity()
+        public void TrackedTree_ContainsNoPriorProductIdentityExceptUpgradeCompatibility()
         {
             var first = "Xtr" + "eam";
             var expressions = new[]
@@ -111,6 +111,19 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.DoesNotMatch(forbidden, relativePath);
                 var bytes = File.ReadAllBytes(Path.Combine(RepositoryRoot, relativePath));
                 var content = Encoding.Latin1.GetString(bytes);
+                if (relativePath == "Emby.M3uEditor.Plugin/Plugin.cs")
+                {
+                    var compatibilityIdentifiers = new[]
+                    {
+                        "Emby.Xtr" + "eam.Plugin.xml",
+                        "Xtr" + "eamTuner",
+                        "xtr" + "eamconfig",
+                    };
+                    foreach (var identifier in compatibilityIdentifiers)
+                    {
+                        content = content.Replace(identifier, string.Empty);
+                    }
+                }
                 Assert.DoesNotMatch(forbidden, content);
             }
         }
