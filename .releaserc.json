@@ -24,6 +24,7 @@
       "prepareCmd": "bash scripts/release/inject-version.sh ${nextRelease.version} && bash scripts/release/build-artifacts.sh ${nextRelease.version}"
     }],
     ["@semantic-release/github", {
+      "successCommentCondition": false,
       "assets": [
         { "path": "artifacts/Emby.M3uEditor.Plugin.dll", "label": "Emby.M3uEditor.Plugin.dll" },
         { "path": "artifacts/m3u-editor-for-emby-${nextRelease.version}.zip", "label": "m3u-editor-for-emby-${nextRelease.version}.zip" },
