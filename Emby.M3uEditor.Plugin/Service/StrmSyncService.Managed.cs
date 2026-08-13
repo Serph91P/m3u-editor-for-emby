@@ -337,7 +337,11 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     if (refresh == null)
                     {
-                        throw new InvalidOperationException("Managed library refresh is unavailable.");
+                        return RecordManagedReconcileFailure(
+                            config,
+                            saveConfig,
+                            result,
+                            "Managed reconcile failed.");
                     }
 
                     try

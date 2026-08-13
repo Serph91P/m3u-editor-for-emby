@@ -877,6 +877,38 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task ReconcileManagedAsync_NullRefresh_PersistsSanitizedDisabledState()
+        {
+            ConfigureReconcile(MovieMapping(1));
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            var savedEnabled = true;
+            string savedError = null;
+            var saveCount = 0;
+
+            config.BaseUrl = "https://fake-xtream";
+            var result = await MakeService().ReconcileManagedAsync(
+                config,
+                () =>
+                {
+                    saveCount++;
+                    savedEnabled = config.ManagedPublishingEnabled;
+                    savedError = config.ManagedLastError;
+                },
+                null,
+                None,
+                null);
+
+            Assert.False(result.Success);
+            Assert.Equal("Managed reconcile failed.", result.Error);
+            Assert.False(config.ManagedPublishingEnabled);
+            Assert.Equal("Managed reconcile failed.", config.ManagedLastError);
+            Assert.False(savedEnabled);
+            Assert.Equal("Managed reconcile failed.", savedError);
+            Assert.Equal(1, saveCount);
+        }
+
+        [Fact]
         public async Task ReconcileManagedAsync_CallerCancellationDuringRefresh_Propagates()
         {
             ConfigureReconcile(MovieMapping(1));
