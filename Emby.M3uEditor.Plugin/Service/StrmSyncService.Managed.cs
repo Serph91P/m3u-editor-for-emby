@@ -183,13 +183,22 @@ namespace Emby.M3uEditor.Plugin.Service
                     config.ManagedPublishingIntegrationId,
                     writablePaths,
                     cancellationToken).ConfigureAwait(false);
-                config.ManagedPublishingEnabled = true;
                 progress?.Report(10);
                 var catalog = await client.GetCatalogAsync(
                     config.BaseUrl,
                     config.Username,
                     config.Password,
                     cancellationToken).ConfigureAwait(false);
+                if (catalog.Mappings.Any(mapping =>
+                    mapping.IntegrationId != config.ManagedPublishingIntegrationId))
+                {
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed catalog mapping integration ID does not match the configured publisher.");
+                }
+
                 result.CatalogRevision = catalog.Revision;
                 result.TotalMappings = catalog.Mappings.Count;
                 config.ManagedCatalogRevision = catalog.Revision;
@@ -347,6 +356,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     result.RemovedFiles,
                     result.OmittedVersions);
                 config.ManagedLastError = result.Success ? string.Empty : result.Error ?? "Managed reconcile failed.";
+                config.ManagedPublishingEnabled = result.Success;
                 if (result.Success)
                 {
                     config.ManagedLastSuccessTicks = DateTime.UtcNow.Ticks;
@@ -454,6 +464,7 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             result.Success = false;
             result.Error = error;
+            config.ManagedPublishingEnabled = false;
             config.ManagedLastError = error;
             saveConfig?.Invoke();
             return result;

@@ -500,6 +500,30 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task ReconcileManagedAsync_CatalogMappingForAnotherIntegration_FailsBeforePublishingOrReporting()
+        {
+            var mapping = MovieMapping(1);
+            mapping.IntegrationId = 8;
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
+            Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
+            {
+                ApiVersion = 1,
+                FullSnapshot = true,
+                Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Mappings = new List<M3uEditorMapping> { mapping }
+            }));
+            var config = DefaultConfig();
+
+            var result = await ReconcileWithRefresh(MakeService(), config, null);
+
+            Assert.False(result.Success);
+            Assert.False(config.ManagedPublishingEnabled);
+            Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("action=m3u_editor_sync_result"));
+        }
+
+        [Fact]
         public async Task ReconcileManagedAsync_RegistrationFailure_ClearsStaleManagedStateBeforeCatalog()
         {
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
@@ -518,6 +542,28 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("HTTP 422", result.Error);
             Assert.Equal(2, Handler.ReceivedUrls.Count);
             Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("action=m3u_editor_catalog"));
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_CatalogFailureAfterRegistration_LeavesPublishingDisabled()
+        {
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
+            Handler.RespondWithSequence(
+                "action=m3u_editor_catalog",
+                new[]
+                {
+                    "{\"error\":{\"code\":\"catalog_unavailable\"}}",
+                    "{\"error\":{\"code\":\"catalog_unavailable\"}}"
+                },
+                HttpStatusCode.ServiceUnavailable);
+            var config = DefaultConfig();
+
+            var result = await ReconcileWithRefresh(MakeService(), config, null);
+
+            Assert.False(result.Success);
+            Assert.False(config.ManagedPublishingEnabled);
+            Assert.Equal("Managed catalog request failed with HTTP 503.", config.ManagedLastError);
         }
 
         [Fact]
@@ -551,7 +597,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "https://editor.example/second/");
             second.MappingUuid = "123e4567-e89b-12d3-a456-426614174002";
-            second.IntegrationId = 8;
+            second.IntegrationId = 7;
             second.TargetLibrary.Id = "library-2";
             second.TargetLibrary.OutputPath = secondRoot;
             ConfigureReconcile(first, second);

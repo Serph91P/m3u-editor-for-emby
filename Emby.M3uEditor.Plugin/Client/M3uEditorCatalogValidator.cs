@@ -81,6 +81,7 @@ namespace Emby.M3uEditor.Plugin.Client
 
             ValidateRevision(mapping.Revision, "Managed mapping revision is invalid.");
             if (mapping.TargetLibrary == null ||
+                !mapping.TargetLibrary.Managed ||
                 !HasBoundedText(mapping.TargetLibrary.Id, MaximumIdentifierCharacters, false) ||
                 !HasBoundedText(mapping.TargetLibrary.Name, MaximumDisplayTextCharacters, true))
             {

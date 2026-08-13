@@ -455,6 +455,17 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Validate_NonManagedTargetLibrary_FailsClosed()
+        {
+            var catalog = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            catalog.Mappings[0].TargetLibrary.Managed = false;
+
+            var error = Assert.Throws<InvalidOperationException>(() => M3uEditorCatalogValidator.Validate(catalog));
+
+            Assert.Contains("target library", error.Message);
+        }
+
+        [Fact]
         public void SafeFilename_EnforcesLengthLimit()
         {
             Assert.True(M3uEditorCatalogValidator.IsSafeFilename(new string('a', 240)));
