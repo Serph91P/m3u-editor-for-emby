@@ -160,5 +160,44 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("Managed publishing status unavailable", javascript);
             Assert.Contains("confirm(", javascript);
         }
+
+        [Fact]
+        public void Dashboard_ManagedPublishingControls_LiveOnDedicatedTabWithCompactDashboardNavigation()
+        {
+            var assembly = typeof(Plugin).Assembly;
+            string html;
+            string javascript;
+            using (var stream = assembly.GetManifestResourceStream("Emby.M3uEditor.Plugin.Configuration.Web.config.html"))
+            using (var reader = new StreamReader(stream))
+            {
+                html = reader.ReadToEnd();
+            }
+
+            using (var stream = assembly.GetManifestResourceStream("Emby.M3uEditor.Plugin.Configuration.Web.config.js"))
+            using (var reader = new StreamReader(stream))
+            {
+                javascript = reader.ReadToEnd();
+            }
+
+            var dashboardStart = html.IndexOf("tabPanel tabDashboard", StringComparison.Ordinal);
+            var managedTabStart = html.IndexOf("tabPanel tabManagedPublishing", StringComparison.Ordinal);
+            var managedCardStart = html.IndexOf("managedPublishingCard", StringComparison.Ordinal);
+            Assert.True(dashboardStart >= 0);
+            Assert.True(managedTabStart > dashboardStart);
+            Assert.True(managedCardStart > managedTabStart);
+            Assert.Contains("data-tab=\"managedPublishing\"", html);
+            Assert.Contains(".configTabs {", html);
+            Assert.Contains("overflow-x: auto", html);
+            Assert.Contains(".tabManagedPublishing .verticalSection", html);
+            Assert.Contains("managedPublishingSummary", html.Substring(dashboardStart, managedTabStart - dashboardStart));
+            Assert.Contains("btnOpenManagedPublishing", html.Substring(dashboardStart, managedTabStart - dashboardStart));
+            Assert.DoesNotContain("btnManagedReconcile", html.Substring(dashboardStart, managedTabStart - dashboardStart));
+            Assert.Contains("txtManagedPublishingIntegrationId", html.Substring(managedTabStart));
+            Assert.Contains("managedPublishing: '.tabManagedPublishing'", javascript);
+            Assert.Contains("config.ManagedPublishingIntegrationId", javascript);
+            Assert.Contains("switchTab(view, 'managedPublishing')", javascript);
+            Assert.Contains("view.querySelector('.managedPublishingSummaryStatus')", javascript);
+            Assert.Contains("if (reconcileEl) reconcileEl.disabled = true;", javascript);
+        }
     }
 }

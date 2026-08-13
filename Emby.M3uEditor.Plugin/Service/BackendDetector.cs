@@ -40,6 +40,7 @@ namespace Emby.M3uEditor.Plugin.Service
     internal sealed class M3uEditorPublishingCapability
     {
         public int ApiVersion { get; set; }
+        public string RegisterPublisherAction { get; set; }
         public string CatalogAction { get; set; }
         public string SyncResultAction { get; set; }
         public string SnapshotMode { get; set; }
@@ -155,10 +156,12 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
+            var registerPublisherAction = TryGetString(actions, "register_publisher");
             var catalogAction = TryGetString(actions, "catalog");
             var syncResultAction = TryGetString(actions, "sync_result");
             var snapshotMode = TryGetString(publishing, "snapshot_mode");
-            if (!string.Equals(catalogAction, "m3u_editor_catalog", StringComparison.Ordinal) ||
+            if (!string.Equals(registerPublisherAction, "m3u_editor_register_publisher", StringComparison.Ordinal) ||
+                !string.Equals(catalogAction, "m3u_editor_catalog", StringComparison.Ordinal) ||
                 !string.Equals(syncResultAction, "m3u_editor_sync_result", StringComparison.Ordinal) ||
                 !string.Equals(snapshotMode, "full", StringComparison.Ordinal))
             {
@@ -184,6 +187,7 @@ namespace Emby.M3uEditor.Plugin.Service
             capability = new M3uEditorPublishingCapability
             {
                 ApiVersion = version,
+                RegisterPublisherAction = registerPublisherAction,
                 CatalogAction = catalogAction,
                 SyncResultAction = syncResultAction,
                 SnapshotMode = snapshotMode,

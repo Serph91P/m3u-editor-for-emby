@@ -68,7 +68,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "ManagedActiveGeneration", "ManagedApprovedOutputRoots", "ManagedCatalogRevision",
                 "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
                 "ManagedOmittedVersions", "ManagedPreviousGeneration", "ManagedPublishingApiVersion",
-                "ManagedPublishingEnabled", "MovieFolderMappings", "MovieFolderMode", "OrphanSafetyThreshold",
+                "ManagedPublishingEnabled", "ManagedPublishingIntegrationId", "MovieFolderMappings", "MovieFolderMode", "OrphanSafetyThreshold",
                 "Password", "SelectedDispatcharrProfileIds", "SelectedLiveCategoryIds",
                 "SelectedSeriesCategoryIds", "SelectedVodCategoryIds", "SeriesEpisodeHashesJson",
                 "SeriesFolderMappings", "SeriesFolderMode", "SmartSkipExisting", "StrmLibraryPath",

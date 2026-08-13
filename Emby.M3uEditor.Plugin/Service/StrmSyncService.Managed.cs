@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
 
@@ -105,6 +106,8 @@ namespace Emby.M3uEditor.Plugin.Service
         internal Action<string> ManagedPhaseHook { get; set; }
         internal Action<string, string> ManagedFileMoveHook { get; set; }
         internal Func<PluginConfiguration> ManagedConfigurationProvider { get; set; }
+        internal Func<IEnumerable<string>> ManagedWritablePathProvider { get; set; } =
+            M3uEditorApi.EnumerateWritableMountPaths;
 
         internal async Task<ManagedReconcileResult> ReconcileManagedAsync(
             PluginConfiguration config,
@@ -140,8 +143,47 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 result.Compatible = true;
-                config.ManagedPublishingEnabled = true;
+                config.ManagedPublishingEnabled = false;
                 config.ManagedPublishingApiVersion = capability.ApiVersion;
+                if (config.ManagedPublishingIntegrationId < 1)
+                {
+                    config.ManagedPublishingEnabled = false;
+                    progress?.Report(100);
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed publishing integration ID must be a positive integer.");
+                }
+
+                var writablePaths = (ManagedWritablePathProvider == null
+                        ? Enumerable.Empty<string>()
+                        : ManagedWritablePathProvider())
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Select(path => path.Trim())
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(51)
+                    .ToList();
+                if (writablePaths.Count == 0)
+                {
+                    config.ManagedPublishingEnabled = false;
+                    progress?.Report(100);
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed publishing requires at least one locally writable path.");
+                }
+
+                await client.RegisterPublisherAsync(
+                    config.BaseUrl,
+                    config.Username,
+                    config.Password,
+                    capability.RegisterPublisherAction,
+                    config.ManagedPublishingIntegrationId,
+                    writablePaths,
+                    cancellationToken).ConfigureAwait(false);
+                config.ManagedPublishingEnabled = true;
                 progress?.Report(10);
                 var catalog = await client.GetCatalogAsync(
                     config.BaseUrl,

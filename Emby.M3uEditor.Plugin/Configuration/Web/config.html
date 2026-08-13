@@ -250,7 +250,13 @@
                     }
                     .category-count-badge.zero-selected { color: #e67e22; opacity: 1; }
 
+                    .configTabs {
+                        overflow-x: auto;
+                        white-space: nowrap;
+                    }
+
                     /* ---- Settings, Live TV, Movies & Series section cards ---- */
+                    .tabManagedPublishing .verticalSection,
                     .tabGeneric .verticalSection,
                     .tabLiveTv .verticalSection,
                     .tabMovies .verticalSection,
@@ -261,6 +267,7 @@
                         padding: 1.2em 1.4em 1.2em 1.4em;
                         margin-bottom: 1em;
                     }
+                    .tabManagedPublishing .verticalSection h2.sectionTitle,
                     .tabGeneric .verticalSection h2.sectionTitle,
                     .tabLiveTv .verticalSection h2.sectionTitle,
                     .tabMovies .verticalSection h2.sectionTitle,
@@ -331,6 +338,10 @@
                     <button type="button" class="tabBtn tabBtnDashboard" data-tab="dashboard" onclick="var f=this.closest('.m3uEditorConfigForm'),p=f.querySelectorAll('.tabPanel'),b=f.querySelectorAll('.tabBtn'),i;for(i=0;i<p.length;i++)p[i].style.display='none';for(i=0;i<b.length;i++){b[i].style.opacity='0.7';b[i].style.borderBottomColor='transparent';}f.querySelector('.tabDashboard').style.display='block';this.style.opacity='1';this.style.borderBottomColor='#52B54B';"
                             style="padding:0.6em 1.5em; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; color:inherit; font-size:1em; opacity:0.7;">
                         Dashboard
+                    </button>
+                    <button type="button" class="tabBtn tabBtnManagedPublishing" data-tab="managedPublishing" onclick="var f=this.closest('.m3uEditorConfigForm'),p=f.querySelectorAll('.tabPanel'),b=f.querySelectorAll('.tabBtn'),i;for(i=0;i<p.length;i++)p[i].style.display='none';for(i=0;i<b.length;i++){b[i].style.opacity='0.7';b[i].style.borderBottomColor='transparent';}f.querySelector('.tabManagedPublishing').style.display='block';this.style.opacity='1';this.style.borderBottomColor='#52B54B';"
+                            style="padding:0.6em 1.5em; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; color:inherit; font-size:1em; opacity:0.7;">
+                        Managed Publishing
                     </button>
                     <button type="button" class="tabBtn tabBtnGeneric" data-tab="generic" onclick="var f=this.closest('.m3uEditorConfigForm'),p=f.querySelectorAll('.tabPanel'),b=f.querySelectorAll('.tabBtn'),i;for(i=0;i<p.length;i++)p[i].style.display='none';for(i=0;i<b.length;i++){b[i].style.opacity='0.7';b[i].style.borderBottomColor='transparent';}f.querySelector('.tabGeneric').style.display='block';this.style.opacity='1';this.style.borderBottomColor='#52B54B';"
                             style="padding:0.6em 1.5em; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; color:inherit; font-size:1em; opacity:0.7;">
@@ -423,28 +434,10 @@
                         </div>
                     </div>
 
-                    <div class="managedPublishingCard dashboard-card" style="margin-bottom:1.2em;">
-                        <h3>Managed m3u-editor Publishing</h3>
-                        <div class="inputContainer">
-                            <textarea class="txtManagedApprovedOutputRoots" is="emby-textarea" label="Approved managed output roots"></textarea>
-                            <div class="fieldDescription">One local absolute path per line. Managed publishing remains disabled for paths outside these admin-approved roots.</div>
-                        </div>
-                        <div class="managedPublishingStatus" style="opacity:0.7;">Checking versioned capability...</div>
-                        <div class="managedPublishingDetails" style="margin-top:0.7em; font-size:0.9em;"></div>
-                        <div class="managedPublishingMappings" style="margin-top:0.7em;"></div>
-                        <div class="managedPublishingPagination" style="display:flex; align-items:center; gap:0.5em; margin-top:0.5em;">
-                            <button class="btnManagedPreviousPage raised button-secondary" is="emby-button" type="button" disabled>Previous</button>
-                            <span class="managedPublishingPage" style="opacity:0.65;"></span>
-                            <button class="btnManagedNextPage raised button-secondary" is="emby-button" type="button" disabled>Next</button>
-                        </div>
-                        <div class="managedPublishingWarning" style="display:none; margin-top:0.7em; color:#e6a23c;"></div>
-                        <div class="managedPublishingError" style="display:none; margin-top:0.7em; color:#cc4444;"></div>
-                        <div style="display:flex; align-items:center; gap:0.5em; flex-wrap:wrap; margin-top:0.9em;">
-                            <button class="btnManagedReconcile raised button-submit" is="emby-button" type="button">Reconcile Now</button>
-                            <select is="emby-select" class="managedRollbackMapping" style="min-width:14em;"></select>
-                            <button class="btnManagedRollback raised button-secondary" is="emby-button" type="button" disabled>Rollback Previous Generation</button>
-                        </div>
-                        <div class="managedPublishingResult" style="margin-top:0.5em;"></div>
+                    <div class="managedPublishingSummary dashboard-card" style="margin-bottom:1.2em;">
+                        <h3>Managed Publishing</h3>
+                        <div class="managedPublishingSummaryStatus" style="opacity:0.7;">Checking managed publishing status...</div>
+                        <button class="btnOpenManagedPublishing raised button-secondary" is="emby-button" type="button" style="margin-top:0.8em;">Open Managed Publishing</button>
                     </div>
 
                     <!-- Quick Actions -->
@@ -483,6 +476,37 @@
                 </div>
 
                 </div><!-- end tabDashboard -->
+
+                <!-- ===== Managed Publishing ===== -->
+                <div class="tabPanel tabManagedPublishing" style="display:none;">
+                    <div class="verticalSection managedPublishingCard">
+                        <h2 class="sectionTitle">Managed m3u-editor Publishing</h2>
+                        <div class="inputContainer">
+                            <input class="txtManagedPublishingIntegrationId" type="number" min="1" step="1" is="emby-input" label="m3u-editor Emby integration ID" />
+                            <div class="fieldDescription">Enter the positive integration ID selected by the administrator. Managed publishing stays disabled until this is valid.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <textarea class="txtManagedApprovedOutputRoots" is="emby-textarea" label="Approved managed output roots"></textarea>
+                            <div class="fieldDescription">One local absolute path per line. Catalog mappings remain blocked outside these admin-approved roots.</div>
+                        </div>
+                        <div class="managedPublishingStatus" style="opacity:0.7;">Checking versioned capability...</div>
+                        <div class="managedPublishingDetails" style="margin-top:0.7em; font-size:0.9em;"></div>
+                        <div class="managedPublishingMappings" style="margin-top:0.7em;"></div>
+                        <div class="managedPublishingPagination" style="display:flex; align-items:center; gap:0.5em; margin-top:0.5em;">
+                            <button class="btnManagedPreviousPage raised button-secondary" is="emby-button" type="button" disabled>Previous</button>
+                            <span class="managedPublishingPage" style="opacity:0.65;"></span>
+                            <button class="btnManagedNextPage raised button-secondary" is="emby-button" type="button" disabled>Next</button>
+                        </div>
+                        <div class="managedPublishingWarning" style="display:none; margin-top:0.7em; color:#e6a23c;"></div>
+                        <div class="managedPublishingError" style="display:none; margin-top:0.7em; color:#cc4444;"></div>
+                        <div style="display:flex; align-items:center; gap:0.5em; flex-wrap:wrap; margin-top:0.9em;">
+                            <button class="btnManagedReconcile raised button-submit" is="emby-button" type="button" disabled>Reconcile Now</button>
+                            <select is="emby-select" class="managedRollbackMapping" style="min-width:14em;"></select>
+                            <button class="btnManagedRollback raised button-secondary" is="emby-button" type="button" disabled>Rollback Previous Generation</button>
+                        </div>
+                        <div class="managedPublishingResult" style="margin-top:0.5em;"></div>
+                    </div>
+                </div><!-- end tabManagedPublishing -->
 
                 <!-- ===== Settings ===== -->
                 <div class="tabPanel tabGeneric" style="display:none;">

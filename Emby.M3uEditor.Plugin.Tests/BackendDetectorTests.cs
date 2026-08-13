@@ -26,7 +26,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void TryGetPublishingCapability_ExactVersionOneContract_EnablesManagedPublishing()
         {
-            var json = "{\"m3u_editor\":{\"library_publishing\":{\"api_version\":1,\"actions\":{\"catalog\":\"m3u_editor_catalog\",\"sync_result\":\"m3u_editor_sync_result\"},\"snapshot_mode\":\"full\",\"features\":[\"library_mappings\",\"variants\",\"provider_failover\",\"local_nfo\",\"revision_metadata\"]}}}";
+            var json = "{\"m3u_editor\":{\"library_publishing\":{\"api_version\":1,\"actions\":{\"register_publisher\":\"m3u_editor_register_publisher\",\"catalog\":\"m3u_editor_catalog\",\"sync_result\":\"m3u_editor_sync_result\"},\"snapshot_mode\":\"full\",\"features\":[\"library_mappings\",\"variants\",\"provider_failover\",\"local_nfo\",\"revision_metadata\"]}}}";
             using (var doc = JsonDocument.Parse(json))
             {
                 M3uEditorPublishingCapability capability;
@@ -35,6 +35,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
                 Assert.True(compatible);
                 Assert.Equal(1, capability.ApiVersion);
+                Assert.Equal("m3u_editor_register_publisher", capability.RegisterPublisherAction);
                 Assert.Equal("m3u_editor_catalog", capability.CatalogAction);
                 Assert.Equal("m3u_editor_sync_result", capability.SyncResultAction);
                 Assert.Equal("full", capability.SnapshotMode);
@@ -47,6 +48,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("{\"m3u_editor\":null}")]
         [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":2}}}")]
         [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":\"1\"}}}")]
+        [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":1,\"actions\":{\"catalog\":\"m3u_editor_catalog\",\"sync_result\":\"m3u_editor_sync_result\"},\"snapshot_mode\":\"full\",\"features\":[\"library_mappings\",\"variants\",\"provider_failover\",\"local_nfo\",\"revision_metadata\"]}}}")]
+        [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":1,\"actions\":{\"register_publisher\":\"remote_action\",\"catalog\":\"m3u_editor_catalog\",\"sync_result\":\"m3u_editor_sync_result\"},\"snapshot_mode\":\"full\",\"features\":[\"library_mappings\",\"variants\",\"provider_failover\",\"local_nfo\",\"revision_metadata\"]}}}")]
         [InlineData("{\"m3u_editor\":{\"library_publishing\":{\"api_version\":1,\"actions\":{\"catalog\":\"wrong\",\"sync_result\":\"m3u_editor_sync_result\"},\"snapshot_mode\":\"full\",\"features\":[]}}}")]
         public void TryGetPublishingCapability_AbsentUnsupportedOrMalformed_UsesGenericXtream(string json)
         {

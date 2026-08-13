@@ -311,6 +311,8 @@ namespace Emby.M3uEditor.Plugin.Api
     {
         public bool Enabled { get; set; }
         public int ApiVersion { get; set; }
+        public int IntegrationId { get; set; }
+        public bool ConfigurationValid { get; set; }
         public string CatalogRevision { get; set; }
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
@@ -382,6 +384,8 @@ namespace Emby.M3uEditor.Plugin.Api
             {
                 Enabled = config.ManagedPublishingEnabled,
                 ApiVersion = config.ManagedPublishingApiVersion,
+                IntegrationId = config.ManagedPublishingIntegrationId,
+                ConfigurationValid = config.ManagedPublishingIntegrationId > 0,
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
@@ -1331,7 +1335,7 @@ namespace Emby.M3uEditor.Plugin.Api
             };
         }
 
-        private static List<string> EnumerateWritableMountPaths()
+        internal static List<string> EnumerateWritableMountPaths()
         {
             var paths = new List<string>();
 

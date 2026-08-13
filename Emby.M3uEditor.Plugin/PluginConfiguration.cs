@@ -18,6 +18,7 @@ namespace Emby.M3uEditor.Plugin
         // Versioned m3u-editor managed publishing state. Existing Xtream settings remain authoritative.
         public bool ManagedPublishingEnabled { get; set; }
         public int ManagedPublishingApiVersion { get; set; }
+        public int ManagedPublishingIntegrationId { get; set; }
         public string ManagedCatalogRevision { get; set; } = string.Empty;
         public string ManagedActiveGeneration { get; set; } = string.Empty;
         public string ManagedPreviousGeneration { get; set; } = string.Empty;

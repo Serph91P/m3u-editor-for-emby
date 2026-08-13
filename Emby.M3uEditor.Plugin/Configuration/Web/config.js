@@ -264,6 +264,10 @@ function (BaseView, loading) {
             loadDashboard(view);
         });
 
+        view.querySelector('.btnOpenManagedPublishing').addEventListener('click', function () {
+            switchTab(view, 'managedPublishing');
+        });
+
         // Retry failed items button
         view.querySelector('.btnRetryFailed').addEventListener('click', function () {
             retryFailed(view);
@@ -488,6 +492,9 @@ function (BaseView, loading) {
 
             // Sync settings
             view.querySelector('.txtStrmLibraryPath').value = config.StrmLibraryPath || '/config/m3u-editor-for-emby';
+            view.querySelector('.txtManagedPublishingIntegrationId').value = config.ManagedPublishingIntegrationId > 0
+                ? config.ManagedPublishingIntegrationId
+                : '';
             view.querySelector('.txtManagedApprovedOutputRoots').value = config.ManagedApprovedOutputRoots || '';
             validateStrmPath(view);
             view.querySelector('.chkSmartSkipExisting').checked = config.SmartSkipExisting !== false;
@@ -615,6 +622,10 @@ function (BaseView, loading) {
 
             // Sync settings
             config.StrmLibraryPath = view.querySelector('.txtStrmLibraryPath').value.replace(/\/+$/, '') || '/config/m3u-editor-for-emby';
+            var managedIntegrationId = Number(view.querySelector('.txtManagedPublishingIntegrationId').value);
+            config.ManagedPublishingIntegrationId = managedIntegrationId > 0 && managedIntegrationId === Math.floor(managedIntegrationId)
+                ? managedIntegrationId
+                : 0;
             config.ManagedApprovedOutputRoots = view.querySelector('.txtManagedApprovedOutputRoots').value || '';
             config.SmartSkipExisting = view.querySelector('.chkSmartSkipExisting').checked;
             config.SyncParallelism = parseInt(view.querySelector('.txtSyncParallelism').value, 10) || 3;
@@ -673,8 +684,8 @@ function (BaseView, loading) {
             btns[i].style.borderBottomColor = 'transparent';
         }
 
-        var panelMap = { dashboard: '.tabDashboard', generic: '.tabGeneric', movies: '.tabMovies', series: '.tabSeries', liveTv: '.tabLiveTv' };
-        var btnMap = { dashboard: '.tabBtnDashboard', generic: '.tabBtnGeneric', movies: '.tabBtnMovies', series: '.tabBtnSeries', liveTv: '.tabBtnLiveTv' };
+        var panelMap = { dashboard: '.tabDashboard', managedPublishing: '.tabManagedPublishing', generic: '.tabGeneric', movies: '.tabMovies', series: '.tabSeries', liveTv: '.tabLiveTv' };
+        var btnMap = { dashboard: '.tabBtnDashboard', managedPublishing: '.tabBtnManagedPublishing', generic: '.tabBtnGeneric', movies: '.tabBtnMovies', series: '.tabBtnSeries', liveTv: '.tabBtnLiveTv' };
 
         var panel = view.querySelector(panelMap[tabName]);
         if (panel) panel.style.display = 'block';
@@ -2062,13 +2073,18 @@ function (BaseView, loading) {
                     managedStatusEl.innerHTML = '<span class="status-badge failed">Unavailable</span>' +
                         '<span style="margin-left:0.7em;">Managed publishing status unavailable.</span>';
                 }
+                var managedSummaryEl = view.querySelector('.managedPublishingSummaryStatus');
+                if (managedSummaryEl) {
+                    managedSummaryEl.innerHTML = '<span class="status-badge failed">Unavailable</span>' +
+                        '<span style="margin-left:0.7em;">Managed publishing status unavailable.</span>';
+                }
                 var managedErrorEl = view.querySelector('.managedPublishingError');
                 if (managedErrorEl) {
                     managedErrorEl.style.display = '';
                     managedErrorEl.textContent = 'Could not load managed publishing status. Reopen this page to retry.';
                 }
                 var reconcileEl = view.querySelector('.btnManagedReconcile');
-                if (reconcileEl) reconcileEl.disabled = false;
+                if (reconcileEl) reconcileEl.disabled = true;
                 var rollbackEl = view.querySelector('.btnManagedRollback');
                 if (rollbackEl) rollbackEl.disabled = true;
             } catch (e) {
@@ -2434,6 +2450,7 @@ function (BaseView, loading) {
     }
 
     function renderManagedPublishing(view, managed) {
+        var summaryEl = view.querySelector('.managedPublishingSummaryStatus');
         var statusEl = view.querySelector('.managedPublishingStatus');
         var detailsEl = view.querySelector('.managedPublishingDetails');
         var mappingsEl = view.querySelector('.managedPublishingMappings');
@@ -2449,11 +2466,22 @@ function (BaseView, loading) {
         managed = managed || {};
         var job = managed.Job || {};
         var jobRunning = job.State === 'running';
+        var available = !!managed.Enabled && !!managed.ConfigurationValid;
 
-        if (!managed.Enabled) {
+        if (!managed.ConfigurationValid) {
+            summaryEl.innerHTML = '<span class="status-badge failed">Configuration required</span>' +
+                '<span style="margin-left:0.7em;">Enter a positive m3u-editor Emby integration ID.</span>';
+            statusEl.innerHTML = '<span class="status-badge failed">Managed publishing disabled</span>' +
+                '<span style="margin-left:0.7em;">A positive m3u-editor Emby integration ID is required.</span>';
+        } else if (!managed.Enabled) {
+            summaryEl.innerHTML = '<span class="status-badge idle">Generic Xtream mode</span>' +
+                '<span style="margin-left:0.7em;">Managed publishing is unavailable.</span>';
             statusEl.innerHTML = '<span class="status-badge idle">Generic Xtream mode</span>' +
                 '<span style="margin-left:0.7em;">No compatible m3u-editor publishing v1 capability is active.</span>';
         } else {
+            summaryEl.innerHTML = '<span class="status-badge success">Managed mode active</span>' +
+                '<span style="margin-left:0.7em;">' + escapeHtml(managed.TotalMappings || 0) + ' mapping(s), ' +
+                escapeHtml(managed.TotalStrmFiles || 0) + ' STRM files.</span>';
             statusEl.innerHTML = '<span class="status-badge success">Managed mode active</span>' +
                 '<span style="margin-left:0.7em;">API v' + escapeHtml(managed.ApiVersion) +
                 ': full snapshots, library mappings, variants, provider failover, local NFO, revision metadata</span>';
@@ -2501,10 +2529,10 @@ function (BaseView, loading) {
         pageEl.textContent = managed.TotalMappings > 0
             ? 'Page ' + (managed.Page || 1) + ' of ' + Math.ceil(managed.TotalMappings / (managed.PageSize || 10))
             : '';
-        previousBtn.disabled = (managed.Page || 1) <= 1;
-        nextBtn.disabled = !managed.HasMore;
-        reconcileBtn.disabled = jobRunning;
-        rollbackBtn.disabled = jobRunning || !managed.Enabled || !managed.PreviousGeneration || mappings.length === 0;
+        previousBtn.disabled = !available || (managed.Page || 1) <= 1;
+        nextBtn.disabled = !available || !managed.HasMore;
+        reconcileBtn.disabled = jobRunning || !available;
+        rollbackBtn.disabled = jobRunning || !available || !managed.PreviousGeneration || mappings.length === 0;
 
         if (jobRunning) {
             setPillResult(resultEl, true, 'Managed ' + escapeHtml(job.Action || 'action') + ' is running.');

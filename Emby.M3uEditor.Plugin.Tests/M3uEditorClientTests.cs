@@ -90,6 +90,36 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task RegisterPublisherAsync_ExactContract_PostsLocalPathsWithoutCredentialsInBody()
+        {
+            var handler = new RequestCaptureHandler("{}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                await client.RegisterPublisherAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    "m3u_editor_register_publisher",
+                    7,
+                    new[] { "/media/Movies & Shows", "/media/TV" },
+                    CancellationToken.None);
+
+                Assert.Equal(HttpMethod.Post, handler.Method);
+                Assert.Contains("action=m3u_editor_register_publisher", handler.Url);
+                Assert.Contains("api_version=1", handler.Body);
+                Assert.Contains("integration_id=7", handler.Body);
+                Assert.Contains("writable_paths%5B0%5D=%2Fmedia%2FMovies+%26+Shows", handler.Body);
+                Assert.Contains("writable_paths%5B1%5D=%2Fmedia%2FTV", handler.Body);
+                Assert.DoesNotContain("account", handler.Body);
+                Assert.DoesNotContain("credential", handler.Body);
+                Assert.DoesNotContain("username", handler.Body);
+                Assert.DoesNotContain("password", handler.Body);
+            }
+        }
+
+        [Fact]
         public async Task ReportSyncResultAsync_ExactRevision_PostsRedactedResult()
         {
             var handler = new FakeHttpHandler();
@@ -455,7 +485,7 @@ namespace Emby.M3uEditor.Plugin.Tests
   ""m3u_editor"": {
     ""library_publishing"": {
       ""api_version"": 1,
-      ""actions"": { ""catalog"": ""m3u_editor_catalog"", ""sync_result"": ""m3u_editor_sync_result"" },
+      ""actions"": { ""register_publisher"": ""m3u_editor_register_publisher"", ""catalog"": ""m3u_editor_catalog"", ""sync_result"": ""m3u_editor_sync_result"" },
       ""snapshot_mode"": ""full"",
       ""features"": [""library_mappings"", ""variants"", ""provider_failover"", ""local_nfo"", ""revision_metadata""]
     }
@@ -550,6 +580,35 @@ namespace Emby.M3uEditor.Plugin.Tests
                 return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
                     Content = _content
+                });
+            }
+        }
+
+        private sealed class RequestCaptureHandler : HttpMessageHandler
+        {
+            private readonly string _responseBody;
+
+            public RequestCaptureHandler(string responseBody)
+            {
+                _responseBody = responseBody;
+            }
+
+            public HttpMethod Method { get; private set; }
+            public string Url { get; private set; }
+            public string Body { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                Method = request.Method;
+                Url = request.RequestUri.ToString();
+                Body = request.Content == null
+                    ? string.Empty
+                    : request.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(_responseBody)
                 });
             }
         }

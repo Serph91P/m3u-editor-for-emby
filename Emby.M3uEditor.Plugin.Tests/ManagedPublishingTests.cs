@@ -400,6 +400,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var mapping = MovieMapping(1);
             var catalogRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
             Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
             {
                 ApiVersion = 1,
@@ -442,6 +443,98 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(1, state.StrmFileCount);
             Assert.Equal(1, Handler.ReceivedBodies.Count(body => body.Contains("status=success")));
             Assert.Contains(Handler.ReceivedBodies, body => body.Contains("revision=" + mapping.Revision));
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_RegistersLocallyEnumeratedPathsBeforeCatalog()
+        {
+            const string localPath = "/local/emby-managed";
+            const string backendPath = "/backend/catalog-path";
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
+            Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
+            {
+                ApiVersion = 1,
+                FullSnapshot = true,
+                Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Mappings = new List<M3uEditorMapping>()
+            }));
+            var config = DefaultConfig();
+            config.ManagedPublishingIntegrationId = 42;
+            config.ManagedApprovedOutputRoots = backendPath;
+            var service = MakeService();
+            service.ManagedWritablePathProvider = () => new[] { localPath };
+
+            var result = await ReconcileWithRefresh(service, config, null);
+
+            Assert.True(result.Compatible);
+            Assert.True(result.Success, result.Error);
+            Assert.Equal(3, Handler.ReceivedUrls.Count);
+            Assert.Contains("action=m3u_editor_register_publisher", Handler.ReceivedUrls[1]);
+            Assert.Contains("action=m3u_editor_catalog", Handler.ReceivedUrls[2]);
+            Assert.Contains("integration_id=42", Handler.ReceivedBodies[1]);
+            Assert.Contains("writable_paths%5B0%5D=%2Flocal%2Femby-managed", Handler.ReceivedBodies[1]);
+            Assert.DoesNotContain(backendPath, Handler.ReceivedBodies[1]);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-1)]
+        public async Task ReconcileManagedAsync_InvalidIntegrationId_FailsClosedWithoutCatalogRequest(int integrationId)
+        {
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            var config = DefaultConfig();
+            config.ManagedPublishingIntegrationId = integrationId;
+            config.SyncMovies = true;
+            var service = MakeService();
+            service.ManagedWritablePathProvider = () => new[] { TempDir.Path };
+
+            var result = await ReconcileWithRefresh(service, config, null);
+
+            Assert.True(result.Compatible);
+            Assert.False(result.Success);
+            Assert.False(config.ManagedPublishingEnabled);
+            Assert.True(config.SyncMovies);
+            Assert.Contains("integration ID", result.Error);
+            Assert.Single(Handler.ReceivedUrls);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_RegistrationFailure_ClearsStaleManagedStateBeforeCatalog()
+        {
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith(
+                "action=m3u_editor_register_publisher",
+                "{\"error\":{\"code\":\"invalid_request\"}}",
+                HttpStatusCode.UnprocessableEntity);
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+
+            var result = await ReconcileWithRefresh(MakeService(), config, null);
+
+            Assert.True(result.Compatible);
+            Assert.False(result.Success);
+            Assert.False(config.ManagedPublishingEnabled);
+            Assert.Contains("HTTP 422", result.Error);
+            Assert.Equal(2, Handler.ReceivedUrls.Count);
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("action=m3u_editor_catalog"));
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_NoLocallyWritablePaths_FailsClosedBeforeRegistration()
+        {
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            var config = DefaultConfig();
+            var service = MakeService();
+            service.ManagedWritablePathProvider = () => new[] { string.Empty, " " };
+
+            var result = await ReconcileWithRefresh(service, config, null);
+
+            Assert.True(result.Compatible);
+            Assert.False(result.Success);
+            Assert.False(config.ManagedPublishingEnabled);
+            Assert.Contains("locally writable path", result.Error);
+            Assert.Single(Handler.ReceivedUrls);
         }
 
         [Fact]
@@ -511,6 +604,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var mapping = MovieMapping(1);
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
             Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
             {
                 ApiVersion = 1,
@@ -538,6 +632,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var mapping = MovieMapping(1);
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
             Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
             {
                 ApiVersion = 1,
@@ -591,6 +686,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "https://editor.example/replacement/");
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
             Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
             {
                 ApiVersion = 1,
@@ -638,6 +734,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var mapping = MovieMapping(1);
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
             Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
             {
                 ApiVersion = 1,
@@ -754,7 +851,7 @@ namespace Emby.M3uEditor.Plugin.Tests
   ""m3u_editor"": {
     ""library_publishing"": {
       ""api_version"": 1,
-      ""actions"": { ""catalog"": ""m3u_editor_catalog"", ""sync_result"": ""m3u_editor_sync_result"" },
+      ""actions"": { ""register_publisher"": ""m3u_editor_register_publisher"", ""catalog"": ""m3u_editor_catalog"", ""sync_result"": ""m3u_editor_sync_result"" },
       ""snapshot_mode"": ""full"",
       ""features"": [""library_mappings"", ""variants"", ""provider_failover"", ""local_nfo"", ""revision_metadata""]
     }
@@ -972,6 +1069,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         private void ConfigureReconcileResponses(bool callbackDuplicate, params M3uEditorMapping[] mappings)
         {
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
             Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
             {
                 ApiVersion = 1,
