@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
 
@@ -105,6 +106,8 @@ namespace Emby.M3uEditor.Plugin.Service
         internal Action<string> ManagedPhaseHook { get; set; }
         internal Action<string, string> ManagedFileMoveHook { get; set; }
         internal Func<PluginConfiguration> ManagedConfigurationProvider { get; set; }
+        internal Func<IEnumerable<string>> ManagedWritablePathProvider { get; set; } =
+            M3uEditorApi.EnumerateWritableMountPaths;
 
         internal async Task<ManagedReconcileResult> ReconcileManagedAsync(
             PluginConfiguration config,
@@ -140,14 +143,62 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 result.Compatible = true;
-                config.ManagedPublishingEnabled = true;
+                config.ManagedPublishingEnabled = false;
                 config.ManagedPublishingApiVersion = capability.ApiVersion;
+                if (config.ManagedPublishingIntegrationId < 1)
+                {
+                    config.ManagedPublishingEnabled = false;
+                    progress?.Report(100);
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed publishing integration ID must be a positive integer.");
+                }
+
+                var writablePaths = (ManagedWritablePathProvider == null
+                        ? Enumerable.Empty<string>()
+                        : ManagedWritablePathProvider())
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Select(path => path.Trim())
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(51)
+                    .ToList();
+                if (writablePaths.Count == 0)
+                {
+                    config.ManagedPublishingEnabled = false;
+                    progress?.Report(100);
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed publishing requires at least one locally writable path.");
+                }
+
+                await client.RegisterPublisherAsync(
+                    config.BaseUrl,
+                    config.Username,
+                    config.Password,
+                    capability.RegisterPublisherAction,
+                    config.ManagedPublishingIntegrationId,
+                    writablePaths,
+                    cancellationToken).ConfigureAwait(false);
                 progress?.Report(10);
                 var catalog = await client.GetCatalogAsync(
                     config.BaseUrl,
                     config.Username,
                     config.Password,
                     cancellationToken).ConfigureAwait(false);
+                if (catalog.Mappings.Any(mapping =>
+                    mapping.IntegrationId != config.ManagedPublishingIntegrationId))
+                {
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed catalog mapping integration ID does not match the configured publisher.");
+                }
+
                 result.CatalogRevision = catalog.Revision;
                 result.TotalMappings = catalog.Mappings.Count;
                 config.ManagedCatalogRevision = catalog.Revision;
@@ -286,10 +337,29 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     if (refresh == null)
                     {
-                        throw new InvalidOperationException("Managed library refresh is unavailable.");
+                        return RecordManagedReconcileFailure(
+                            config,
+                            saveConfig,
+                            result,
+                            "Managed reconcile failed.");
                     }
 
-                    refresh();
+                    try
+                    {
+                        refresh();
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception)
+                    {
+                        return RecordManagedReconcileFailure(
+                            config,
+                            saveConfig,
+                            result,
+                            "Managed reconcile failed.");
+                    }
                 }
 
                 config.ManagedMappingsJson = JsonSerializer.Serialize(states, JsonOptions);
@@ -305,6 +375,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     result.RemovedFiles,
                     result.OmittedVersions);
                 config.ManagedLastError = result.Success ? string.Empty : result.Error ?? "Managed reconcile failed.";
+                config.ManagedPublishingEnabled = result.Success;
                 if (result.Success)
                 {
                     config.ManagedLastSuccessTicks = DateTime.UtcNow.Ticks;
@@ -326,9 +397,17 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, "Managed backend request timed out.");
             }
+            catch (ObjectDisposedException)
+            {
+                return RecordManagedReconcileFailure(config, saveConfig, result, "Managed reconcile failed.");
+            }
             catch (InvalidOperationException ex)
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, ex.Message);
+            }
+            catch (Exception)
+            {
+                return RecordManagedReconcileFailure(config, saveConfig, result, "Managed reconcile failed.");
             }
         }
 
@@ -412,6 +491,7 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             result.Success = false;
             result.Error = error;
+            config.ManagedPublishingEnabled = false;
             config.ManagedLastError = error;
             saveConfig?.Invoke();
             return result;

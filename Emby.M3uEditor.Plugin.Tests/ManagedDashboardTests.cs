@@ -117,5 +117,23 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(5, dashboard.Mappings.Count);
             Assert.False(dashboard.HasMore);
         }
+
+        [Theory]
+        [InlineData(0, false)]
+        [InlineData(-1, false)]
+        [InlineData(7, true)]
+        public void BuildManagedDashboardStatus_ReportsExplicitIntegrationIdValidity(
+            int integrationId,
+            bool expectedValid)
+        {
+            var dashboard = M3uEditorApi.BuildManagedDashboardStatus(
+                new PluginConfiguration { ManagedPublishingIntegrationId = integrationId },
+                new ManagedJobStatus { State = "idle" },
+                1,
+                10);
+
+            Assert.Equal(integrationId, dashboard.IntegrationId);
+            Assert.Equal(expectedValid, dashboard.ConfigurationValid);
+        }
     }
 }

@@ -193,6 +193,92 @@ namespace Emby.M3uEditor.Plugin.Client
             throw new InvalidOperationException("Managed catalog request failed.");
         }
 
+        public async Task RegisterPublisherAsync(
+            string baseUrl,
+            string username,
+            string password,
+            string registerPublisherAction,
+            int integrationId,
+            IEnumerable<string> writablePaths,
+            CancellationToken cancellationToken)
+        {
+            var paths = writablePaths == null
+                ? new List<string>()
+                : new List<string>(writablePaths);
+            if (!string.Equals(
+                    registerPublisherAction,
+                    "m3u_editor_register_publisher",
+                    StringComparison.Ordinal) ||
+                integrationId < 1 ||
+                paths.Count < 1 ||
+                paths.Count > 50 ||
+                paths.Exists(string.IsNullOrWhiteSpace))
+            {
+                throw new InvalidOperationException("Managed publisher registration is invalid.");
+            }
+
+            var requestUrl = BuildActionUrl(
+                baseUrl,
+                username,
+                password,
+                registerPublisherAction,
+                string.Empty);
+            var fields = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("api_version", "1"),
+                new KeyValuePair<string, string>(
+                    "integration_id",
+                    integrationId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            };
+            for (var index = 0; index < paths.Count; index++)
+            {
+                fields.Add(new KeyValuePair<string, string>(
+                    "writable_paths[" + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]",
+                    paths[index]));
+            }
+
+            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            using (var content = new FormUrlEncodedContent(fields))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, requestUrl))
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                request.Content = content;
+                HttpResponseMessage response;
+                try
+                {
+                    response = await _httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeout.Token).ConfigureAwait(false);
+                }
+                catch (HttpRequestException)
+                {
+                    throw new InvalidOperationException("Managed publisher registration request failed.");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (TaskCanceledException)
+                {
+                    throw new InvalidOperationException("Managed publisher registration request timed out.");
+                }
+
+                using (response)
+                {
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        throw new InvalidOperationException(
+                            "Managed publisher registration request failed with HTTP " +
+                            (int)response.StatusCode + ".");
+                    }
+
+                    EnsureConfinedResponse(response, requestUrl);
+                    await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
+                }
+            }
+        }
+
         private static bool IsRetryableCatalogConflict(string body)
         {
             try

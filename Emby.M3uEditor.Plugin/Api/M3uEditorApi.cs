@@ -311,6 +311,8 @@ namespace Emby.M3uEditor.Plugin.Api
     {
         public bool Enabled { get; set; }
         public int ApiVersion { get; set; }
+        public int IntegrationId { get; set; }
+        public bool ConfigurationValid { get; set; }
         public string CatalogRevision { get; set; }
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
@@ -382,6 +384,8 @@ namespace Emby.M3uEditor.Plugin.Api
             {
                 Enabled = config.ManagedPublishingEnabled,
                 ApiVersion = config.ManagedPublishingApiVersion,
+                IntegrationId = config.ManagedPublishingIntegrationId,
+                ConfigurationValid = config.ManagedPublishingIntegrationId > 0,
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
@@ -1331,7 +1335,7 @@ namespace Emby.M3uEditor.Plugin.Api
             };
         }
 
-        private static List<string> EnumerateWritableMountPaths()
+        internal static List<string> EnumerateWritableMountPaths()
         {
             var paths = new List<string>();
 
@@ -1383,11 +1387,19 @@ namespace Emby.M3uEditor.Plugin.Api
 
         private static bool IsWritableDirectory(string path)
         {
+            var testFile = System.IO.Path.Combine(
+                path,
+                ".xtream_write_test_" + Guid.NewGuid().ToString("N"));
+            FileStream probe = null;
             try
             {
-                var testFile = System.IO.Path.Combine(path, ".xtream_write_test");
-                File.WriteAllText(testFile, string.Empty);
-                File.Delete(testFile);
+                probe = new FileStream(
+                    testFile,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    1,
+                    FileOptions.DeleteOnClose);
                 return true;
             }
             catch (IOException)
@@ -1397,6 +1409,22 @@ namespace Emby.M3uEditor.Plugin.Api
             catch (UnauthorizedAccessException)
             {
                 return false;
+            }
+            finally
+            {
+                if (probe != null)
+                {
+                    try
+                    {
+                        probe.Dispose();
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                    }
+                }
             }
         }
 
