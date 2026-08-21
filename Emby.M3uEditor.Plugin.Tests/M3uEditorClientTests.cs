@@ -302,7 +302,6 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
-        [InlineData("http://editor.example")]
         [InlineData("https://editor.example?next=https://other.example")]
         [InlineData("https://editor.example/#fragment")]
         [InlineData("https://account@editor.example")]
@@ -315,8 +314,93 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
                     baseUrl, "account", "credential", CancellationToken.None));
 
-                Assert.Contains("HTTPS", error.Message);
+                Assert.Contains("base URL", error.Message);
                 Assert.Empty(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("http://localhost:8080")]
+        [InlineData("http://127.0.0.1:8080")]
+        [InlineData("http://10.20.30.40:8080")]
+        [InlineData("http://172.20.0.2:8080")]
+        [InlineData("http://192.168.1.20:8080")]
+        [InlineData("http://169.254.20.30:8080")]
+        [InlineData("http://[::1]:8080")]
+        [InlineData("http://[fd12:3456::1]:8080")]
+        [InlineData("http://[fe80::1]:8080")]
+        [InlineData("http://m3u-editor:8080")]
+        public async Task ManagedRequests_TrustedHttpOrigin_IsAccepted(string baseUrl)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php?username=", CapabilityJson);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var capability = await client.DiscoverCapabilityAsync(
+                    baseUrl, "account", "credential", CancellationToken.None);
+
+                Assert.NotNull(capability);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("http://8.8.8.8:8080")]
+        [InlineData("http://93.184.216.34:8080")]
+        [InlineData("http://editor.example:8080")]
+        public async Task ManagedRequests_PublicHttpOrigin_FailsBeforeSendingCredentials(string baseUrl)
+        {
+            var handler = new FakeHttpHandler();
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    baseUrl, "account", "credential", CancellationToken.None));
+
+                Assert.Contains("base URL", error.Message);
+                Assert.DoesNotContain(baseUrl, error.ToString());
+                Assert.DoesNotContain("account", error.ToString());
+                Assert.DoesNotContain("credential", error.ToString());
+                Assert.Empty(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("https://editor.example:8443", "http://editor.example:8443/player_api.php")]
+        [InlineData("http://m3u-editor:8080", "http://other-service:8080/player_api.php")]
+        [InlineData("http://m3u-editor:8080", "http://m3u-editor:8081/player_api.php")]
+        public async Task ManagedRequests_ResponseOriginChanged_FailsClosed(
+            string baseUrl,
+            string responseUrl)
+        {
+            using (var httpClient = new HttpClient(new ResponseOriginHandler(responseUrl, CapabilityJson)))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DiscoverCapabilityAsync(
+                    baseUrl, "account", "credential", CancellationToken.None));
+
+                Assert.Contains("origin changed", error.Message);
+                Assert.DoesNotContain(baseUrl, error.ToString());
+                Assert.DoesNotContain(responseUrl, error.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_ExactTrustedHttpResponseOrigin_IsAccepted()
+        {
+            using (var httpClient = new HttpClient(new ResponseOriginHandler(
+                "http://m3u-editor:8080/player_api.php", CapabilityJson)))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var capability = await client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None);
+
+                Assert.NotNull(capability);
             }
         }
 
@@ -619,6 +703,29 @@ namespace Emby.M3uEditor.Plugin.Tests
                     : request.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
+                    Content = new StringContent(_responseBody)
+                });
+            }
+        }
+
+        private sealed class ResponseOriginHandler : HttpMessageHandler
+        {
+            private readonly Uri _responseUri;
+            private readonly string _responseBody;
+
+            public ResponseOriginHandler(string responseUrl, string responseBody)
+            {
+                _responseUri = new Uri(responseUrl);
+                _responseBody = responseBody;
+            }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = new HttpRequestMessage(request.Method, _responseUri),
                     Content = new StringContent(_responseBody)
                 });
             }

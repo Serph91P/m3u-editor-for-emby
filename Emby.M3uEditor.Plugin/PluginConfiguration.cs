@@ -19,6 +19,8 @@ namespace Emby.M3uEditor.Plugin
         public bool ManagedPublishingEnabled { get; set; }
         public int ManagedPublishingApiVersion { get; set; }
         public int ManagedPublishingIntegrationId { get; set; }
+        public bool ManagedSetupReady { get; set; }
+        public string ManagedSetupLastResult { get; set; } = string.Empty;
         public string ManagedCatalogRevision { get; set; } = string.Empty;
         public string ManagedActiveGeneration { get; set; } = string.Empty;
         public string ManagedPreviousGeneration { get; set; } = string.Empty;

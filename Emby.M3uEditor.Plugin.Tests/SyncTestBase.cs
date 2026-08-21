@@ -34,6 +34,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             StrmLibraryPath       = TempDir.Path,
             ManagedApprovedOutputRoots = TempDir.Path,
             ManagedPublishingIntegrationId = 7,
+            ManagedSetupReady       = true,
+            ManagedSetupLastResult  = "Ready",
             SmartSkipExisting     = false,
             CleanupOrphans        = false,
             OrphanSafetyThreshold = 0.0,
@@ -48,16 +50,12 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         protected StrmSyncService MakeService()
         {
-            var service = new StrmSyncService(new NullLogger(), HttpClient);
-            service.ManagedWritablePathProvider = () => new[] { TempDir.Path };
-            return service;
+            return new StrmSyncService(new NullLogger(), HttpClient);
         }
 
         protected StrmSyncService MakeService(HttpClient httpClient)
         {
-            var service = new StrmSyncService(new NullLogger(), httpClient);
-            service.ManagedWritablePathProvider = () => new[] { TempDir.Path };
-            return service;
+            return new StrmSyncService(new NullLogger(), httpClient);
         }
 
         // ----- JSON factory helpers -----

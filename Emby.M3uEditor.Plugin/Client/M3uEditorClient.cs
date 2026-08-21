@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -438,14 +440,43 @@ namespace Emby.M3uEditor.Plugin.Client
             Uri uri;
             if (string.IsNullOrWhiteSpace(baseUrl) ||
                 !Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out uri) ||
-                uri.Scheme != Uri.UriSchemeHttps ||
+                (uri.Scheme != Uri.UriSchemeHttps &&
+                 (uri.Scheme != Uri.UriSchemeHttp || !IsTrustedHttpHost(uri.Host))) ||
                 !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
-                !string.IsNullOrEmpty(uri.Fragment))
+                !string.IsNullOrEmpty(uri.Fragment) || uri.AbsolutePath != "/")
             {
-                throw new InvalidOperationException("The managed backend base URL must be a confined HTTPS origin.");
+                throw new InvalidOperationException("The managed backend base URL is not an allowed explicit origin.");
             }
 
             return baseUrl.Trim().TrimEnd('/');
+        }
+
+        private static bool IsTrustedHttpHost(string host)
+        {
+            IPAddress address;
+            if (IPAddress.TryParse(host, out address))
+            {
+                if (IPAddress.IsLoopback(address))
+                {
+                    return true;
+                }
+
+                var bytes = address.GetAddressBytes();
+                if (address.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    return bytes[0] == 10 ||
+                           (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                           (bytes[0] == 192 && bytes[1] == 168) ||
+                           (bytes[0] == 169 && bytes[1] == 254);
+                }
+
+                return address.AddressFamily == AddressFamily.InterNetworkV6 &&
+                       ((bytes[0] & 0xfe) == 0xfc ||
+                        (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80));
+            }
+
+            return host.IndexOf('.') < 0 &&
+                   Uri.CheckHostName(host) == UriHostNameType.Dns;
         }
 
         private static void EnsureConfinedResponse(HttpResponseMessage response, string requestUrl)
@@ -459,9 +490,9 @@ namespace Emby.M3uEditor.Plugin.Client
             var actual = response.RequestMessage == null ? null : response.RequestMessage.RequestUri;
             Uri requested;
             if (actual != null && Uri.TryCreate(requestUrl, UriKind.Absolute, out requested) &&
-                (!string.Equals(actual.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
-                 !string.Equals(actual.Host, requested.Host, StringComparison.OrdinalIgnoreCase) ||
-                 actual.Port != requested.Port))
+                (!string.Equals(actual.Scheme, requested.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                  !string.Equals(actual.Host, requested.Host, StringComparison.OrdinalIgnoreCase) ||
+                  actual.Port != requested.Port))
             {
                 throw new InvalidOperationException("Managed backend response origin changed.");
             }

@@ -76,6 +76,13 @@ namespace Emby.M3uEditor.Plugin.Api
         public string MappingUuid { get; set; }
     }
 
+    [Route("/M3uEditor/Managed/Setup/V1", "GET,PUT", Summary = "Gets or establishes managed publishing readiness")]
+    [Authenticated(Roles = "Admin")]
+    public class ManagedSetupRequest : IReturn<ManagedSetupResult>
+    {
+        public int IntegrationId { get; set; }
+    }
+
     [Route("/M3uEditor/Sync/Status", "GET", Summary = "Gets current sync progress")]
     public class GetSyncStatus : IReturn<SyncStatusResult>
     {
@@ -285,6 +292,15 @@ namespace Emby.M3uEditor.Plugin.Api
         public string PreviousRevision { get; set; }
     }
 
+    public class ManagedSetupResult
+    {
+        public int CapabilityVersion { get; set; }
+        public int IntegrationId { get; set; }
+        public string ConfirmedRoot { get; set; }
+        public bool Ready { get; set; }
+        public string Result { get; set; }
+    }
+
     public class SyncProgressInfo
     {
         public string Phase { get; set; }
@@ -310,6 +326,8 @@ namespace Emby.M3uEditor.Plugin.Api
     public class ManagedDashboardStatus
     {
         public bool Enabled { get; set; }
+        public bool SetupReady { get; set; }
+        public string SetupResult { get; set; }
         public int ApiVersion { get; set; }
         public int IntegrationId { get; set; }
         public bool ConfigurationValid { get; set; }
@@ -383,9 +401,13 @@ namespace Emby.M3uEditor.Plugin.Api
             return new ManagedDashboardStatus
             {
                 Enabled = config.ManagedPublishingEnabled,
+                SetupReady = config.ManagedSetupReady,
+                SetupResult = config.ManagedSetupLastResult,
                 ApiVersion = config.ManagedPublishingApiVersion,
                 IntegrationId = config.ManagedPublishingIntegrationId,
-                ConfigurationValid = config.ManagedPublishingIntegrationId > 0,
+                ConfigurationValid = config.ManagedSetupReady &&
+                    config.ManagedPublishingIntegrationId > 0 &&
+                    ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots).Count == 1,
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
@@ -722,6 +744,21 @@ namespace Emby.M3uEditor.Plugin.Api
                 "rollback",
                 mappingUuid,
                 cancellationToken => RollbackManagedCatalogAsync(mappingUuid, cancellationToken)));
+        }
+
+        public object Get(ManagedSetupRequest request)
+        {
+            var plugin = Plugin.Instance;
+            return new ManagedSetupService(plugin.DataFolderPath).Get(plugin.Configuration);
+        }
+
+        public object Put(ManagedSetupRequest request)
+        {
+            var plugin = Plugin.Instance;
+            return new ManagedSetupService(plugin.DataFolderPath).Put(
+                plugin.Configuration,
+                request == null ? 0 : request.IntegrationId,
+                plugin.SaveConfiguration);
         }
 
         private static async Task<ManagedActionResult> RollbackManagedCatalogAsync(

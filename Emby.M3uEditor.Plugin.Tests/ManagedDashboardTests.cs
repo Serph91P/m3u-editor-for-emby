@@ -1,3 +1,4 @@
+using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -119,15 +120,22 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
-        [InlineData(0, false)]
-        [InlineData(-1, false)]
-        [InlineData(7, true)]
-        public void BuildManagedDashboardStatus_ReportsExplicitIntegrationIdValidity(
+        [InlineData(0, false, false)]
+        [InlineData(-1, true, false)]
+        [InlineData(7, false, false)]
+        [InlineData(7, true, true)]
+        public void BuildManagedDashboardStatus_RequiresCompletedManagedSetup(
             int integrationId,
+            bool setupReady,
             bool expectedValid)
         {
             var dashboard = M3uEditorApi.BuildManagedDashboardStatus(
-                new PluginConfiguration { ManagedPublishingIntegrationId = integrationId },
+                new PluginConfiguration
+                {
+                    ManagedPublishingIntegrationId = integrationId,
+                    ManagedSetupReady = setupReady,
+                    ManagedApprovedOutputRoots = Path.Combine(Path.GetTempPath(), "managed-dashboard-approved")
+                },
                 new ManagedJobStatus { State = "idle" },
                 1,
                 10);

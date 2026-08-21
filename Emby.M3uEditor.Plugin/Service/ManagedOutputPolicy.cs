@@ -43,6 +43,120 @@ namespace Emby.M3uEditor.Plugin.Service
             return true;
         }
 
+        internal static bool TryValidateSetupRoot(
+            string ownerPath,
+            string candidatePath,
+            string existingApprovedRoots,
+            string legacyRoot,
+            bool legacyWriterEnabled,
+            out string normalizedCandidate,
+            out string error)
+        {
+            normalizedCandidate = null;
+            error = "The managed output root is not safe.";
+            string normalizedOwner;
+            if (!TryNormalize(ownerPath, out normalizedOwner) ||
+                !TryNormalize(candidatePath, out normalizedCandidate) ||
+                IsFileSystemRoot(normalizedOwner) || IsFileSystemRoot(normalizedCandidate) ||
+                HasReparsePoint(normalizedOwner) || HasReparsePoint(normalizedCandidate) ||
+                !IsSameOrChild(normalizedOwner, normalizedCandidate) ||
+                string.Equals(normalizedOwner, normalizedCandidate, PathComparison))
+            {
+                normalizedCandidate = null;
+                return false;
+            }
+
+            var existing = ParseRoots(existingApprovedRoots);
+            if (!string.IsNullOrWhiteSpace(existingApprovedRoots) && existing.Count == 0)
+            {
+                normalizedCandidate = null;
+                return false;
+            }
+
+            var candidate = normalizedCandidate;
+            if (existing.Any(root =>
+                !string.Equals(root, candidate, PathComparison) &&
+                (IsSameOrChild(root, candidate) || IsSameOrChild(candidate, root))))
+            {
+                error = "The managed output root overlaps an existing approved root.";
+                normalizedCandidate = null;
+                return false;
+            }
+
+            string normalizedLegacy;
+            if (legacyWriterEnabled && TryNormalize(legacyRoot, out normalizedLegacy) &&
+                (IsSameOrChild(normalizedLegacy, normalizedCandidate) ||
+                 IsSameOrChild(normalizedCandidate, normalizedLegacy)))
+            {
+                error = "The managed output root overlaps an enabled legacy writer.";
+                normalizedCandidate = null;
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        internal static List<string> GetCanonicalRoots(string approvedRoots)
+        {
+            var roots = ParseRoots(approvedRoots);
+            if (roots.Count != 1 || IsFileSystemRoot(roots[0]) || HasReparsePoint(roots[0]))
+            {
+                return new List<string>();
+            }
+
+            return roots;
+        }
+
+        internal static bool IsLocallyWritableRoot(string root)
+        {
+            if (!Directory.Exists(root) || HasReparsePoint(root))
+            {
+                return false;
+            }
+
+            var probePath = Path.Combine(root, ".managed-write-probe-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                using (new FileStream(
+                    probePath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    1,
+                    FileOptions.DeleteOnClose))
+                {
+                    return true;
+                }
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+            catch (NotSupportedException)
+            {
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        internal static bool PathsOverlap(string left, string right)
+        {
+            string normalizedLeft;
+            string normalizedRight;
+            return TryNormalize(left, out normalizedLeft) &&
+                   TryNormalize(right, out normalizedRight) &&
+                   (IsSameOrChild(normalizedLeft, normalizedRight) ||
+                    IsSameOrChild(normalizedRight, normalizedLeft));
+        }
+
         private static List<string> ParseRoots(string value)
         {
             var roots = new List<string>();
