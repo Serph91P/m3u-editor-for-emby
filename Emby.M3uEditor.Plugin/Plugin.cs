@@ -29,6 +29,7 @@ namespace Emby.M3uEditor.Plugin
             _applicationPaths = applicationPaths;
             _liveTvService = new LiveTvService(logManager.GetLogger("M3uEditor.LiveTv"));
             _strmSyncService = new StrmSyncService(logManager.GetLogger("M3uEditor.StrmSync"));
+            _strmSyncService.ManagedOwnerPathProvider = () => DataFolderPath;
             M3uEditorTunerHost.ReconcileConfiguredTunerHost(
                 applicationHost,
                 Configuration.EnableLiveTv,

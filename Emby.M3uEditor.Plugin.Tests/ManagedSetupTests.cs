@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Service;
@@ -36,10 +38,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void Setup_PositiveBinding_CreatesAndPersistsOneCanonicalWritableRoot()
         {
-            var mappings = "[{\"mapping_uuid\":\"existing\"}]";
+            var mappings = "[]";
             var config = new PluginConfiguration
             {
-                ManagedApprovedOutputRoots = Path.Combine(_owner.Path, "legacy-approved"),
                 ManagedMappingsJson = mappings
             };
             var saves = 0;
@@ -57,6 +58,165 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(config.ManagedSetupReady);
             Assert.Equal("Ready", config.ManagedSetupLastResult);
             Assert.Equal(1, saves);
+        }
+
+        [Fact]
+        public void Setup_UnreferencedDisjointRoot_IsNotRetained()
+        {
+            using (var legacy = new TempDirectory())
+            {
+                var config = new PluginConfiguration
+                {
+                    ManagedApprovedOutputRoots = legacy.Path,
+                    ManagedMappingsJson = "[]"
+                };
+
+                var result = new ManagedSetupService(_owner.Path).Put(config, 71, () => { });
+
+                Assert.True(result.Ready, result.Result);
+                Assert.Equal(result.ConfirmedRoot, config.ManagedApprovedOutputRoots);
+                Assert.False(ManagedOutputPolicy.IsApproved(
+                    Path.Combine(legacy.Path, "movies"),
+                    config.ManagedApprovedOutputRoots,
+                    out _));
+                Assert.Equal("[]", config.ManagedMappingsJson);
+            }
+        }
+
+        [Fact]
+        public void Setup_MappingRemoved_PrunesLegacyRootOnNextRequest()
+        {
+            using (var legacy = new TempDirectory())
+            {
+                var config = new PluginConfiguration
+                {
+                    ManagedApprovedOutputRoots = legacy.Path,
+                    ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
+                    {
+                        new ManagedMappingState { OutputPath = Path.Combine(legacy.Path, "movies") }
+                    })
+                };
+                var saves = 0;
+                var service = new ManagedSetupService(_owner.Path);
+
+                var first = service.Put(config, 71, () => saves++);
+                config.ManagedMappingsJson = "[]";
+                var second = service.Put(config, 71, () => saves++);
+
+                Assert.True(first.Ready, first.Result);
+                Assert.True(second.Ready, second.Result);
+                Assert.Equal(second.ConfirmedRoot, config.ManagedApprovedOutputRoots);
+                Assert.False(ManagedOutputPolicy.IsApproved(
+                    Path.Combine(legacy.Path, "movies"),
+                    config.ManagedApprovedOutputRoots,
+                    out _));
+                Assert.Equal("[]", config.ManagedMappingsJson);
+                Assert.Equal(2, saves);
+            }
+        }
+
+        [Fact]
+        public void Setup_MalformedMappingState_LeavesAllConfigurationUnchanged()
+        {
+            using (var legacy = new TempDirectory())
+            {
+                var config = new PluginConfiguration
+                {
+                    ManagedPublishingIntegrationId = 71,
+                    ManagedPublishingApiVersion = ManagedSetupService.ApiVersion,
+                    ManagedApprovedOutputRoots = legacy.Path,
+                    ManagedMappingsJson = "not-json",
+                    ManagedSetupReady = true,
+                    ManagedSetupLastResult = "Previous result"
+                };
+                var saves = 0;
+
+                var result = new ManagedSetupService(_owner.Path).Put(config, 71, () => saves++);
+
+                Assert.False(result.Ready);
+                Assert.Null(result.ConfirmedRoot);
+                Assert.DoesNotContain(legacy.Path, result.Result);
+                Assert.Equal(71, config.ManagedPublishingIntegrationId);
+                Assert.Equal(ManagedSetupService.ApiVersion, config.ManagedPublishingApiVersion);
+                Assert.Equal(legacy.Path, config.ManagedApprovedOutputRoots);
+                Assert.Equal("not-json", config.ManagedMappingsJson);
+                Assert.True(config.ManagedSetupReady);
+                Assert.Equal("Previous result", config.ManagedSetupLastResult);
+                Assert.Equal(0, saves);
+            }
+        }
+
+        [Fact]
+        public void Setup_MappingWithoutProvableOutput_LeavesAllConfigurationUnchanged()
+        {
+            using (var legacy = new TempDirectory())
+            {
+                var mappings = JsonSerializer.Serialize(new List<ManagedMappingState>
+                {
+                    new ManagedMappingState { MappingUuid = "existing" }
+                });
+                var config = new PluginConfiguration
+                {
+                    ManagedPublishingIntegrationId = 71,
+                    ManagedApprovedOutputRoots = legacy.Path,
+                    ManagedMappingsJson = mappings
+                };
+                var saves = 0;
+
+                var result = new ManagedSetupService(_owner.Path).Put(config, 71, () => saves++);
+
+                Assert.False(result.Ready);
+                Assert.Null(result.ConfirmedRoot);
+                Assert.DoesNotContain(legacy.Path, result.Result);
+                Assert.Equal(71, config.ManagedPublishingIntegrationId);
+                Assert.Equal(legacy.Path, config.ManagedApprovedOutputRoots);
+                Assert.Equal(mappings, config.ManagedMappingsJson);
+                Assert.False(config.ManagedSetupReady);
+                Assert.Equal(0, saves);
+            }
+        }
+
+        [Fact]
+        public void Setup_ExistingMappedLegacyRoot_RemainsApprovedWithoutExposure()
+        {
+            using (var legacy = new TempDirectory())
+            {
+                var legacyOutput = Path.Combine(legacy.Path, "movies");
+                var mappings = JsonSerializer.Serialize(new List<ManagedMappingState>
+                {
+                    new ManagedMappingState { OutputPath = legacyOutput }
+                });
+                var config = new PluginConfiguration
+                {
+                    ManagedPublishingIntegrationId = 71,
+                    ManagedApprovedOutputRoots = legacy.Path,
+                    ManagedMappingsJson = mappings
+                };
+                var service = new ManagedSetupService(_owner.Path);
+                var saves = 0;
+
+                var result = service.Put(config, 71, () => saves++);
+                var candidate = Path.Combine(_owner.Path, "managed-publishing");
+                var approvedRoots = config.ManagedApprovedOutputRoots;
+                var repeated = service.Put(config, 71, () => saves++);
+
+                Assert.True(result.Ready, result.Result);
+                Assert.True(repeated.Ready, repeated.Result);
+                Assert.Equal(candidate, result.ConfirmedRoot);
+                Assert.Equal(candidate, repeated.ConfirmedRoot);
+                Assert.True(ManagedOutputPolicy.IsApproved(
+                    legacyOutput,
+                    config.ManagedApprovedOutputRoots,
+                    out var legacyError), legacyError);
+                Assert.True(ManagedOutputPolicy.IsApproved(
+                    Path.Combine(candidate, "series"),
+                    config.ManagedApprovedOutputRoots,
+                    out var candidateError), candidateError);
+                Assert.Equal(mappings, config.ManagedMappingsJson);
+                Assert.Equal(71, config.ManagedPublishingIntegrationId);
+                Assert.Equal(approvedRoots, config.ManagedApprovedOutputRoots);
+                Assert.Equal(1, saves);
+            }
         }
 
         [Fact]
@@ -135,6 +295,47 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Setup_OverlappingLegacyApprovals_LeavesConfigurationUnchanged()
+        {
+            using (var legacy = new TempDirectory())
+            {
+                var nested = Path.Combine(legacy.Path, "nested");
+                var roots = legacy.Path + Environment.NewLine + nested;
+                var config = new PluginConfiguration
+                {
+                    ManagedApprovedOutputRoots = roots,
+                    ManagedMappingsJson = "[]"
+                };
+
+                var result = new ManagedSetupService(_owner.Path).Put(config, 3, () => { });
+
+                Assert.False(result.Ready);
+                Assert.Contains("overlap", result.Result, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal(roots, config.ManagedApprovedOutputRoots);
+                Assert.Equal("[]", config.ManagedMappingsJson);
+            }
+        }
+
+        [Fact]
+        public void Setup_FileSystemLegacyApproval_IsRejectedWithoutExposingPath()
+        {
+            var root = Path.GetPathRoot(_owner.Path);
+            var config = new PluginConfiguration
+            {
+                ManagedApprovedOutputRoots = root,
+                ManagedMappingsJson = "[]"
+            };
+
+            var result = new ManagedSetupService(_owner.Path).Put(config, 3, () => { });
+
+            Assert.False(result.Ready);
+            Assert.Null(result.ConfirmedRoot);
+            Assert.DoesNotContain(root, result.Result);
+            Assert.Equal(root, config.ManagedApprovedOutputRoots);
+            Assert.Equal("[]", config.ManagedMappingsJson);
+        }
+
+        [Fact]
         public void Setup_FileSystemOwnerRoot_IsRejectedWithoutExposingPath()
         {
             var ownerRoot = Path.GetPathRoot(_owner.Path);
@@ -173,20 +374,90 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void Setup_SaveFailure_RollsBackReadinessBindingAndRoot()
+        public void Setup_ReparseLegacyApproval_IsRejectedWithoutChangingConfiguration()
+        {
+            if (Path.DirectorySeparatorChar != '/')
+            {
+                return;
+            }
+
+            using (var outside = new TempDirectory())
+            using (var legacyParent = new TempDirectory())
+            {
+                var link = Path.Combine(legacyParent.Path, "legacy-link");
+                Directory.CreateSymbolicLink(link, outside.Path);
+                var config = new PluginConfiguration
+                {
+                    ManagedApprovedOutputRoots = link,
+                    ManagedMappingsJson = "[]"
+                };
+
+                var result = new ManagedSetupService(_owner.Path).Put(config, 3, () => { });
+
+                Assert.False(result.Ready);
+                Assert.Null(result.ConfirmedRoot);
+                Assert.DoesNotContain(link, result.Result);
+                Assert.Equal(link, config.ManagedApprovedOutputRoots);
+                Assert.Equal("[]", config.ManagedMappingsJson);
+            }
+        }
+
+        [Fact]
+        public void Get_BoundedCompatibilityRoots_ReturnsOnlyCandidate()
+        {
+            using (var legacy = new TempDirectory())
+            {
+                var config = new PluginConfiguration
+                {
+                    ManagedApprovedOutputRoots = legacy.Path,
+                    ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
+                    {
+                        new ManagedMappingState { OutputPath = Path.Combine(legacy.Path, "movies") }
+                    })
+                };
+                var service = new ManagedSetupService(_owner.Path);
+                var setup = service.Put(config, 71, () => { });
+
+                var result = service.Get(config);
+
+                Assert.True(setup.Ready, setup.Result);
+                Assert.True(result.Ready, result.Result);
+                Assert.Equal(setup.ConfirmedRoot, result.ConfirmedRoot);
+                Assert.DoesNotContain(legacy.Path, result.ConfirmedRoot);
+                Assert.DoesNotContain(legacy.Path, result.Result);
+            }
+        }
+
+        [Fact]
+        public void Setup_SaveFailure_RollsBackCompleteRootSetAndSetupState()
         {
             var originalRoot = Path.Combine(_owner.Path, "old-root");
+            var mappings = JsonSerializer.Serialize(new List<ManagedMappingState>
+            {
+                new ManagedMappingState { OutputPath = Path.Combine(originalRoot, "movies") }
+            });
             var config = new PluginConfiguration
             {
                 ManagedPublishingIntegrationId = 8,
                 ManagedApprovedOutputRoots = originalRoot,
-                ManagedMappingsJson = "existing mappings"
+                ManagedMappingsJson = mappings
             };
 
             var result = new ManagedSetupService(_owner.Path).Put(
                 config,
                 8,
-                () => throw new IOException("secret /path/to/config"));
+                () =>
+                {
+                    Assert.True(ManagedOutputPolicy.IsApproved(
+                        Path.Combine(originalRoot, "movies"),
+                        config.ManagedApprovedOutputRoots,
+                        out var legacyError), legacyError);
+                    Assert.True(ManagedOutputPolicy.IsApproved(
+                        Path.Combine(_owner.Path, "managed-publishing", "series"),
+                        config.ManagedApprovedOutputRoots,
+                        out var candidateError), candidateError);
+                    throw new IOException("secret /path/to/config");
+                });
 
             Assert.False(result.Ready);
             Assert.Equal(0, result.IntegrationId);
@@ -195,7 +466,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.DoesNotContain("/path", result.Result);
             Assert.Equal(8, config.ManagedPublishingIntegrationId);
             Assert.Equal(originalRoot, config.ManagedApprovedOutputRoots);
-            Assert.Equal("existing mappings", config.ManagedMappingsJson);
+            Assert.Equal(mappings, config.ManagedMappingsJson);
             Assert.False(config.ManagedSetupReady);
         }
 

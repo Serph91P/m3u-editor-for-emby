@@ -73,6 +73,26 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
+            if (existing.Any(root => IsFileSystemRoot(root) || HasReparsePoint(root)))
+            {
+                normalizedCandidate = null;
+                return false;
+            }
+
+            for (var left = 0; left < existing.Count; left++)
+            {
+                for (var right = left + 1; right < existing.Count; right++)
+                {
+                    if (IsSameOrChild(existing[left], existing[right]) ||
+                        IsSameOrChild(existing[right], existing[left]))
+                    {
+                        error = "Managed approved output roots must not overlap.";
+                        normalizedCandidate = null;
+                        return false;
+                    }
+                }
+            }
+
             var candidate = normalizedCandidate;
             if (existing.Any(root =>
                 !string.Equals(root, candidate, PathComparison) &&
@@ -100,9 +120,21 @@ namespace Emby.M3uEditor.Plugin.Service
         internal static List<string> GetCanonicalRoots(string approvedRoots)
         {
             var roots = ParseRoots(approvedRoots);
-            if (roots.Count != 1 || IsFileSystemRoot(roots[0]) || HasReparsePoint(roots[0]))
+            if (roots.Count == 0 || roots.Any(root => IsFileSystemRoot(root) || HasReparsePoint(root)))
             {
                 return new List<string>();
+            }
+
+            for (var left = 0; left < roots.Count; left++)
+            {
+                for (var right = left + 1; right < roots.Count; right++)
+                {
+                    if (IsSameOrChild(roots[left], roots[right]) ||
+                        IsSameOrChild(roots[right], roots[left]))
+                    {
+                        return new List<string>();
+                    }
+                }
             }
 
             return roots;

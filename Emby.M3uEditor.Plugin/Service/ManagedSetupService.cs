@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.Json;
 using Emby.M3uEditor.Plugin.Api;
 
 namespace Emby.M3uEditor.Plugin.Service
@@ -11,6 +14,10 @@ namespace Emby.M3uEditor.Plugin.Service
         private const string ManagedRootName = "managed-publishing";
         private static readonly ConcurrentDictionary<string, object> SetupLocks =
             new ConcurrentDictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
         private readonly string _ownerPath;
 
         internal ManagedSetupService(string ownerPath)
@@ -26,13 +33,33 @@ namespace Emby.M3uEditor.Plugin.Service
                 return Failed("Managed setup is not ready.");
             }
 
-            var roots = ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots);
-            if (roots.Count != 1)
+            string candidate;
+            if (!TryGetCandidateRoot(_ownerPath, out candidate))
             {
                 return Failed("Managed setup is not ready.");
             }
 
-            return Ready(config.ManagedPublishingIntegrationId, roots[0]);
+            string root;
+            string validationError;
+            if (!ManagedOutputPolicy.TryValidateSetupRoot(
+                _ownerPath,
+                candidate,
+                config.ManagedApprovedOutputRoots,
+                null,
+                false,
+                out root,
+                out validationError))
+            {
+                return Failed("Managed setup is not ready.");
+            }
+
+            var roots = ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots);
+            if (!roots.Any(value => string.Equals(value, root, PathComparison)))
+            {
+                return Failed("Managed setup is not ready.");
+            }
+
+            return Ready(config.ManagedPublishingIntegrationId, root);
         }
 
         internal ManagedSetupResult Put(PluginConfiguration config, int integrationId, Action saveConfiguration)
@@ -43,11 +70,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             string candidate;
-            try
-            {
-                candidate = Path.Combine(_ownerPath ?? string.Empty, ManagedRootName);
-            }
-            catch (ArgumentException)
+            if (!TryGetCandidateRoot(_ownerPath, out candidate))
             {
                 return Failed("The managed output root is not safe.");
             }
@@ -75,6 +98,16 @@ namespace Emby.M3uEditor.Plugin.Service
                     return Failed(validationError);
                 }
 
+                string approvedRoots;
+                if (!TryBuildApprovedRoots(
+                    config.ManagedApprovedOutputRoots,
+                    config.ManagedMappingsJson,
+                    root,
+                    out approvedRoots))
+                {
+                    return Failed("Managed setup is not ready.");
+                }
+
                 try
                 {
                     Directory.CreateDirectory(root);
@@ -95,7 +128,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
                 if (config.ManagedSetupReady &&
                     config.ManagedPublishingIntegrationId == integrationId &&
-                    string.Equals(config.ManagedApprovedOutputRoots, root, PathComparison) &&
+                    string.Equals(config.ManagedApprovedOutputRoots, approvedRoots, PathComparison) &&
                     config.ManagedPublishingApiVersion == ApiVersion)
                 {
                     return Ready(integrationId, root);
@@ -107,7 +140,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 var oldLastResult = config.ManagedSetupLastResult;
                 var oldApiVersion = config.ManagedPublishingApiVersion;
                 config.ManagedPublishingIntegrationId = integrationId;
-                config.ManagedApprovedOutputRoots = root;
+                config.ManagedApprovedOutputRoots = approvedRoots;
                 config.ManagedSetupReady = true;
                 config.ManagedSetupLastResult = "Ready";
                 config.ManagedPublishingApiVersion = ApiVersion;
@@ -127,6 +160,85 @@ namespace Emby.M3uEditor.Plugin.Service
 
                 return Ready(integrationId, root);
             }
+        }
+
+        internal static bool TryGetCandidateRoot(string ownerPath, out string root)
+        {
+            root = null;
+            string candidate;
+            try
+            {
+                candidate = Path.Combine(ownerPath ?? string.Empty, ManagedRootName);
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+
+            string error;
+            return ManagedOutputPolicy.TryValidateSetupRoot(
+                ownerPath,
+                candidate,
+                string.Empty,
+                null,
+                false,
+                out root,
+                out error);
+        }
+
+        private static bool TryBuildApprovedRoots(
+            string existingApprovedRoots,
+            string mappingsJson,
+            string candidate,
+            out string approvedRoots)
+        {
+            approvedRoots = null;
+            var existing = ManagedOutputPolicy.GetCanonicalRoots(existingApprovedRoots);
+            if (existing.Count == 0)
+            {
+                approvedRoots = candidate;
+                return true;
+            }
+
+            List<ManagedMappingState> mappings;
+            try
+            {
+                mappings = string.IsNullOrWhiteSpace(mappingsJson)
+                    ? new List<ManagedMappingState>()
+                    : JsonSerializer.Deserialize<List<ManagedMappingState>>(mappingsJson, JsonOptions);
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+            catch (NotSupportedException)
+            {
+                return false;
+            }
+
+            if (mappings == null || mappings.Any(mapping =>
+            {
+                string error;
+                return mapping == null || !ManagedOutputPolicy.IsApproved(
+                    mapping.OutputPath,
+                    existingApprovedRoots,
+                    out error);
+            }))
+            {
+                return false;
+            }
+
+            var retained = existing
+                .Where(root => !string.Equals(root, candidate, PathComparison))
+                .Where(root => mappings.Any(mapping =>
+                {
+                    string error;
+                    return ManagedOutputPolicy.IsApproved(mapping.OutputPath, root, out error);
+                }))
+                .ToList();
+            retained.Add(candidate);
+            approvedRoots = string.Join(Environment.NewLine, retained);
+            return true;
         }
 
         private static ManagedSetupResult Ready(int integrationId, string root)

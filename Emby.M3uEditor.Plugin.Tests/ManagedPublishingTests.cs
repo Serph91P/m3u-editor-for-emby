@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Client.Models;
 using Emby.M3uEditor.Plugin.Service;
+using Emby.M3uEditor.Plugin.Tests.Fakes;
 using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
@@ -919,6 +920,36 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(result.Success, result.Error);
             Assert.Equal(1, result.AppliedMappings);
             Assert.Equal(0, refreshCount);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_LegacyMappedRoot_UsesCandidateForRegistration()
+        {
+            using (var owner = new TempDirectory())
+            {
+                var candidate = Path.Combine(owner.Path, "managed-publishing");
+                Directory.CreateDirectory(candidate);
+                var mapping = MovieMapping(1);
+                ConfigureReconcile(mapping);
+                var config = DefaultConfig();
+                config.ManagedApprovedOutputRoots = TempDir.Path + Environment.NewLine + candidate;
+                var service = MakeService();
+                service.ManagedOwnerPathProvider = () => owner.Path;
+
+                var result = await ReconcileWithRefresh(service, config, () => { });
+
+                Assert.True(result.Success, result.Error);
+                Assert.Equal(1, result.AppliedMappings);
+                var registerIndex = Handler.ReceivedUrls.FindIndex(url =>
+                    url.Contains("action=m3u_editor_register_publisher"));
+                Assert.True(registerIndex >= 0);
+                Assert.Contains(
+                    "writable_paths%5B0%5D=" + Uri.EscapeDataString(candidate),
+                    Handler.ReceivedBodies[registerIndex]);
+                Assert.DoesNotContain(Uri.EscapeDataString(TempDir.Path), Handler.ReceivedBodies[registerIndex]);
+                Assert.DoesNotContain("writable_paths%5B1%5D", Handler.ReceivedBodies[registerIndex]);
+                Assert.NotEmpty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
+            }
         }
 
         [Fact]

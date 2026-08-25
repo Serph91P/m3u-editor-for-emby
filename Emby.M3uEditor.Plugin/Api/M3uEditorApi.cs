@@ -407,7 +407,7 @@ namespace Emby.M3uEditor.Plugin.Api
                 IntegrationId = config.ManagedPublishingIntegrationId,
                 ConfigurationValid = config.ManagedSetupReady &&
                     config.ManagedPublishingIntegrationId > 0 &&
-                    ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots).Count == 1,
+                    ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots).Count > 0,
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,

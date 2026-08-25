@@ -106,6 +106,7 @@ namespace Emby.M3uEditor.Plugin.Service
         internal Action<string> ManagedPhaseHook { get; set; }
         internal Action<string, string> ManagedFileMoveHook { get; set; }
         internal Func<PluginConfiguration> ManagedConfigurationProvider { get; set; }
+        internal Func<string> ManagedOwnerPathProvider { get; set; }
         internal async Task<ManagedReconcileResult> ReconcileManagedAsync(
             PluginConfiguration config,
             Action saveConfig,
@@ -155,6 +156,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         setupError);
                 }
 
+                var approvedOutputRoots = config.ManagedApprovedOutputRoots;
                 var writablePaths = new List<string> { canonicalRoot };
 
                 await client.RegisterPublisherAsync(
@@ -195,7 +197,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     string approvalError;
                     if (!ManagedOutputPolicy.IsApproved(
                         mapping.TargetLibrary.OutputPath,
-                        config.ManagedApprovedOutputRoots,
+                        approvedOutputRoots,
                         out approvalError))
                     {
                         published = Failed(mapping.Revision, approvalError);
@@ -211,19 +213,25 @@ namespace Emby.M3uEditor.Plugin.Service
                         published = await PublishManagedMappingAsync(
                             mapping,
                             cancellationToken,
-                            canonicalRoot,
+                            approvedOutputRoots,
                             config).ConfigureAwait(false);
                     }
                     var activeGenerationChanged = published.Success && !published.Duplicate;
 
                     string currentRoot;
+                    string currentApprovedRoots;
                     if (!TryGetCurrentSetupRoot(
                         config,
                         mapping.IntegrationId,
                         canonicalRoot,
+                        approvedOutputRoots,
                         out currentRoot,
+                        out currentApprovedRoots,
                         out setupError) ||
-                        !ManagedOutputPolicy.IsApproved(mapping.TargetLibrary.OutputPath, currentRoot, out setupError))
+                        !ManagedOutputPolicy.IsApproved(
+                            mapping.TargetLibrary.OutputPath,
+                            currentApprovedRoots,
+                            out setupError))
                     {
                         if (published.Success)
                         {
@@ -456,7 +464,7 @@ namespace Emby.M3uEditor.Plugin.Service
             return current == null ? null : current.ManagedApprovedOutputRoots;
         }
 
-        private static bool TryGetCanonicalSetupRoot(
+        private bool TryGetCanonicalSetupRoot(
             PluginConfiguration config,
             bool allowLegacyMigration,
             out string root,
@@ -479,13 +487,32 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             var roots = ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots);
-            if (roots.Count != 1)
+            if (roots.Count == 0)
             {
                 error = "Managed publishing requires one canonical approved root.";
                 return false;
             }
 
-            root = roots[0];
+            if (roots.Count == 1)
+            {
+                root = roots[0];
+            }
+            else
+            {
+                string candidate;
+                var ownerPath = ManagedOwnerPathProvider == null
+                    ? Plugin.InstanceOrNull?.DataFolderPath
+                    : ManagedOwnerPathProvider();
+                if (!ManagedSetupService.TryGetCandidateRoot(ownerPath, out candidate) ||
+                    !roots.Any(value => string.Equals(value, candidate, PathComparison)))
+                {
+                    error = "Managed publishing requires one companion-owned canonical root.";
+                    return false;
+                }
+
+                root = candidate;
+            }
+
             if (!ManagedOutputPolicy.IsLocallyWritableRoot(root))
             {
                 root = null;
@@ -515,17 +542,22 @@ namespace Emby.M3uEditor.Plugin.Service
             PluginConfiguration fallback,
             int expectedIntegrationId,
             string expectedRoot,
+            string expectedApprovedRoots,
             out string currentRoot,
+            out string currentApprovedRoots,
             out string error)
         {
             var current = ManagedConfigurationProvider == null
                 ? fallback
                 : ManagedConfigurationProvider();
+            currentApprovedRoots = current == null ? null : current.ManagedApprovedOutputRoots;
             if (!TryGetCanonicalSetupRoot(current, false, out currentRoot, out error) ||
                 current.ManagedPublishingIntegrationId != expectedIntegrationId ||
-                !string.Equals(currentRoot, expectedRoot, PathComparison))
+                !string.Equals(currentRoot, expectedRoot, PathComparison) ||
+                !string.Equals(currentApprovedRoots, expectedApprovedRoots, PathComparison))
             {
                 currentRoot = null;
+                currentApprovedRoots = null;
                 error = "Managed publishing setup is no longer current.";
                 return false;
             }
@@ -1781,17 +1813,20 @@ namespace Emby.M3uEditor.Plugin.Service
                 return;
             }
 
-            var originalRoots = ManagedOutputPolicy.GetCanonicalRoots(approvedOutputRoots);
+            string expectedRoot;
             string currentRoot;
+            string currentApprovedRoots;
             var error = "Managed publishing setup is no longer current.";
-            if (originalRoots.Count != 1 ||
+            if (!TryGetCanonicalSetupRoot(setupConfig, false, out expectedRoot, out error) ||
                 !TryGetCurrentSetupRoot(
                     setupConfig,
                     mapping.IntegrationId,
-                    originalRoots[0],
+                    expectedRoot,
+                    approvedOutputRoots,
                     out currentRoot,
+                    out currentApprovedRoots,
                     out error) ||
-                !ManagedOutputPolicy.IsApproved(outputRoot, currentRoot, out error))
+                !ManagedOutputPolicy.IsApproved(outputRoot, currentApprovedRoots, out error))
             {
                 throw new InvalidOperationException(error);
             }
