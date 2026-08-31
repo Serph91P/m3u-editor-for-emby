@@ -147,6 +147,63 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Setup_EmptyApprovedRootsWithMalformedMapping_RejectsBeforeMutation()
+        {
+            var config = new PluginConfiguration
+            {
+                ManagedPublishingIntegrationId = 71,
+                ManagedPublishingApiVersion = ManagedSetupService.ApiVersion,
+                ManagedMappingsJson = "not-json",
+                ManagedSetupReady = true,
+                ManagedSetupLastResult = "Previous result"
+            };
+            var originalConfiguration = JsonSerializer.Serialize(config);
+            var candidate = Path.Combine(_owner.Path, "managed-publishing");
+            var saves = 0;
+
+            var result = new ManagedSetupService(_owner.Path).Put(config, 71, () => saves++);
+
+            Assert.False(result.Ready);
+            Assert.Null(result.ConfirmedRoot);
+            Assert.DoesNotContain("not-json", result.Result);
+            Assert.False(Directory.Exists(candidate));
+            Assert.Equal(0, saves);
+            Assert.Equal(originalConfiguration, JsonSerializer.Serialize(config));
+        }
+
+        [Fact]
+        public void Setup_EmptyApprovedRootsWithOutsideMapping_RejectsBeforeMutation()
+        {
+            using (var outside = new TempDirectory())
+            {
+                var outsidePath = Path.Combine(outside.Path, "movies");
+                var config = new PluginConfiguration
+                {
+                    ManagedPublishingIntegrationId = 71,
+                    ManagedPublishingApiVersion = ManagedSetupService.ApiVersion,
+                    ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
+                    {
+                        new ManagedMappingState { OutputPath = outsidePath }
+                    }),
+                    ManagedSetupReady = true,
+                    ManagedSetupLastResult = "Previous result"
+                };
+                var originalConfiguration = JsonSerializer.Serialize(config);
+                var candidate = Path.Combine(_owner.Path, "managed-publishing");
+                var saves = 0;
+
+                var result = new ManagedSetupService(_owner.Path).Put(config, 71, () => saves++);
+
+                Assert.False(result.Ready);
+                Assert.Null(result.ConfirmedRoot);
+                Assert.DoesNotContain(outsidePath, result.Result);
+                Assert.False(Directory.Exists(candidate));
+                Assert.Equal(0, saves);
+                Assert.Equal(originalConfiguration, JsonSerializer.Serialize(config));
+            }
+        }
+
+        [Fact]
         public void Setup_MappingWithoutProvableOutput_LeavesAllConfigurationUnchanged()
         {
             using (var legacy = new TempDirectory())

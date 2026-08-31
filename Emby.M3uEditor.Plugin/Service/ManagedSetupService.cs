@@ -194,12 +194,6 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             approvedRoots = null;
             var existing = ManagedOutputPolicy.GetCanonicalRoots(existingApprovedRoots);
-            if (existing.Count == 0)
-            {
-                approvedRoots = candidate;
-                return true;
-            }
-
             List<ManagedMappingState> mappings;
             try
             {
@@ -216,7 +210,30 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
-            if (mappings == null || mappings.Any(mapping =>
+            if (mappings == null)
+            {
+                return false;
+            }
+
+            if (existing.Count == 0)
+            {
+                if (mappings.Any(mapping =>
+                {
+                    string error;
+                    return mapping == null || !ManagedOutputPolicy.IsApproved(
+                        mapping.OutputPath,
+                        candidate,
+                        out error);
+                }))
+                {
+                    return false;
+                }
+
+                approvedRoots = candidate;
+                return true;
+            }
+
+            if (mappings.Any(mapping =>
             {
                 string error;
                 return mapping == null || !ManagedOutputPolicy.IsApproved(

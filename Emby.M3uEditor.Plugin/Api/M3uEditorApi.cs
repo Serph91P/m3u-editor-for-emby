@@ -335,7 +335,7 @@ namespace Emby.M3uEditor.Plugin.Api
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
         public string MappingsJson { get; set; }
-        public List<ManagedMappingState> Mappings { get; set; }
+        public List<ManagedDashboardMapping> Mappings { get; set; }
         public int TotalMappings { get; set; }
         public int TotalFiles { get; set; }
         public int TotalStrmFiles { get; set; }
@@ -352,6 +352,26 @@ namespace Emby.M3uEditor.Plugin.Api
         public string LastError { get; set; }
         public DateTime? LastSuccess { get; set; }
         public ManagedJobStatus Job { get; set; }
+    }
+
+    public class ManagedDashboardMapping
+    {
+        public string MappingUuid { get; set; }
+        public string LibraryName { get; set; }
+        public string CollectionType { get; set; }
+        public string ActiveRevision { get; set; }
+        public string PreviousRevision { get; set; }
+        public bool Success { get; set; }
+        public bool Duplicate { get; set; }
+        public int FileCount { get; set; }
+        public int StrmFileCount { get; set; }
+        public int SeriesCount { get; set; }
+        public int SeasonCount { get; set; }
+        public int Added { get; set; }
+        public int Changed { get; set; }
+        public int Removed { get; set; }
+        public int OmittedVersions { get; set; }
+        public string Error { get; set; }
     }
 
     public class LibraryStats
@@ -396,6 +416,25 @@ namespace Emby.M3uEditor.Plugin.Api
             var pageMappings = mappings
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
+                .Select(mapping => new ManagedDashboardMapping
+                {
+                    MappingUuid = mapping.MappingUuid,
+                    LibraryName = mapping.LibraryName,
+                    CollectionType = mapping.CollectionType,
+                    ActiveRevision = mapping.ActiveRevision,
+                    PreviousRevision = mapping.PreviousRevision,
+                    Success = mapping.Success,
+                    Duplicate = mapping.Duplicate,
+                    FileCount = mapping.FileCount,
+                    StrmFileCount = mapping.StrmFileCount,
+                    SeriesCount = mapping.SeriesCount,
+                    SeasonCount = mapping.SeasonCount,
+                    Added = mapping.Added,
+                    Changed = mapping.Changed,
+                    Removed = mapping.Removed,
+                    OmittedVersions = mapping.OmittedVersions,
+                    Error = mapping.Error
+                })
                 .ToList();
             var libraryStats = BuildManagedLibraryStats(mappings);
             return new ManagedDashboardStatus
