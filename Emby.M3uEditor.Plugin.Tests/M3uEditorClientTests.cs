@@ -4,7 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -86,6 +88,84 @@ namespace Emby.M3uEditor.Plugin.Tests
 
                 Assert.NotNull(capability);
                 Assert.Equal(1, capability.ApiVersion);
+            }
+        }
+
+        [Fact]
+        public async Task DiscoverCapabilityAsync_SameOriginRedirect_DoesNotRequestRedirectTarget()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var baseUrl = "http://127.0.0.1:" + port + "/";
+            var redirectedRequests = 0;
+            var serverTask = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    TcpClient connection;
+                    try
+                    {
+                        connection = await listener.AcceptTcpClientAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        return;
+                    }
+
+                    using (connection)
+                    using (var stream = connection.GetStream())
+                    using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
+                    {
+                        var requestLine = await reader.ReadLineAsync();
+                        while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
+                        {
+                        }
+
+                        byte[] response;
+                        if (requestLine.Contains("/player_api.php"))
+                        {
+                            response = Encoding.ASCII.GetBytes(
+                                "HTTP/1.1 302 Found\r\nLocation: " + baseUrl +
+                                "redirect-target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        }
+                        else
+                        {
+                            Interlocked.Increment(ref redirectedRequests);
+                            var body = Encoding.UTF8.GetBytes(CapabilityJson);
+                            response = Encoding.UTF8.GetBytes(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                                body.Length + "\r\nConnection: close\r\n\r\n" + CapabilityJson);
+                        }
+
+                        await stream.WriteAsync(response, 0, response.Length);
+                    }
+                }
+            });
+
+            try
+            {
+                using (var httpClient = Plugin.CreateHttpClient())
+                {
+                    var client = new M3uEditorClient(httpClient);
+                    var capability = await client.DiscoverCapabilityAsync(
+                        baseUrl,
+                        "account",
+                        "credential",
+                        CancellationToken.None);
+
+                    Assert.Null(capability);
+                    Assert.Equal(0, Volatile.Read(ref redirectedRequests));
+                }
+            }
+            finally
+            {
+                listener.Stop();
+                await serverTask;
             }
         }
 

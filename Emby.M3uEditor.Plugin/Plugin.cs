@@ -57,7 +57,13 @@ namespace Emby.M3uEditor.Plugin
         /// </summary>
         public static HttpClient CreateHttpClient(int timeoutSeconds = 10, string userAgentOverride = null)
         {
-            var client = new HttpClient { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
+            var client = new HttpClient(new HttpClientHandler
+            {
+                AllowAutoRedirect = false
+            })
+            {
+                Timeout = TimeSpan.FromSeconds(timeoutSeconds)
+            };
             var ua = !string.IsNullOrEmpty(userAgentOverride)
                 ? userAgentOverride
                 : _instance?.Configuration?.HttpUserAgent;
