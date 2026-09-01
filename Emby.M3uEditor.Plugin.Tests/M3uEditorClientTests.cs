@@ -271,6 +271,97 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task ManagedRequests_ConfiguredProxy_IsBypassedForCredentialBearingRequest()
+        {
+            var proxyListener = new TcpListener(IPAddress.Loopback, 0);
+            var targetListener = new TcpListener(IPAddress.Loopback, 0);
+            proxyListener.Start();
+            targetListener.Start();
+            var proxyPort = ((IPEndPoint)proxyListener.LocalEndpoint).Port;
+            var targetPort = ((IPEndPoint)targetListener.LocalEndpoint).Port;
+            var proxyRequests = 0;
+            var credentialBearingProxyRequests = 0;
+            var targetRequests = 0;
+            var responseBody = Encoding.UTF8.GetBytes(CapabilityJson);
+            var responseHeaders = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                responseBody.Length + "\r\nConnection: close\r\n\r\n");
+
+            Func<TcpListener, Action<string>, Task> serve = async (listener, recordRequest) =>
+            {
+                while (true)
+                {
+                    TcpClient connection;
+                    try
+                    {
+                        connection = await listener.AcceptTcpClientAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        return;
+                    }
+
+                    using (connection)
+                    using (var stream = connection.GetStream())
+                    using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
+                    {
+                        var requestLine = await reader.ReadLineAsync();
+                        while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
+                        {
+                        }
+
+                        recordRequest(requestLine ?? string.Empty);
+                        await stream.WriteAsync(responseHeaders, 0, responseHeaders.Length);
+                        await stream.WriteAsync(responseBody, 0, responseBody.Length);
+                    }
+                }
+            };
+            var proxyTask = Task.Run(() => serve(proxyListener, requestLine =>
+            {
+                Interlocked.Increment(ref proxyRequests);
+                if (requestLine.Contains("username=") && requestLine.Contains("&password="))
+                    Interlocked.Increment(ref credentialBearingProxyRequests);
+            }));
+            var targetTask = Task.Run(() => serve(targetListener, requestLine =>
+                Interlocked.Increment(ref targetRequests)));
+            var previousProxy = HttpClient.DefaultProxy;
+
+            try
+            {
+                HttpClient.DefaultProxy = new WebProxy("http://127.0.0.1:" + proxyPort, false);
+                var service = new StrmSyncService(null);
+                var result = await service.ReconcileManagedAsync(
+                    new PluginConfiguration
+                    {
+                        BaseUrl = "http://127.0.0.1:" + targetPort + "/",
+                        Username = "managed-account",
+                        Password = "managed-credential"
+                    },
+                    null,
+                    null,
+                    CancellationToken.None,
+                    null);
+
+                Assert.True(result.Compatible);
+                Assert.Equal(0, Volatile.Read(ref credentialBearingProxyRequests));
+                Assert.Equal(0, Volatile.Read(ref proxyRequests));
+                Assert.Equal(1, Volatile.Read(ref targetRequests));
+            }
+            finally
+            {
+                HttpClient.DefaultProxy = previousProxy;
+                proxyListener.Stop();
+                targetListener.Stop();
+                await proxyTask;
+                await targetTask;
+            }
+        }
+
+        [Fact]
         public async Task RegisterPublisherAsync_ExactContract_PostsLocalPathsWithoutCredentialsInBody()
         {
             var handler = new RequestCaptureHandler("{}");
