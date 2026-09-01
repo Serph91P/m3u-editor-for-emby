@@ -147,7 +147,15 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
-            var probePath = Path.Combine(root, ".managed-write-probe-" + Guid.NewGuid().ToString("N"));
+            string probePath;
+            if (!TryJoinUnderRoot(
+                root,
+                ".managed-write-probe-" + Guid.NewGuid().ToString("N"),
+                out probePath))
+            {
+                return false;
+            }
+
             try
             {
                 using (new FileStream(
@@ -177,6 +185,39 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 return false;
             }
+        }
+
+        internal static bool TryJoinUnderRoot(string root, string relativePath, out string joinedPath)
+        {
+            joinedPath = null;
+            string normalizedRoot;
+            if (!TryNormalize(root, out normalizedRoot))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(relativePath) ||
+                !string.Equals(relativePath, relativePath.Trim(), StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (Path.IsPathRooted(relativePath))
+            {
+                return false;
+            }
+
+            string normalizedCandidate;
+            var candidate = normalizedRoot + Path.DirectorySeparatorChar + relativePath;
+            if (!TryNormalize(candidate, out normalizedCandidate) ||
+                string.Equals(normalizedRoot, normalizedCandidate, PathComparison) ||
+                !IsSameOrChild(normalizedRoot, normalizedCandidate))
+            {
+                return false;
+            }
+
+            joinedPath = normalizedCandidate;
+            return true;
         }
 
         internal static bool PathsOverlap(string left, string right)

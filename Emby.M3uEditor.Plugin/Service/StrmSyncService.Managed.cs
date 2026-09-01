@@ -235,7 +235,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         if (published.Success)
                         {
-                            published = await RevertAfterCallbackFailure(
+                            await RevertAfterCallbackFailure(
                                 mapping,
                                 published,
                                 cancellationToken).ConfigureAwait(false);
@@ -478,12 +478,14 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
-            if (!config.ManagedSetupReady)
+            if (!config.ManagedSetupReady && !allowLegacyMigration)
             {
-                if (!allowLegacyMigration || !string.IsNullOrEmpty(config.ManagedSetupLastResult))
-                {
-                    return false;
-                }
+                return false;
+            }
+
+            if (!config.ManagedSetupReady && !string.IsNullOrEmpty(config.ManagedSetupLastResult))
+            {
+                return false;
             }
 
             var roots = ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots);
@@ -1816,7 +1818,7 @@ namespace Emby.M3uEditor.Plugin.Service
             string expectedRoot;
             string currentRoot;
             string currentApprovedRoots;
-            var error = "Managed publishing setup is no longer current.";
+            string error;
             if (!TryGetCanonicalSetupRoot(setupConfig, false, out expectedRoot, out error) ||
                 !TryGetCurrentSetupRoot(
                     setupConfig,

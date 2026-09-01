@@ -557,10 +557,22 @@ namespace Emby.M3uEditor.Plugin.Client
             var bytes = address.GetAddressBytes();
             if (address.AddressFamily == AddressFamily.InterNetwork)
             {
-                return bytes[0] == 10 ||
-                       (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
-                       (bytes[0] == 192 && bytes[1] == 168) ||
-                       (bytes[0] == 169 && bytes[1] == 254);
+                if (bytes[0] == 10)
+                {
+                    return true;
+                }
+
+                if (bytes[0] == 172)
+                {
+                    return bytes[1] >= 16 && bytes[1] <= 31;
+                }
+
+                if (bytes[0] == 192)
+                {
+                    return bytes[1] == 168;
+                }
+
+                return bytes[0] == 169 && bytes[1] == 254;
             }
 
             return address.AddressFamily == AddressFamily.InterNetworkV6 &&

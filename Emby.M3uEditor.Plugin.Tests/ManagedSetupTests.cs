@@ -51,7 +51,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(result.Ready, result.Result);
             Assert.Equal(ManagedSetupService.ApiVersion, result.CapabilityVersion);
             Assert.Equal(71, result.IntegrationId);
-            Assert.Equal(Path.Combine(_owner.Path, "managed-publishing"), result.ConfirmedRoot);
+            Assert.Equal(Path.Join(_owner.Path, "managed-publishing"), result.ConfirmedRoot);
             Assert.True(Directory.Exists(result.ConfirmedRoot));
             Assert.Equal(result.ConfirmedRoot, config.ManagedApprovedOutputRoots);
             Assert.Equal(mappings, config.ManagedMappingsJson);
@@ -76,7 +76,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(result.Ready, result.Result);
                 Assert.Equal(result.ConfirmedRoot, config.ManagedApprovedOutputRoots);
                 Assert.False(ManagedOutputPolicy.IsApproved(
-                    Path.Combine(legacy.Path, "movies"),
+                    Path.Join(legacy.Path, "movies"),
                     config.ManagedApprovedOutputRoots,
                     out _));
                 Assert.Equal("[]", config.ManagedMappingsJson);
@@ -93,7 +93,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     ManagedApprovedOutputRoots = legacy.Path,
                     ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
                     {
-                        new ManagedMappingState { OutputPath = Path.Combine(legacy.Path, "movies") }
+                        new ManagedMappingState { OutputPath = Path.Join(legacy.Path, "movies") }
                     })
                 };
                 var saves = 0;
@@ -107,7 +107,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(second.Ready, second.Result);
                 Assert.Equal(second.ConfirmedRoot, config.ManagedApprovedOutputRoots);
                 Assert.False(ManagedOutputPolicy.IsApproved(
-                    Path.Combine(legacy.Path, "movies"),
+                    Path.Join(legacy.Path, "movies"),
                     config.ManagedApprovedOutputRoots,
                     out _));
                 Assert.Equal("[]", config.ManagedMappingsJson);
@@ -158,7 +158,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 ManagedSetupLastResult = "Previous result"
             };
             var originalConfiguration = JsonSerializer.Serialize(config);
-            var candidate = Path.Combine(_owner.Path, "managed-publishing");
+            var candidate = Path.Join(_owner.Path, "managed-publishing");
             var saves = 0;
 
             var result = new ManagedSetupService(_owner.Path).Put(config, 71, () => saves++);
@@ -176,7 +176,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var outside = new TempDirectory())
             {
-                var outsidePath = Path.Combine(outside.Path, "movies");
+                var outsidePath = Path.Join(outside.Path, "movies");
                 var config = new PluginConfiguration
                 {
                     ManagedPublishingIntegrationId = 71,
@@ -189,7 +189,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     ManagedSetupLastResult = "Previous result"
                 };
                 var originalConfiguration = JsonSerializer.Serialize(config);
-                var candidate = Path.Combine(_owner.Path, "managed-publishing");
+                var candidate = Path.Join(_owner.Path, "managed-publishing");
                 var saves = 0;
 
                 var result = new ManagedSetupService(_owner.Path).Put(config, 71, () => saves++);
@@ -238,7 +238,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var legacy = new TempDirectory())
             {
-                var legacyOutput = Path.Combine(legacy.Path, "movies");
+                var legacyOutput = Path.Join(legacy.Path, "movies");
                 var mappings = JsonSerializer.Serialize(new List<ManagedMappingState>
                 {
                     new ManagedMappingState { OutputPath = legacyOutput }
@@ -253,7 +253,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var saves = 0;
 
                 var result = service.Put(config, 71, () => saves++);
-                var candidate = Path.Combine(_owner.Path, "managed-publishing");
+                var candidate = Path.Join(_owner.Path, "managed-publishing");
                 var approvedRoots = config.ManagedApprovedOutputRoots;
                 var repeated = service.Put(config, 71, () => saves++);
 
@@ -266,7 +266,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     config.ManagedApprovedOutputRoots,
                     out var legacyError), legacyError);
                 Assert.True(ManagedOutputPolicy.IsApproved(
-                    Path.Combine(candidate, "series"),
+                    Path.Join(candidate, "series"),
                     config.ManagedApprovedOutputRoots,
                     out var candidateError), candidateError);
                 Assert.Equal(mappings, config.ManagedMappingsJson);
@@ -314,7 +314,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void Setup_EnabledLegacyWriterOverlap_LeavesConfigurationUnchanged()
         {
-            var originalRoot = Path.Combine(_owner.Path, "old-root");
+            var originalRoot = Path.Join(_owner.Path, "old-root");
             var config = new PluginConfiguration
             {
                 ManagedPublishingIntegrationId = 9,
@@ -356,7 +356,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var legacy = new TempDirectory())
             {
-                var nested = Path.Combine(legacy.Path, "nested");
+                var nested = Path.Join(legacy.Path, "nested");
                 var roots = legacy.Path + Environment.NewLine + nested;
                 var config = new PluginConfiguration
                 {
@@ -417,7 +417,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             using (var outside = new TempDirectory())
             {
-                var link = Path.Combine(_owner.Path, "linked-owner");
+                var link = Path.Join(_owner.Path, "linked-owner");
                 Directory.CreateSymbolicLink(link, outside.Path);
                 var config = new PluginConfiguration();
 
@@ -441,7 +441,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             using (var outside = new TempDirectory())
             using (var legacyParent = new TempDirectory())
             {
-                var link = Path.Combine(legacyParent.Path, "legacy-link");
+                var link = Path.Join(legacyParent.Path, "legacy-link");
                 Directory.CreateSymbolicLink(link, outside.Path);
                 var config = new PluginConfiguration
                 {
@@ -469,7 +469,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     ManagedApprovedOutputRoots = legacy.Path,
                     ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
                     {
-                        new ManagedMappingState { OutputPath = Path.Combine(legacy.Path, "movies") }
+                        new ManagedMappingState { OutputPath = Path.Join(legacy.Path, "movies") }
                     })
                 };
                 var service = new ManagedSetupService(_owner.Path);
@@ -488,10 +488,10 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void Setup_SaveFailure_RollsBackCompleteRootSetAndSetupState()
         {
-            var originalRoot = Path.Combine(_owner.Path, "old-root");
+            var originalRoot = Path.Join(_owner.Path, "old-root");
             var mappings = JsonSerializer.Serialize(new List<ManagedMappingState>
             {
-                new ManagedMappingState { OutputPath = Path.Combine(originalRoot, "movies") }
+                new ManagedMappingState { OutputPath = Path.Join(originalRoot, "movies") }
             });
             var config = new PluginConfiguration
             {
@@ -506,11 +506,11 @@ namespace Emby.M3uEditor.Plugin.Tests
                 () =>
                 {
                     Assert.True(ManagedOutputPolicy.IsApproved(
-                        Path.Combine(originalRoot, "movies"),
+                        Path.Join(originalRoot, "movies"),
                         config.ManagedApprovedOutputRoots,
                         out var legacyError), legacyError);
                     Assert.True(ManagedOutputPolicy.IsApproved(
-                        Path.Combine(_owner.Path, "managed-publishing", "series"),
+                        Path.Join(_owner.Path, "managed-publishing", "series"),
                         config.ManagedApprovedOutputRoots,
                         out var candidateError), candidateError);
                     throw new IOException("secret /path/to/config");
@@ -525,6 +525,26 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(originalRoot, config.ManagedApprovedOutputRoots);
             Assert.Equal(mappings, config.ManagedMappingsJson);
             Assert.False(config.ManagedSetupReady);
+        }
+
+        [Fact]
+        public void Setup_UnexpectedSaveFailure_RestoresStateAndPropagates()
+        {
+            var config = new PluginConfiguration
+            {
+                ManagedPublishingIntegrationId = 8,
+                ManagedApprovedOutputRoots = Path.Join(_owner.Path, "old-root"),
+                ManagedSetupLastResult = "Previous result",
+                ManagedPublishingApiVersion = 7
+            };
+            var originalConfiguration = JsonSerializer.Serialize(config);
+
+            Assert.Throws<ApplicationException>(() => new ManagedSetupService(_owner.Path).Put(
+                config,
+                8,
+                () => throw new ApplicationException("unexpected failure")));
+
+            Assert.Equal(originalConfiguration, JsonSerializer.Serialize(config));
         }
 
         public void Dispose()

@@ -144,18 +144,26 @@ namespace Emby.M3uEditor.Plugin.Service
                 config.ManagedSetupReady = true;
                 config.ManagedSetupLastResult = "Ready";
                 config.ManagedPublishingApiVersion = ApiVersion;
+                var persisted = false;
                 try
                 {
                     saveConfiguration?.Invoke();
+                    persisted = true;
                 }
-                catch (Exception)
+                catch (Exception ex) when (IsPersistenceException(ex))
                 {
-                    config.ManagedPublishingIntegrationId = oldIntegrationId;
-                    config.ManagedApprovedOutputRoots = oldApprovedRoots;
-                    config.ManagedSetupReady = oldReady;
-                    config.ManagedSetupLastResult = oldLastResult;
-                    config.ManagedPublishingApiVersion = oldApiVersion;
                     return Failed("Managed setup could not be persisted.");
+                }
+                finally
+                {
+                    if (!persisted)
+                    {
+                        config.ManagedPublishingIntegrationId = oldIntegrationId;
+                        config.ManagedApprovedOutputRoots = oldApprovedRoots;
+                        config.ManagedSetupReady = oldReady;
+                        config.ManagedSetupLastResult = oldLastResult;
+                        config.ManagedPublishingApiVersion = oldApiVersion;
+                    }
                 }
 
                 return Ready(integrationId, root);
@@ -166,11 +174,7 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             root = null;
             string candidate;
-            try
-            {
-                candidate = Path.Combine(ownerPath ?? string.Empty, ManagedRootName);
-            }
-            catch (ArgumentException)
+            if (!ManagedOutputPolicy.TryJoinUnderRoot(ownerPath, ManagedRootName, out candidate))
             {
                 return false;
             }
@@ -184,6 +188,21 @@ namespace Emby.M3uEditor.Plugin.Service
                 false,
                 out root,
                 out error);
+        }
+
+        private static bool IsPersistenceException(Exception exception)
+        {
+            if (exception is ArgumentException || exception is NotSupportedException)
+            {
+                return true;
+            }
+
+            if (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                return true;
+            }
+
+            return exception is InvalidOperationException || exception is JsonException;
         }
 
         private static bool TryBuildApprovedRoots(

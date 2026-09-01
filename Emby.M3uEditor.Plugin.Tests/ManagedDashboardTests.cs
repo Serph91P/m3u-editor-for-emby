@@ -48,7 +48,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void DashboardResponse_RetainedLegacyMapping_DoesNotExposeOutputPath()
         {
-            var legacyPath = Path.Combine(
+            var legacyPath = Path.Join(
                 Path.GetTempPath(),
                 "retained-legacy-path-literal",
                 "movies");
@@ -198,7 +198,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 {
                     ManagedPublishingIntegrationId = integrationId,
                     ManagedSetupReady = setupReady,
-                    ManagedApprovedOutputRoots = Path.Combine(Path.GetTempPath(), "managed-dashboard-approved")
+                    ManagedApprovedOutputRoots = Path.Join(Path.GetTempPath(), "managed-dashboard-approved")
                 },
                 new ManagedJobStatus { State = "idle" },
                 1,

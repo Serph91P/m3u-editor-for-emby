@@ -9,9 +9,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         public void NormalUi_ShowsManagedStatusWithoutEditingBindingOrApprovedRoot()
         {
             var root = FindRepositoryRoot();
-            var html = File.ReadAllText(Path.Combine(
+            var html = File.ReadAllText(Path.Join(
                 root, "Emby.M3uEditor.Plugin", "Configuration", "Web", "config.html"));
-            var javascript = File.ReadAllText(Path.Combine(
+            var javascript = File.ReadAllText(Path.Join(
                 root, "Emby.M3uEditor.Plugin", "Configuration", "Web", "config.js"));
 
             Assert.Contains("Managed by m3u-editor", html);
@@ -25,7 +25,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var current = new DirectoryInfo(Directory.GetCurrentDirectory());
             while (current != null &&
-                   !Directory.Exists(Path.Combine(current.FullName, "Emby.M3uEditor.Plugin")))
+                    !Directory.Exists(Path.Join(current.FullName, "Emby.M3uEditor.Plugin")))
             {
                 current = current.Parent;
             }

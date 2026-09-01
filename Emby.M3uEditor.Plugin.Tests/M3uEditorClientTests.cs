@@ -98,7 +98,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         public async Task LiveTvStream_SameOriginRedirect_FollowsAndCopiesPayload()
         {
             const string payload = "redirected-live-stream";
-            var listener = new TcpListener(IPAddress.Loopback, 0);
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             var baseUrl = "http://127.0.0.1:" + port + "/";
@@ -125,9 +125,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
                     {
                         var requestLine = await reader.ReadLineAsync();
-                        while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
-                        {
-                        }
+                        await ReadRequestHeadersAsync(reader);
 
                         var response = requestLine.Contains("/live-stream")
                             ? Encoding.ASCII.GetBytes(
@@ -192,7 +190,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task DiscoverCapabilityAsync_SameOriginRedirect_DoesNotRequestRedirectTarget()
         {
-            var listener = new TcpListener(IPAddress.Loopback, 0);
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             var baseUrl = "http://127.0.0.1:" + port + "/";
@@ -220,9 +218,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
                     {
                         var requestLine = await reader.ReadLineAsync();
-                        while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
-                        {
-                        }
+                        await ReadRequestHeadersAsync(reader);
 
                         byte[] response;
                         if (requestLine.Contains("/player_api.php"))
@@ -273,8 +269,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task ManagedRequests_ConfiguredProxy_IsBypassedForCredentialBearingRequest()
         {
-            var proxyListener = new TcpListener(IPAddress.Loopback, 0);
-            var targetListener = new TcpListener(IPAddress.Loopback, 0);
+            using var proxyListener = new TcpListener(IPAddress.Loopback, 0);
+            using var targetListener = new TcpListener(IPAddress.Loopback, 0);
             proxyListener.Start();
             targetListener.Start();
             var proxyPort = ((IPEndPoint)proxyListener.LocalEndpoint).Port;
@@ -310,9 +306,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                     using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
                     {
                         var requestLine = await reader.ReadLineAsync();
-                        while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
-                        {
-                        }
+                        await ReadRequestHeadersAsync(reader);
 
                         recordRequest(requestLine ?? string.Empty);
                         await stream.WriteAsync(responseHeaders, 0, responseHeaders.Length);
@@ -356,8 +350,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 HttpClient.DefaultProxy = previousProxy;
                 proxyListener.Stop();
                 targetListener.Stop();
-                await proxyTask;
-                await targetTask;
+                await Task.WhenAll(proxyTask, targetTask);
             }
         }
 
@@ -1095,11 +1088,17 @@ namespace Emby.M3uEditor.Plugin.Tests
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                request.RequestUri = _responseUri;
+                return Task.FromResult(CreateResponse(request));
+            }
+
+            private HttpResponseMessage CreateResponse(HttpRequestMessage request)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    RequestMessage = new HttpRequestMessage(request.Method, _responseUri),
+                    RequestMessage = request,
                     Content = new StringContent(_responseBody)
-                });
+                };
             }
         }
 
@@ -1121,10 +1120,27 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 RequestUri = request.RequestUri;
                 Host = request.Headers.Host;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return Task.FromResult(CreateResponse());
+            }
+
+            private HttpResponseMessage CreateResponse()
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(_responseBody)
-                });
+                };
+            }
+        }
+
+        private static async Task ReadRequestHeadersAsync(StreamReader reader)
+        {
+            while (true)
+            {
+                var line = await reader.ReadLineAsync();
+                if (string.IsNullOrEmpty(line))
+                {
+                    return;
+                }
             }
         }
 

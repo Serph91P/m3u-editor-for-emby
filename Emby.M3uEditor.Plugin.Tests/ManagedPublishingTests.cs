@@ -450,7 +450,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task ReconcileManagedAsync_AdvertisesOnlyCanonicalPersistedRootBeforeCatalog()
         {
-            var unrelatedWritablePath = Path.Combine(TempDir.Path, "unrelated-mount");
+            var unrelatedWritablePath = Path.Join(TempDir.Path, "unrelated-mount");
             Directory.CreateDirectory(unrelatedWritablePath);
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
             Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
@@ -505,7 +505,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task ReconcileManagedAsync_CanonicalRootNoLongerWritable_FailsBeforeRegistration()
         {
-            var filePath = Path.Combine(TempDir.Path, "not-a-directory");
+            var filePath = Path.Join(TempDir.Path, "not-a-directory");
             File.WriteAllText(filePath, "occupied");
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
             var config = DefaultConfig();
@@ -556,7 +556,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             ConfigureReconcile(mapping);
             var config = DefaultConfig();
             config.ManagedMappingsJson = "[]";
-            var replacementRoot = Path.Combine(TempDir.Path, "replacement-root");
+            var replacementRoot = Path.Join(TempDir.Path, "replacement-root");
             Directory.CreateDirectory(replacementRoot);
             var service = MakeService();
             service.ManagedConfigurationProvider = () => config;
@@ -670,7 +670,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
             var config = DefaultConfig();
-            var occupiedPath = Path.Combine(TempDir.Path, "occupied");
+            var occupiedPath = Path.Join(TempDir.Path, "occupied");
             File.WriteAllText(occupiedPath, "not a directory");
             config.ManagedApprovedOutputRoots = occupiedPath;
 
@@ -927,7 +927,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var owner = new TempDirectory())
             {
-                var candidate = Path.Combine(owner.Path, "managed-publishing");
+                var candidate = Path.Join(owner.Path, "managed-publishing");
                 Directory.CreateDirectory(candidate);
                 var mapping = MovieMapping(1);
                 ConfigureReconcile(mapping);
