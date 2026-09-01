@@ -6,13 +6,16 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
+using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
+using MediaBrowser.Model.Dto;
 using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
@@ -92,6 +95,101 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task LiveTvStream_SameOriginRedirect_FollowsAndCopiesPayload()
+        {
+            const string payload = "redirected-live-stream";
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var baseUrl = "http://127.0.0.1:" + port + "/";
+            var serverTask = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    TcpClient connection;
+                    try
+                    {
+                        connection = await listener.AcceptTcpClientAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        return;
+                    }
+
+                    using (connection)
+                    using (var stream = connection.GetStream())
+                    using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
+                    {
+                        var requestLine = await reader.ReadLineAsync();
+                        while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
+                        {
+                        }
+
+                        var response = requestLine.Contains("/live-stream")
+                            ? Encoding.ASCII.GetBytes(
+                                "HTTP/1.1 302 Found\r\nLocation: " + baseUrl +
+                                "redirected-stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            : Encoding.ASCII.GetBytes(
+                                "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: " +
+                                payload.Length + "\r\nConnection: close\r\n\r\n" + payload);
+                        await stream.WriteAsync(response, 0, response.Length);
+                    }
+                }
+            });
+
+            try
+            {
+                var instanceField = typeof(Plugin).GetField(
+                    "_instance",
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                var previousInstance = Plugin.InstanceOrNull;
+                var testInstance = (Plugin)RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
+                for (var type = typeof(Plugin); type != null; type = type.BaseType)
+                {
+                    foreach (var field in type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+                    {
+                        if (field.FieldType == typeof(object) && field.GetValue(testInstance) == null)
+                            field.SetValue(testInstance, new object());
+                        if (field.FieldType == typeof(PluginConfiguration) && field.GetValue(testInstance) == null)
+                            field.SetValue(testInstance, new PluginConfiguration());
+                    }
+                }
+                instanceField.SetValue(null, testInstance);
+                try
+                {
+                    var mediaSource = new MediaSourceInfo
+                    {
+                        Id = "live-stream",
+                        Path = baseUrl + "live-stream"
+                    };
+                    using (var liveStream = new M3uEditorLiveStream(
+                        mediaSource,
+                        "tuner",
+                        Plugin.CreateHttpClient(userAgentOverride: "redirect-regression-test")))
+                    using (var output = new MemoryStream())
+                    {
+                        await liveStream.CopyToAsync(output, null, null, CancellationToken.None);
+
+                        Assert.Equal(payload, Encoding.ASCII.GetString(output.ToArray()));
+                    }
+                }
+                finally
+                {
+                    instanceField.SetValue(null, previousInstance);
+                }
+            }
+            finally
+            {
+                listener.Stop();
+                await serverTask;
+            }
+        }
+
+        [Fact]
         public async Task DiscoverCapabilityAsync_SameOriginRedirect_DoesNotRequestRedirectTarget()
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -149,18 +247,21 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             try
             {
-                using (var httpClient = Plugin.CreateHttpClient())
-                {
-                    var client = new M3uEditorClient(httpClient);
-                    var capability = await client.DiscoverCapabilityAsync(
-                        baseUrl,
-                        "account",
-                        "credential",
-                        CancellationToken.None);
+                var service = new StrmSyncService(null);
+                var result = await service.ReconcileManagedAsync(
+                    new PluginConfiguration
+                    {
+                        BaseUrl = baseUrl,
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    null,
+                    null,
+                    CancellationToken.None,
+                    null);
 
-                    Assert.Null(capability);
-                    Assert.Equal(0, Volatile.Read(ref redirectedRequests));
-                }
+                Assert.False(result.Compatible);
+                Assert.Equal(0, Volatile.Read(ref redirectedRequests));
             }
             finally
             {
