@@ -71,6 +71,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
             catch (PlatformNotSupportedException)
             {
+                return;
             }
             finally
             {
