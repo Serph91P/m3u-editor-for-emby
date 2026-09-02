@@ -71,11 +71,31 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
             catch (PlatformNotSupportedException)
             {
+                return;
             }
             finally
             {
                 outside.Dispose();
             }
+        }
+
+        [Fact]
+        public void TryJoinUnderRoot_RootedOrTraversingLaterPath_Rejects()
+        {
+            var rootedPath = Path.GetFullPath(Path.Join(Path.GetTempPath(), "managed-path-escape"));
+
+            Assert.False(ManagedOutputPolicy.TryJoinUnderRoot(_temp.Path, rootedPath, out var rootedResult));
+            Assert.Null(rootedResult);
+            Assert.False(ManagedOutputPolicy.TryJoinUnderRoot(_temp.Path, "..", out var traversalResult));
+            Assert.Null(traversalResult);
+        }
+
+        [Fact]
+        public void TryJoinUnderRoot_RelativeLaterPath_ReturnsCanonicalChild()
+        {
+            Assert.True(ManagedOutputPolicy.TryJoinUnderRoot(_temp.Path, "managed-child", out var result));
+
+            Assert.Equal(Path.Join(_temp.Path, "managed-child"), result);
         }
 
         public void Dispose()

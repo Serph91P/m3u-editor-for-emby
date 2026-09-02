@@ -481,14 +481,7 @@
                 <div class="tabPanel tabManagedPublishing" style="display:none;">
                     <div class="verticalSection managedPublishingCard">
                         <h2 class="sectionTitle">Managed m3u-editor Publishing</h2>
-                        <div class="inputContainer">
-                            <input class="txtManagedPublishingIntegrationId" type="number" min="1" step="1" is="emby-input" label="m3u-editor Emby integration ID" />
-                            <div class="fieldDescription">Enter the positive integration ID selected by the administrator. Managed publishing stays disabled until this is valid.</div>
-                        </div>
-                        <div class="inputContainer">
-                            <textarea class="txtManagedApprovedOutputRoots" is="emby-textarea" label="Approved managed output roots"></textarea>
-                            <div class="fieldDescription">One local absolute path per line. Catalog mappings remain blocked outside these admin-approved roots.</div>
-                        </div>
+                        <div class="fieldDescription" style="margin-bottom:0.8em;">Managed by m3u-editor. Connection readiness and publishing status are read-only here.</div>
                         <div class="managedPublishingStatus" style="opacity:0.7;">Checking versioned capability...</div>
                         <div class="managedPublishingDetails" style="margin-top:0.7em; font-size:0.9em;"></div>
                         <div class="managedPublishingMappings" style="margin-top:0.7em;"></div>

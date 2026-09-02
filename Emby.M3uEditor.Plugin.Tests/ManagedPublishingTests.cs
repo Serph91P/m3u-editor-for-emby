@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Client.Models;
 using Emby.M3uEditor.Plugin.Service;
+using Emby.M3uEditor.Plugin.Tests.Fakes;
 using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
@@ -447,10 +448,10 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public async Task ReconcileManagedAsync_RegistersLocallyEnumeratedPathsBeforeCatalog()
+        public async Task ReconcileManagedAsync_AdvertisesOnlyCanonicalPersistedRootBeforeCatalog()
         {
-            const string localPath = "/local/emby-managed";
-            const string backendPath = "/backend/catalog-path";
+            var unrelatedWritablePath = Path.Join(TempDir.Path, "unrelated-mount");
+            Directory.CreateDirectory(unrelatedWritablePath);
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
             Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
             Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
@@ -462,9 +463,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             }));
             var config = DefaultConfig();
             config.ManagedPublishingIntegrationId = 42;
-            config.ManagedApprovedOutputRoots = backendPath;
+            config.ManagedSetupReady = true;
+            config.ManagedSetupLastResult = "Ready";
             var service = MakeService();
-            service.ManagedWritablePathProvider = () => new[] { localPath };
 
             var result = await ReconcileWithRefresh(service, config, null);
 
@@ -474,8 +475,106 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("action=m3u_editor_register_publisher", Handler.ReceivedUrls[1]);
             Assert.Contains("action=m3u_editor_catalog", Handler.ReceivedUrls[2]);
             Assert.Contains("integration_id=42", Handler.ReceivedBodies[1]);
-            Assert.Contains("writable_paths%5B0%5D=%2Flocal%2Femby-managed", Handler.ReceivedBodies[1]);
-            Assert.DoesNotContain(backendPath, Handler.ReceivedBodies[1]);
+            Assert.Contains(
+                "writable_paths%5B0%5D=" + Uri.EscapeDataString(TempDir.Path),
+                Handler.ReceivedBodies[1]);
+            Assert.DoesNotContain(Uri.EscapeDataString(unrelatedWritablePath), Handler.ReceivedBodies[1]);
+            Assert.DoesNotContain("writable_paths%5B1%5D", Handler.ReceivedBodies[1]);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_ExplicitStaleSetup_FailsBeforeRegistrationAndPreservesMappings()
+        {
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            var config = DefaultConfig();
+            config.ManagedSetupReady = false;
+            config.ManagedSetupLastResult = "Setup is stale";
+            config.ManagedMappingsJson = "[]";
+
+            var result = await ReconcileWithRefresh(MakeService(), config, null);
+
+            Assert.True(result.Compatible);
+            Assert.False(result.Success);
+            Assert.Contains("setup", result.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("[]", config.ManagedMappingsJson);
+            Assert.Single(Handler.ReceivedUrls);
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("register_publisher"));
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("catalog"));
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_CanonicalRootNoLongerWritable_FailsBeforeRegistration()
+        {
+            var filePath = Path.Join(TempDir.Path, "not-a-directory");
+            File.WriteAllText(filePath, "occupied");
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            var config = DefaultConfig();
+            config.ManagedSetupReady = true;
+            config.ManagedSetupLastResult = "Ready";
+            config.ManagedApprovedOutputRoots = filePath;
+
+            var result = await ReconcileWithRefresh(MakeService(), config, null);
+
+            Assert.False(result.Success);
+            Assert.Contains("writable", result.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(Handler.ReceivedUrls);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_SetupBecomesStaleDuringStaging_CommitsNoMappingOrCallback()
+        {
+            var mapping = MovieMapping(1);
+            ConfigureReconcile(mapping);
+            var config = DefaultConfig();
+            config.ManagedSetupReady = true;
+            config.ManagedSetupLastResult = "Ready";
+            config.ManagedMappingsJson = "[]";
+            var service = MakeService();
+            service.ManagedConfigurationProvider = () => config;
+            service.ManagedPhaseHook = phase =>
+            {
+                if (phase == "after-stage")
+                {
+                    config.ManagedSetupReady = false;
+                    config.ManagedSetupLastResult = "Setup is stale";
+                }
+            };
+
+            var result = await ReconcileWithRefresh(service, config, null);
+
+            Assert.False(result.Success);
+            Assert.Contains("setup", result.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("[]", config.ManagedMappingsJson);
+            Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("action=m3u_editor_sync_result"));
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_AllowlistChangesBeforeCommit_CommitsNoMappingOrCallback()
+        {
+            var mapping = MovieMapping(1);
+            ConfigureReconcile(mapping);
+            var config = DefaultConfig();
+            config.ManagedMappingsJson = "[]";
+            var replacementRoot = Path.Join(TempDir.Path, "replacement-root");
+            Directory.CreateDirectory(replacementRoot);
+            var service = MakeService();
+            service.ManagedConfigurationProvider = () => config;
+            service.ManagedPhaseHook = phase =>
+            {
+                if (phase == "before-manifest")
+                {
+                    config.ManagedApprovedOutputRoots = replacementRoot;
+                }
+            };
+
+            var result = await ReconcileWithRefresh(service, config, null);
+
+            Assert.False(result.Success);
+            Assert.Contains("setup", result.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("[]", config.ManagedMappingsJson);
+            Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("action=m3u_editor_sync_result"));
         }
 
         [Theory]
@@ -488,7 +587,6 @@ namespace Emby.M3uEditor.Plugin.Tests
             config.ManagedPublishingIntegrationId = integrationId;
             config.SyncMovies = true;
             var service = MakeService();
-            service.ManagedWritablePathProvider = () => new[] { TempDir.Path };
 
             var result = await ReconcileWithRefresh(service, config, null);
 
@@ -572,15 +670,16 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
             var config = DefaultConfig();
-            var service = MakeService();
-            service.ManagedWritablePathProvider = () => new[] { string.Empty, " " };
+            var occupiedPath = Path.Join(TempDir.Path, "occupied");
+            File.WriteAllText(occupiedPath, "not a directory");
+            config.ManagedApprovedOutputRoots = occupiedPath;
 
-            var result = await ReconcileWithRefresh(service, config, null);
+            var result = await ReconcileWithRefresh(MakeService(), config, null);
 
             Assert.True(result.Compatible);
             Assert.False(result.Success);
             Assert.False(config.ManagedPublishingEnabled);
-            Assert.Contains("locally writable path", result.Error);
+            Assert.Contains("locally writable", result.Error);
             Assert.Single(Handler.ReceivedUrls);
         }
 
@@ -724,7 +823,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
-        public async Task ReconcileManagedAsync_CallbackFailureWithMissingCurrentConfiguration_PreservesPublishedGeneration(
+        public async Task ReconcileManagedAsync_MissingCurrentConfiguration_FailsBeforeCallbackAndPreservesPriorGeneration(
             bool hasPreviousGeneration)
         {
             var original = MovieMapping(1);
@@ -742,38 +841,26 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Mappings = new List<M3uEditorMapping> { replacement }
             }));
             Handler.RespondWith("action=m3u_editor_sync_result", "{}", HttpStatusCode.ServiceUnavailable);
-            var callbackEntered = new ManualResetEventSlim(false);
-            var releaseCallback = new ManualResetEventSlim(false);
             var config = DefaultConfig();
+            config.ManagedMappingsJson = "[]";
             var refreshCount = 0;
-
-            using (var gatedClient = new HttpClient(new CallbackGateHandler(
-                Handler,
-                callbackEntered,
-                releaseCallback)))
+            var service = MakeService();
+            if (hasPreviousGeneration)
             {
-                var service = MakeService(gatedClient);
-                if (hasPreviousGeneration)
-                {
-                    Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
-                }
-
-                service.ManagedConfigurationProvider = () => null;
-                var reconcile = Task.Run(() => ReconcileWithRefresh(
-                    service,
-                    config,
-                    () => refreshCount++));
-                Assert.True(callbackEntered.Wait(5000));
-                var published = SnapshotFiles(TempDir.Path);
-                releaseCallback.Set();
-
-                var result = await reconcile;
-
-                Assert.False(result.Success);
-                Assert.Contains("approved", result.Error, StringComparison.OrdinalIgnoreCase);
-                Assert.Equal(0, refreshCount);
-                AssertFilesEqual(published, SnapshotFiles(TempDir.Path));
+                Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
             }
+
+            var before = SnapshotFiles(TempDir.Path);
+            service.ManagedConfigurationProvider = () => null;
+
+            var result = await ReconcileWithRefresh(service, config, () => refreshCount++);
+
+            Assert.False(result.Success);
+            Assert.Contains("setup", result.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, refreshCount);
+            Assert.Equal("[]", config.ManagedMappingsJson);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("action=m3u_editor_sync_result"));
         }
 
         [Fact]
@@ -797,9 +884,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             var result = await ReconcileWithRefresh(MakeService(), config, () => refreshCount++);
 
             Assert.False(result.Success);
+            Assert.Contains("legacy", result.Error, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(0, refreshCount);
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
-            Assert.Contains(Handler.ReceivedBodies, body => body.Contains("status=failed"));
+            Assert.Single(Handler.ReceivedUrls);
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("register_publisher"));
         }
 
         [Fact]
@@ -831,6 +920,36 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(result.Success, result.Error);
             Assert.Equal(1, result.AppliedMappings);
             Assert.Equal(0, refreshCount);
+        }
+
+        [Fact]
+        public async Task ReconcileManagedAsync_LegacyMappedRoot_UsesCandidateForRegistration()
+        {
+            using (var owner = new TempDirectory())
+            {
+                var candidate = Path.Join(owner.Path, "managed-publishing");
+                Directory.CreateDirectory(candidate);
+                var mapping = MovieMapping(1);
+                ConfigureReconcile(mapping);
+                var config = DefaultConfig();
+                config.ManagedApprovedOutputRoots = TempDir.Path + Environment.NewLine + candidate;
+                var service = MakeService();
+                service.ManagedOwnerPathProvider = () => owner.Path;
+
+                var result = await ReconcileWithRefresh(service, config, () => { });
+
+                Assert.True(result.Success, result.Error);
+                Assert.Equal(1, result.AppliedMappings);
+                var registerIndex = Handler.ReceivedUrls.FindIndex(url =>
+                    url.Contains("action=m3u_editor_register_publisher"));
+                Assert.True(registerIndex >= 0);
+                Assert.Contains(
+                    "writable_paths%5B0%5D=" + Uri.EscapeDataString(candidate),
+                    Handler.ReceivedBodies[registerIndex]);
+                Assert.DoesNotContain(Uri.EscapeDataString(TempDir.Path), Handler.ReceivedBodies[registerIndex]);
+                Assert.DoesNotContain("writable_paths%5B1%5D", Handler.ReceivedBodies[registerIndex]);
+                Assert.NotEmpty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
+            }
         }
 
         [Fact]

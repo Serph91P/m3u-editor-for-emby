@@ -76,6 +76,13 @@ namespace Emby.M3uEditor.Plugin.Api
         public string MappingUuid { get; set; }
     }
 
+    [Route("/M3uEditor/Managed/Setup/V1", "GET,PUT", Summary = "Gets or establishes managed publishing readiness")]
+    [Authenticated(Roles = "Admin")]
+    public class ManagedSetupRequest : IReturn<ManagedSetupResult>
+    {
+        public int IntegrationId { get; set; }
+    }
+
     [Route("/M3uEditor/Sync/Status", "GET", Summary = "Gets current sync progress")]
     public class GetSyncStatus : IReturn<SyncStatusResult>
     {
@@ -285,6 +292,15 @@ namespace Emby.M3uEditor.Plugin.Api
         public string PreviousRevision { get; set; }
     }
 
+    public class ManagedSetupResult
+    {
+        public int CapabilityVersion { get; set; }
+        public int IntegrationId { get; set; }
+        public string ConfirmedRoot { get; set; }
+        public bool Ready { get; set; }
+        public string Result { get; set; }
+    }
+
     public class SyncProgressInfo
     {
         public string Phase { get; set; }
@@ -310,6 +326,8 @@ namespace Emby.M3uEditor.Plugin.Api
     public class ManagedDashboardStatus
     {
         public bool Enabled { get; set; }
+        public bool SetupReady { get; set; }
+        public string SetupResult { get; set; }
         public int ApiVersion { get; set; }
         public int IntegrationId { get; set; }
         public bool ConfigurationValid { get; set; }
@@ -317,7 +335,7 @@ namespace Emby.M3uEditor.Plugin.Api
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
         public string MappingsJson { get; set; }
-        public List<ManagedMappingState> Mappings { get; set; }
+        public List<ManagedDashboardMapping> Mappings { get; set; }
         public int TotalMappings { get; set; }
         public int TotalFiles { get; set; }
         public int TotalStrmFiles { get; set; }
@@ -334,6 +352,26 @@ namespace Emby.M3uEditor.Plugin.Api
         public string LastError { get; set; }
         public DateTime? LastSuccess { get; set; }
         public ManagedJobStatus Job { get; set; }
+    }
+
+    public class ManagedDashboardMapping
+    {
+        public string MappingUuid { get; set; }
+        public string LibraryName { get; set; }
+        public string CollectionType { get; set; }
+        public string ActiveRevision { get; set; }
+        public string PreviousRevision { get; set; }
+        public bool Success { get; set; }
+        public bool Duplicate { get; set; }
+        public int FileCount { get; set; }
+        public int StrmFileCount { get; set; }
+        public int SeriesCount { get; set; }
+        public int SeasonCount { get; set; }
+        public int Added { get; set; }
+        public int Changed { get; set; }
+        public int Removed { get; set; }
+        public int OmittedVersions { get; set; }
+        public string Error { get; set; }
     }
 
     public class LibraryStats
@@ -378,14 +416,37 @@ namespace Emby.M3uEditor.Plugin.Api
             var pageMappings = mappings
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
+                .Select(mapping => new ManagedDashboardMapping
+                {
+                    MappingUuid = mapping.MappingUuid,
+                    LibraryName = mapping.LibraryName,
+                    CollectionType = mapping.CollectionType,
+                    ActiveRevision = mapping.ActiveRevision,
+                    PreviousRevision = mapping.PreviousRevision,
+                    Success = mapping.Success,
+                    Duplicate = mapping.Duplicate,
+                    FileCount = mapping.FileCount,
+                    StrmFileCount = mapping.StrmFileCount,
+                    SeriesCount = mapping.SeriesCount,
+                    SeasonCount = mapping.SeasonCount,
+                    Added = mapping.Added,
+                    Changed = mapping.Changed,
+                    Removed = mapping.Removed,
+                    OmittedVersions = mapping.OmittedVersions,
+                    Error = mapping.Error
+                })
                 .ToList();
             var libraryStats = BuildManagedLibraryStats(mappings);
             return new ManagedDashboardStatus
             {
                 Enabled = config.ManagedPublishingEnabled,
+                SetupReady = config.ManagedSetupReady,
+                SetupResult = config.ManagedSetupLastResult,
                 ApiVersion = config.ManagedPublishingApiVersion,
                 IntegrationId = config.ManagedPublishingIntegrationId,
-                ConfigurationValid = config.ManagedPublishingIntegrationId > 0,
+                ConfigurationValid = config.ManagedSetupReady &&
+                    config.ManagedPublishingIntegrationId > 0 &&
+                    ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots).Count > 0,
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
@@ -722,6 +783,21 @@ namespace Emby.M3uEditor.Plugin.Api
                 "rollback",
                 mappingUuid,
                 cancellationToken => RollbackManagedCatalogAsync(mappingUuid, cancellationToken)));
+        }
+
+        public object Get(ManagedSetupRequest request)
+        {
+            var plugin = Plugin.Instance;
+            return new ManagedSetupService(plugin.DataFolderPath).Get(plugin.Configuration);
+        }
+
+        public object Put(ManagedSetupRequest request)
+        {
+            var plugin = Plugin.Instance;
+            return new ManagedSetupService(plugin.DataFolderPath).Put(
+                plugin.Configuration,
+                request == null ? 0 : request.IntegrationId,
+                plugin.SaveConfiguration);
         }
 
         private static async Task<ManagedActionResult> RollbackManagedCatalogAsync(

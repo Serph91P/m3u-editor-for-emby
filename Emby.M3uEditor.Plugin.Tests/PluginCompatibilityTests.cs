@@ -192,9 +192,13 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("managedPublishingSummary", html.Substring(dashboardStart, managedTabStart - dashboardStart));
             Assert.Contains("btnOpenManagedPublishing", html.Substring(dashboardStart, managedTabStart - dashboardStart));
             Assert.DoesNotContain("btnManagedReconcile", html.Substring(dashboardStart, managedTabStart - dashboardStart));
-            Assert.Contains("txtManagedPublishingIntegrationId", html.Substring(managedTabStart));
+            Assert.Contains("Managed by m3u-editor", html.Substring(managedTabStart));
+            Assert.DoesNotContain("txtManagedPublishingIntegrationId", html);
+            Assert.DoesNotContain("txtManagedApprovedOutputRoots", html);
             Assert.Contains("managedPublishing: '.tabManagedPublishing'", javascript);
-            Assert.Contains("config.ManagedPublishingIntegrationId", javascript);
+            Assert.Contains("managed.SetupReady", javascript);
+            Assert.DoesNotContain("config.ManagedPublishingIntegrationId =", javascript);
+            Assert.DoesNotContain("config.ManagedApprovedOutputRoots =", javascript);
             Assert.Contains("switchTab(view, 'managedPublishing')", javascript);
             Assert.Contains("view.querySelector('.managedPublishingSummaryStatus')", javascript);
             Assert.Contains("if (reconcileEl) reconcileEl.disabled = true;", javascript);

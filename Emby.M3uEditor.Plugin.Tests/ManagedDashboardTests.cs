@@ -1,3 +1,4 @@
+using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -45,28 +46,92 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void BuildManagedLibraryStats_UsesOwnedStateCountsOnly()
+        public void DashboardResponse_RetainedLegacyMapping_DoesNotExposeOutputPath()
         {
-            var dashboard = new ManagedDashboardStatus
+            var legacyPath = Path.Join(
+                Path.GetTempPath(),
+                "retained-legacy-path-literal",
+                "movies");
+            var config = new PluginConfiguration
             {
-                Mappings = new List<ManagedMappingState>
+                ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
                 {
                     new ManagedMappingState
                     {
+                        MappingUuid = "mapping-visible-uuid",
+                        LibraryName = "Visible library name",
                         CollectionType = "movies",
-                        StrmFileCount = 12
-                    },
-                    new ManagedMappingState
-                    {
-                        CollectionType = "tvshows",
-                        StrmFileCount = 34,
-                        SeriesCount = 5,
-                        SeasonCount = 8
+                        OutputPath = legacyPath,
+                        ActiveRevision = "active-visible-revision",
+                        PreviousRevision = "previous-visible-revision",
+                        Success = true,
+                        Duplicate = true,
+                        FileCount = 19,
+                        StrmFileCount = 17,
+                        SeriesCount = 3,
+                        SeasonCount = 5,
+                        Added = 7,
+                        Changed = 11,
+                        Removed = 13,
+                        OmittedVersions = 2,
+                        Error = "visible-status-error"
                     }
+                })
+            };
+            var response = new DashboardResult
+            {
+                History = new List<SyncHistoryEntry>(),
+                LibraryStats = new LibraryStats(),
+                ManagedPublishing = M3uEditorApi.BuildManagedDashboardStatus(
+                    config,
+                    new ManagedJobStatus { State = "idle" },
+                    1,
+                    10)
+            };
+
+            var responseJson = JsonSerializer.Serialize(response);
+
+            Assert.DoesNotContain(legacyPath, responseJson);
+            Assert.DoesNotContain("OutputPath", responseJson);
+            Assert.IsNotType<ManagedMappingState>(Assert.Single(response.ManagedPublishing.Mappings));
+            Assert.Contains("mapping-visible-uuid", responseJson);
+            Assert.Contains("Visible library name", responseJson);
+            Assert.Contains("movies", responseJson);
+            Assert.Contains("active-visible-revision", responseJson);
+            Assert.Contains("previous-visible-revision", responseJson);
+            Assert.Contains("visible-status-error", responseJson);
+            Assert.Contains("\"Success\":true", responseJson);
+            Assert.Contains("\"Duplicate\":true", responseJson);
+            Assert.Contains("\"FileCount\":19", responseJson);
+            Assert.Contains("\"StrmFileCount\":17", responseJson);
+            Assert.Contains("\"SeriesCount\":3", responseJson);
+            Assert.Contains("\"SeasonCount\":5", responseJson);
+            Assert.Contains("\"Added\":7", responseJson);
+            Assert.Contains("\"Changed\":11", responseJson);
+            Assert.Contains("\"Removed\":13", responseJson);
+            Assert.Contains("\"OmittedVersions\":2", responseJson);
+        }
+
+        [Fact]
+        public void BuildManagedLibraryStats_UsesOwnedStateCountsOnly()
+        {
+            var mappings = new List<ManagedMappingState>
+            {
+                new ManagedMappingState
+                {
+                    CollectionType = "movies",
+                    StrmFileCount = 12
+                },
+                new ManagedMappingState
+                {
+                    CollectionType = "tvshows",
+                    StrmFileCount = 34,
+                    SeriesCount = 5,
+                    SeasonCount = 8
                 }
             };
 
-            var stats = M3uEditorApi.BuildManagedLibraryStats(dashboard.Mappings);
+            var stats = M3uEditorApi.BuildManagedLibraryStats(mappings);
 
             Assert.Equal(12, stats.MovieCount);
             Assert.Equal(34, stats.EpisodeCount);
@@ -119,15 +184,22 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
-        [InlineData(0, false)]
-        [InlineData(-1, false)]
-        [InlineData(7, true)]
-        public void BuildManagedDashboardStatus_ReportsExplicitIntegrationIdValidity(
+        [InlineData(0, false, false)]
+        [InlineData(-1, true, false)]
+        [InlineData(7, false, false)]
+        [InlineData(7, true, true)]
+        public void BuildManagedDashboardStatus_RequiresCompletedManagedSetup(
             int integrationId,
+            bool setupReady,
             bool expectedValid)
         {
             var dashboard = M3uEditorApi.BuildManagedDashboardStatus(
-                new PluginConfiguration { ManagedPublishingIntegrationId = integrationId },
+                new PluginConfiguration
+                {
+                    ManagedPublishingIntegrationId = integrationId,
+                    ManagedSetupReady = setupReady,
+                    ManagedApprovedOutputRoots = Path.Join(Path.GetTempPath(), "managed-dashboard-approved")
+                },
                 new ManagedJobStatus { State = "idle" },
                 1,
                 10);

@@ -29,6 +29,7 @@ namespace Emby.M3uEditor.Plugin
             _applicationPaths = applicationPaths;
             _liveTvService = new LiveTvService(logManager.GetLogger("M3uEditor.LiveTv"));
             _strmSyncService = new StrmSyncService(logManager.GetLogger("M3uEditor.StrmSync"));
+            _strmSyncService.ManagedOwnerPathProvider = () => DataFolderPath;
             M3uEditorTunerHost.ReconcileConfiguredTunerHost(
                 applicationHost,
                 Configuration.EnableLiveTv,
@@ -56,7 +57,10 @@ namespace Emby.M3uEditor.Plugin
         /// </summary>
         public static HttpClient CreateHttpClient(int timeoutSeconds = 10, string userAgentOverride = null)
         {
-            var client = new HttpClient { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
+            var client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(timeoutSeconds)
+            };
             var ua = !string.IsNullOrEmpty(userAgentOverride)
                 ? userAgentOverride
                 : _instance?.Configuration?.HttpUserAgent;

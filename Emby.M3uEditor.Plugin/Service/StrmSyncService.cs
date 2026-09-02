@@ -92,7 +92,8 @@ namespace Emby.M3uEditor.Plugin.Service
         private static readonly HttpClient SharedHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         private static readonly HttpClient ManagedHttpClient = new HttpClient(new HttpClientHandler
         {
-            AllowAutoRedirect = false
+            AllowAutoRedirect = false,
+            UseProxy = false
         })
         {
             Timeout = TimeSpan.FromSeconds(30)

@@ -492,10 +492,6 @@ function (BaseView, loading) {
 
             // Sync settings
             view.querySelector('.txtStrmLibraryPath').value = config.StrmLibraryPath || '/config/m3u-editor-for-emby';
-            view.querySelector('.txtManagedPublishingIntegrationId').value = config.ManagedPublishingIntegrationId > 0
-                ? config.ManagedPublishingIntegrationId
-                : '';
-            view.querySelector('.txtManagedApprovedOutputRoots').value = config.ManagedApprovedOutputRoots || '';
             validateStrmPath(view);
             view.querySelector('.chkSmartSkipExisting').checked = config.SmartSkipExisting !== false;
             view.querySelector('.txtSyncParallelism').value = config.SyncParallelism || 3;
@@ -622,11 +618,6 @@ function (BaseView, loading) {
 
             // Sync settings
             config.StrmLibraryPath = view.querySelector('.txtStrmLibraryPath').value.replace(/\/+$/, '') || '/config/m3u-editor-for-emby';
-            var managedIntegrationId = Number(view.querySelector('.txtManagedPublishingIntegrationId').value);
-            config.ManagedPublishingIntegrationId = managedIntegrationId > 0 && managedIntegrationId === Math.floor(managedIntegrationId)
-                ? managedIntegrationId
-                : 0;
-            config.ManagedApprovedOutputRoots = view.querySelector('.txtManagedApprovedOutputRoots').value || '';
             config.SmartSkipExisting = view.querySelector('.chkSmartSkipExisting').checked;
             config.SyncParallelism = parseInt(view.querySelector('.txtSyncParallelism').value, 10) || 3;
             config.CleanupOrphans = view.querySelector('.chkCleanupOrphans').checked;
@@ -2466,18 +2457,18 @@ function (BaseView, loading) {
         managed = managed || {};
         var job = managed.Job || {};
         var jobRunning = job.State === 'running';
-        var available = !!managed.Enabled && !!managed.ConfigurationValid;
+        var available = !!managed.SetupReady && !!managed.ConfigurationValid;
 
-        if (!managed.ConfigurationValid) {
-            summaryEl.innerHTML = '<span class="status-badge failed">Configuration required</span>' +
-                '<span style="margin-left:0.7em;">Enter a positive m3u-editor Emby integration ID.</span>';
-            statusEl.innerHTML = '<span class="status-badge failed">Managed publishing disabled</span>' +
-                '<span style="margin-left:0.7em;">A positive m3u-editor Emby integration ID is required.</span>';
+        if (!managed.SetupReady || !managed.ConfigurationValid) {
+            summaryEl.innerHTML = '<span class="status-badge idle">Awaiting managed setup</span>' +
+                '<span style="margin-left:0.7em;">Managed by m3u-editor.</span>';
+            statusEl.innerHTML = '<span class="status-badge idle">Not connected</span>' +
+                '<span style="margin-left:0.7em;">Complete setup from m3u-editor.</span>';
         } else if (!managed.Enabled) {
-            summaryEl.innerHTML = '<span class="status-badge idle">Generic Xtream mode</span>' +
-                '<span style="margin-left:0.7em;">Managed publishing is unavailable.</span>';
-            statusEl.innerHTML = '<span class="status-badge idle">Generic Xtream mode</span>' +
-                '<span style="margin-left:0.7em;">No compatible m3u-editor publishing v1 capability is active.</span>';
+            summaryEl.innerHTML = '<span class="status-badge success">Managed setup ready</span>' +
+                '<span style="margin-left:0.7em;">Managed by m3u-editor.</span>';
+            statusEl.innerHTML = '<span class="status-badge idle">Connected</span>' +
+                '<span style="margin-left:0.7em;">Waiting for a compatible publishing catalog.</span>';
         } else {
             summaryEl.innerHTML = '<span class="status-badge success">Managed mode active</span>' +
                 '<span style="margin-left:0.7em;">' + escapeHtml(managed.TotalMappings || 0) + ' mapping(s), ' +
@@ -2488,6 +2479,7 @@ function (BaseView, loading) {
         }
 
         detailsEl.innerHTML =
+            '<div><strong>Setup:</strong> ' + escapeHtml(managed.SetupResult || 'Not ready') + '</div>' +
             '<div><strong>Catalog:</strong> ' + escapeHtml(managed.CatalogRevision || 'Not fetched') + '</div>' +
             '<div><strong>Active generation:</strong> ' + escapeHtml(managed.ActiveGeneration || 'None') + '</div>' +
             '<div><strong>Previous generation:</strong> ' + escapeHtml(managed.PreviousGeneration || 'None') + '</div>' +
