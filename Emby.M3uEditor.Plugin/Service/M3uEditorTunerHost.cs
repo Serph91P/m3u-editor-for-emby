@@ -402,6 +402,11 @@ namespace Emby.M3uEditor.Plugin.Service
                 IsRepeat = p.IsPreviouslyShown,
                 IsPremiere = p.IsNew || p.IsPremiere,
                 ImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl),
+                ImageWidth = p.ImageWidth > 0 ? p.ImageWidth : 0,
+                ImageHeight = p.ImageHeight > 0 ? p.ImageHeight : 0,
+                BackdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl),
+                ThumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl),
+                LogoImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl),
                 Genres = cats ?? new List<string>(),
                 IsSports = isSports,
                 IsNews = cats != null && cats.Exists(c =>
