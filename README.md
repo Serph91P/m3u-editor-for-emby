@@ -82,6 +82,7 @@ Bring m3u-editor's channel output into Emby's native Live TV experience.
 - **Managed tuner registration** with no separate Emby M3U tuner required
 - **M3U playlist generation** with channel metadata, logos, and EPG channel IDs
 - **XMLTV electronic program guide** with a configurable 1 to 14 day window
+- **Role-aware programme artwork** maps XMLTV posters, backdrops, episode stills, and logos to Emby's separate image slots
 - **Category filtering** for m3u-editor channel groups
 - **Stream format selection** for MPEG-TS or HLS (`m3u8`)
 - **Adult content filtering** for adult-flagged channels

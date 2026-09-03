@@ -34,6 +34,71 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ParseProgramme_WithM3uEditorArtworkRoles_KeepsImagesSeparate()
+        {
+            const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<tv>
+  <programme start=""20260903064000 +0000"" stop=""20260903073000 +0000"" channel=""kabel-eins"">
+    <title>MacGyver</title>
+    <icon src=""https://image.tmdb.org/backdrop.jpg"" />
+    <icon src=""https://image.tmdb.org/poster.jpg"" type=""poster"" width=""500"" height=""750"" orient=""P"" size=""2"" />
+    <icon src=""https://image.tmdb.org/still.jpg"" type=""screenshot"" width=""1280"" height=""720"" orient=""L"" size=""1"" />
+    <icon src=""https://image.tmdb.org/logo.png"" type=""logo"" width=""500"" height=""281"" orient=""L"" size=""3"" />
+    <icon src=""https://image.tmdb.org/backdrop.jpg"" type=""backdrop"" width=""1920"" height=""1080"" orient=""L"" size=""1"" />
+  </programme>
+</tv>";
+
+            var prog = Assert.Single(Parse(xml)["kabel-eins"]);
+
+            Assert.Equal("https://image.tmdb.org/poster.jpg", prog.ImageUrl);
+            Assert.Equal(500, prog.ImageWidth);
+            Assert.Equal(750, prog.ImageHeight);
+            Assert.Equal("https://image.tmdb.org/backdrop.jpg", prog.BackdropImageUrl);
+            Assert.Equal("https://image.tmdb.org/still.jpg", prog.ThumbImageUrl);
+            Assert.Equal("https://image.tmdb.org/logo.png", prog.LogoImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_WithMultipleUntypedIcons_PreservesLastValidFallback()
+        {
+            const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""ch1"">
+    <title>Legacy Show</title>
+    <icon src=""https://example.com/first.jpg"" />
+    <icon src=""/relative-invalid.jpg"" />
+    <icon src=""https://example.com/last.jpg"" />
+  </programme>
+</tv>";
+
+            var prog = Assert.Single(Parse(xml)["ch1"]);
+
+            Assert.Equal("https://example.com/last.jpg", prog.ImageUrl);
+            Assert.Null(prog.BackdropImageUrl);
+            Assert.Null(prog.ThumbImageUrl);
+            Assert.Null(prog.LogoImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_TypedPosterWinsRegardlessOfIconOrder()
+        {
+            const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""ch1"">
+    <title>Ordered Show</title>
+    <icon src=""https://example.com/poster.jpg"" type=""POSTER"" width=""500"" height=""750"" />
+    <icon src=""https://example.com/legacy-last.jpg"" />
+  </programme>
+</tv>";
+
+            var prog = Assert.Single(Parse(xml)["ch1"]);
+
+            Assert.Equal("https://example.com/poster.jpg", prog.ImageUrl);
+            Assert.Equal(500, prog.ImageWidth);
+            Assert.Equal(750, prog.ImageHeight);
+        }
+
+        [Fact]
         public void ParseProgramme_WithoutIcon_ImageUrlIsNull()
         {
             const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
