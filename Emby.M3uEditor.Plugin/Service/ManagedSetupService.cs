@@ -129,7 +129,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 if (config.ManagedSetupReady &&
                     config.ManagedPublishingIntegrationId == integrationId &&
                     string.Equals(config.ManagedApprovedOutputRoots, approvedRoots, PathComparison) &&
-                    config.ManagedPublishingApiVersion == ApiVersion)
+                    config.ManagedPublishingApiVersion == ApiVersion &&
+                    string.IsNullOrEmpty(config.ManagedLastError))
                 {
                     return Ready(integrationId, root);
                 }

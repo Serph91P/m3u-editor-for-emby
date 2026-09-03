@@ -422,6 +422,35 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Setup_IdempotentRequestWithStaleError_PersistsClearAndRestoresOnSaveFailure()
+        {
+            const string staleError = "The managed backend base URL must be a confined HTTPS origin.";
+            var config = new PluginConfiguration();
+            var service = new ManagedSetupService(_owner.Path);
+
+            var initial = service.Put(config, 17, () => { });
+            config.ManagedLastError = staleError;
+            var successful = service.Put(config, 17, () =>
+            {
+                Assert.Equal(string.Empty, config.ManagedLastError);
+            });
+
+            Assert.True(initial.Ready, initial.Result);
+            Assert.True(successful.Ready, successful.Result);
+            Assert.Equal(string.Empty, config.ManagedLastError);
+
+            config.ManagedLastError = staleError;
+            var failed = service.Put(config, 17, () =>
+            {
+                Assert.Equal(string.Empty, config.ManagedLastError);
+                throw new IOException("save failed");
+            });
+
+            Assert.False(failed.Ready);
+            Assert.Equal(staleError, config.ManagedLastError);
+        }
+
+        [Fact]
         public async Task Setup_ConcurrentConflictingBindings_OnlyOneCommits()
         {
             var config = new PluginConfiguration();
