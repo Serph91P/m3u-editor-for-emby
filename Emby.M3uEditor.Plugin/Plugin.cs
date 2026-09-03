@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Service;
 using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
@@ -16,6 +17,7 @@ namespace Emby.M3uEditor.Plugin
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
     {
         private static volatile Plugin _instance;
+        internal static readonly object ConfigurationTransactionGate = new object();
         private readonly IApplicationHost _applicationHost;
         private readonly IApplicationPaths _applicationPaths;
         private LiveTvService _liveTvService;
@@ -51,6 +53,26 @@ namespace Emby.M3uEditor.Plugin
         public IApplicationHost ApplicationHost => _applicationHost;
 
         public new IApplicationPaths ApplicationPaths => _applicationPaths;
+
+        public override void UpdateConfiguration(BasePluginConfiguration configuration)
+        {
+            lock (ConfigurationTransactionGate)
+            {
+                base.UpdateConfiguration(configuration);
+            }
+        }
+
+        internal ManagedSetupResult UpdateManagedSetup(int integrationId)
+        {
+            lock (ConfigurationTransactionGate)
+            {
+                var configuration = Configuration;
+                return new ManagedSetupService(DataFolderPath).Put(
+                    configuration,
+                    integrationId,
+                    () => UpdateConfiguration(configuration));
+            }
+        }
 
         /// <summary>
         /// Creates an HttpClient configured with the plugin's User-Agent setting.

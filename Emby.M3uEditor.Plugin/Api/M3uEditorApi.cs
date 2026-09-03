@@ -794,11 +794,7 @@ namespace Emby.M3uEditor.Plugin.Api
         public object Put(ManagedSetupRequest request)
         {
             var plugin = Plugin.Instance;
-            var configuration = plugin.Configuration;
-            return new ManagedSetupService(plugin.DataFolderPath).Put(
-                configuration,
-                request == null ? 0 : request.IntegrationId,
-                () => plugin.UpdateConfiguration(configuration));
+            return plugin.UpdateManagedSetup(request == null ? 0 : request.IntegrationId);
         }
 
         private static async Task<ManagedActionResult> RollbackManagedCatalogAsync(

@@ -139,11 +139,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 var oldReady = config.ManagedSetupReady;
                 var oldLastResult = config.ManagedSetupLastResult;
                 var oldApiVersion = config.ManagedPublishingApiVersion;
+                var oldLastError = config.ManagedLastError;
                 config.ManagedPublishingIntegrationId = integrationId;
                 config.ManagedApprovedOutputRoots = approvedRoots;
                 config.ManagedSetupReady = true;
                 config.ManagedSetupLastResult = "Ready";
                 config.ManagedPublishingApiVersion = ApiVersion;
+                config.ManagedLastError = string.Empty;
                 var persisted = false;
                 try
                 {
@@ -163,6 +165,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         config.ManagedSetupReady = oldReady;
                         config.ManagedSetupLastResult = oldLastResult;
                         config.ManagedPublishingApiVersion = oldApiVersion;
+                        config.ManagedLastError = oldLastError;
                     }
                 }
 
