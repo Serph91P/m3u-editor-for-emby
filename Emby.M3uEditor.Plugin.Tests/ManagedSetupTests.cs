@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Services;
 using Xunit;
 
@@ -58,6 +60,40 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(config.ManagedSetupReady);
             Assert.Equal("Ready", config.ManagedSetupLastResult);
             Assert.Equal(1, saves);
+        }
+
+        [Fact]
+        public void SetupRoute_SuccessfullyReplacesLiveConfigurationUsedByDashboard()
+        {
+            var instanceField = typeof(Plugin).GetField(
+                "_instance",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var previousInstance = Plugin.InstanceOrNull;
+            var plugin = (TestPlugin)RuntimeHelpers.GetUninitializedObject(typeof(TestPlugin));
+            plugin.SetAttributes(null, _owner.Path, null);
+            plugin.SetConfiguration(new PluginConfiguration { ManagedMappingsJson = "[]" });
+            instanceField.SetValue(null, plugin);
+            try
+            {
+                var result = (ManagedSetupResult)new M3uEditorApi().Put(
+                    new ManagedSetupRequest { IntegrationId = 2 });
+                var dashboard = M3uEditorApi.BuildManagedDashboardStatus(
+                    plugin.Configuration,
+                    new ManagedJobStatus { State = "idle" },
+                    1,
+                    10);
+
+                Assert.True(result.Ready, result.Result);
+                Assert.True(plugin.UpdateConfigurationCalled);
+                Assert.True(dashboard.SetupReady);
+                Assert.Equal("Ready", dashboard.SetupResult);
+                Assert.True(dashboard.ConfigurationValid);
+                Assert.Equal(2, dashboard.IntegrationId);
+            }
+            finally
+            {
+                instanceField.SetValue(null, previousInstance);
+            }
         }
 
         [Fact]
@@ -550,6 +586,31 @@ namespace Emby.M3uEditor.Plugin.Tests
         public void Dispose()
         {
             _owner.Dispose();
+        }
+
+        private sealed class TestPlugin : Plugin
+        {
+            public bool UpdateConfigurationCalled { get; private set; }
+
+            private TestPlugin()
+                : base(null, null, null, null)
+            {
+            }
+
+            public void SetConfiguration(PluginConfiguration configuration)
+            {
+                Configuration = configuration;
+            }
+
+            public override void UpdateConfiguration(BasePluginConfiguration configuration)
+            {
+                UpdateConfigurationCalled = true;
+                Configuration = (PluginConfiguration)configuration;
+            }
+
+            public override void SaveConfiguration()
+            {
+            }
         }
     }
 }
