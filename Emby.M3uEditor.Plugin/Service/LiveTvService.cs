@@ -27,6 +27,8 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private readonly ILogger _logger;
         private readonly Func<int, HttpClient> _httpClientFactory;
+        private readonly Func<PluginConfiguration> _configurationProvider;
+        private readonly Action _saveConfiguration;
         private readonly SemaphoreSlim _m3uLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _epgLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _xmltvLock = new SemaphoreSlim(1, 1);
@@ -52,14 +54,39 @@ namespace Emby.M3uEditor.Plugin.Service
         private bool _disposed;
 
         public LiveTvService(ILogger logger)
-            : this(logger, timeout => Plugin.CreateHttpClient(timeout))
+            : this(
+                logger,
+                timeout => Plugin.CreateHttpClient(timeout),
+                () => Plugin.Instance.Configuration,
+                () => Plugin.Instance.SaveConfiguration())
         {
         }
 
         internal LiveTvService(ILogger logger, Func<int, HttpClient> httpClientFactory)
+            : this(
+                logger,
+                httpClientFactory,
+                () => Plugin.Instance.Configuration,
+                () => Plugin.Instance.SaveConfiguration())
+        {
+        }
+
+        internal LiveTvService(
+            ILogger logger,
+            Func<int, HttpClient> httpClientFactory,
+            Func<PluginConfiguration> configurationProvider,
+            Action saveConfiguration)
         {
             _logger = logger;
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+            _configurationProvider = configurationProvider ?? throw new ArgumentNullException(nameof(configurationProvider));
+            _saveConfiguration = saveConfiguration ?? throw new ArgumentNullException(nameof(saveConfiguration));
+        }
+
+        private PluginConfiguration GetConfiguration()
+        {
+            return _configurationProvider()
+                ?? throw new InvalidOperationException("Plugin configuration is unavailable.");
         }
 
         /// <summary>Exposed for unit testing only: indicates whether the last XMLTV fetch failed.</summary>
@@ -88,7 +115,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<string> GetM3UPlaylistAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
 
             await _m3uLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -139,7 +166,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<string> GetXmltvEpgAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
 
             await _epgLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -179,7 +206,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<List<Category>> GetLiveCategoriesAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var url = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}/player_api.php?username={1}&password={2}&action=get_live_categories",
@@ -225,7 +252,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var diagnostics = IsLiveTvDiagnosticsEnabled();
             if (diagnostics)
             {
@@ -290,7 +317,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         PerChannelEpgCacheCount);
                 }
                 config.LastChannelListHash = newHash;
-                Plugin.Instance.SaveConfiguration();
+                _saveConfiguration();
 
                 // Wipe M3U, EPG XML, and bulk XMLTV caches so the next request rebuilds
                 // them against the fresh channel list. Note: we do NOT take _m3uLock /
@@ -377,7 +404,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private async Task<List<LiveStreamInfo>> FetchAllChannelsAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var url = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}/player_api.php?username={1}&password={2}&action=get_live_streams",
@@ -633,7 +660,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         internal async Task<List<EpgProgram>> FetchEpgForChannelCachedAsync(int streamId, CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var cacheTtl = TimeSpan.FromMinutes(config.EpgCacheMinutes);
 
             // 1. Check per-channel cache (fastest path)
@@ -682,7 +709,7 @@ namespace Emby.M3uEditor.Plugin.Service
             //    Custom URL mode does not fall back: if the user's URL failed, return empty so
             //    GetProgramsInternal shows a dummy placeholder rather than silently using a
             //    different source.
-            if (Plugin.Instance.Configuration.EpgSource == EpgSourceMode.CustomUrl)
+            if (GetConfiguration().EpgSource == EpgSourceMode.CustomUrl)
             {
                 _logger.Debug("FetchEpgForChannelCachedAsync: custom URL failed, returning empty for stream {0}", streamId);
                 return new List<EpgProgram>();
@@ -745,7 +772,7 @@ namespace Emby.M3uEditor.Plugin.Service
             await _xmltvLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                var config = Plugin.Instance.Configuration;
+                var config = GetConfiguration();
                 var cacheTtl = TimeSpan.FromMinutes(config.EpgCacheMinutes);
 
                 // Already fresh?
@@ -824,7 +851,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private async Task<EpgListings> FetchEpgForChannelAsync(int streamId, CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var url = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}/player_api.php?username={1}&password={2}&action=get_simple_data_table&stream_id={3}",
@@ -837,9 +864,13 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        private static bool IsLiveTvDiagnosticsEnabled()
+        private bool IsLiveTvDiagnosticsEnabled()
         {
-            return Diagnostics.IsEnabled;
+            var config = GetConfiguration();
+#pragma warning disable 0618
+            var legacyLiveTvDiagnostics = config.EnableLiveTvDiagnostics;
+#pragma warning restore 0618
+            return config.EnableDiagnosticsLogging || legacyLiveTvDiagnostics;
         }
 
         private void LogLiveTvChannelDiagnostics(

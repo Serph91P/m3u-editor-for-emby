@@ -1,14 +1,11 @@
 using System;
 using System.Net.Http;
-using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
 using MediaBrowser.Model.Logging;
-using MediaBrowser.Model.Plugins;
 using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
@@ -29,10 +26,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             handler.RespondWithSequence("action=get_live_streams", new[] { channels, channels });
             handler.RespondWith("action=get_live_categories", "[{\"category_id\":5,\"category_name\":\"News\"}]");
             handler.RespondWith("action=get_simple_data_table&stream_id=42", epg);
-            var instanceField = typeof(Plugin).GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static);
-            var previous = Plugin.InstanceOrNull;
-            var plugin = (TestPlugin)RuntimeHelpers.GetUninitializedObject(typeof(TestPlugin));
-            plugin.SetConfiguration(new PluginConfiguration
+            var configuration = new PluginConfiguration
             {
                 BaseUrl = "http://editor.example",
                 Username = "user",
@@ -40,46 +34,23 @@ namespace Emby.M3uEditor.Plugin.Tests
                 EnableLiveTv = true,
                 EpgSource = EpgSourceMode.XtreamServer,
                 IncludeAdultChannels = true,
-            });
-            instanceField.SetValue(null, plugin);
+            };
 
-            try
+            using (var service = new LiveTvService(
+                new NullLogger(),
+                _ => new HttpClient(handler, false),
+                () => configuration,
+                () => { }))
             {
-                using (var service = new LiveTvService(
-                    new NullLogger(),
-                    _ => new HttpClient(handler, false)))
-                {
-                    var playlist = await service.GetM3UPlaylistAsync(CancellationToken.None);
-                    var xmltv = await service.GetXmltvEpgAsync(CancellationToken.None);
+                var playlist = await service.GetM3UPlaylistAsync(CancellationToken.None);
+                var xmltv = await service.GetXmltvEpgAsync(CancellationToken.None);
 
-                    Assert.Contains("tvg-id=\"news.example\"", playlist);
-                    Assert.Contains("group-title=\"News\"", playlist);
-                    Assert.Contains("http://editor.example/live/user/pass/42.ts", playlist);
-                    Assert.Contains("<channel id=\"news.example\">", xmltv);
-                    Assert.Contains("<title>News At Noon</title>", xmltv);
-                    Assert.Contains("channel=\"news.example\"", xmltv);
-                }
-            }
-            finally
-            {
-                instanceField.SetValue(null, previous);
-            }
-        }
-
-        private sealed class TestPlugin : Plugin
-        {
-            private TestPlugin()
-                : base(null, null, null, null)
-            {
-            }
-
-            public void SetConfiguration(PluginConfiguration configuration)
-            {
-                Configuration = configuration;
-            }
-
-            public override void SaveConfiguration()
-            {
+                Assert.Contains("tvg-id=\"news.example\"", playlist);
+                Assert.Contains("group-title=\"News\"", playlist);
+                Assert.Contains("http://editor.example/live/user/pass/42.ts", playlist);
+                Assert.Contains("<channel id=\"news.example\">", xmltv);
+                Assert.Contains("<title>News At Noon</title>", xmltv);
+                Assert.Contains("channel=\"news.example\"", xmltv);
             }
         }
 
