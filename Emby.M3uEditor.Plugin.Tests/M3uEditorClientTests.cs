@@ -1115,10 +1115,15 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Body = request.Content == null
                     ? string.Empty
                     : request.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return Task.FromResult(CreateResponse());
+            }
+
+            private HttpResponseMessage CreateResponse()
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(_responseBody)
-                });
+                };
             }
         }
 

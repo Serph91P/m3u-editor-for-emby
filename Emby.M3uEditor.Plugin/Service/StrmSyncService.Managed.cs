@@ -473,7 +473,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         throw;
                     }
-                    catch (Exception)
+                    catch (Exception ex) when (
+                        !(ex is OperationCanceledException) || !cancellationToken.IsCancellationRequested)
                     {
                         return RecordManagedReconcileFailure(
                             config,
@@ -526,7 +527,8 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, ex.Message);
             }
-            catch (Exception)
+            catch (Exception ex) when (
+                !(ex is OperationCanceledException) || !cancellationToken.IsCancellationRequested)
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, "Managed reconcile failed.");
             }

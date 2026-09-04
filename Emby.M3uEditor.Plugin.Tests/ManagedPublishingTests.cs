@@ -1043,36 +1043,27 @@ namespace Emby.M3uEditor.Plugin.Tests
             var savedEnabled = true;
             string savedError = null;
             var refreshInvoked = false;
-            Exception refreshError = null;
-            ManagedReconcileResult result = null;
 
             config.BaseUrl = "https://fake-xtream";
-            try
-            {
-                result = await MakeService().ReconcileManagedAsync(
-                    config,
-                    () =>
-                    {
-                        savedEnabled = config.ManagedPublishingEnabled;
-                        savedError = config.ManagedLastError;
-                    },
-                    null,
-                    None,
-                    () =>
-                    {
-                        refreshInvoked = true;
-                        throw new InvalidOperationException("/private/library/path");
-                    });
-            }
-            catch (Exception ex)
-            {
-                refreshError = ex;
-            }
+            var result = await MakeService().ReconcileManagedAsync(
+                config,
+                () =>
+                {
+                    savedEnabled = config.ManagedPublishingEnabled;
+                    savedError = config.ManagedLastError;
+                },
+                null,
+                None,
+                () =>
+                {
+                    refreshInvoked = true;
+                    throw new InvalidOperationException("/private/library/path");
+                });
 
             Assert.True(refreshInvoked);
             Assert.False(savedEnabled);
             Assert.Equal("Managed reconcile failed.", savedError);
-            Assert.Null(refreshError);
+            Assert.NotNull(result);
             Assert.False(result.Success);
             Assert.Equal("Managed reconcile failed.", result.Error);
         }

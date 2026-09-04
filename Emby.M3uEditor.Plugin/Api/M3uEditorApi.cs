@@ -391,7 +391,7 @@ namespace Emby.M3uEditor.Plugin.Api
             var xml = await Plugin.Instance.LiveTvService.GetXmltvEpgAsync(CancellationToken.None).ConfigureAwait(false);
             return ResultFactory.GetResult(
                 Request,
-                new MemoryStream(Encoding.UTF8.GetBytes(xml)),
+                new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(xml)),
                 "application/xml",
                 new Dictionary<string, string>());
         }
@@ -401,7 +401,7 @@ namespace Emby.M3uEditor.Plugin.Api
             var m3u = await Plugin.Instance.LiveTvService.GetM3UPlaylistAsync(CancellationToken.None).ConfigureAwait(false);
             return ResultFactory.GetResult(
                 Request,
-                new MemoryStream(Encoding.UTF8.GetBytes(m3u)),
+                new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(m3u)),
                 "audio/x-mpegurl",
                 new Dictionary<string, string>());
         }
@@ -765,7 +765,11 @@ namespace Emby.M3uEditor.Plugin.Api
                 if (string.IsNullOrEmpty(currentDll) || !File.Exists(currentDll))
                 {
                     var pluginsDir = Plugin.Instance.ApplicationPaths.PluginsPath;
-                    currentDll = Path.Combine(pluginsDir, "Emby.M3uEditor.Plugin.dll");
+                    currentDll = pluginsDir.TrimEnd(
+                        Path.DirectorySeparatorChar,
+                        Path.AltDirectorySeparatorChar) +
+                        Path.DirectorySeparatorChar +
+                        "Emby.M3uEditor.Plugin.dll";
                 }
                 if (!File.Exists(currentDll))
                 {
@@ -888,7 +892,7 @@ namespace Emby.M3uEditor.Plugin.Api
             };
             return ResultFactory.GetResult(
                 Request,
-                new MemoryStream(Encoding.UTF8.GetBytes(sanitized.ToString())),
+                new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(sanitized.ToString())),
                 "text/plain",
                 headers);
         }

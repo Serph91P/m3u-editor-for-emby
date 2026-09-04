@@ -81,8 +81,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             var api = ReadText("Emby.M3uEditor.Plugin/Api/M3uEditorApi.cs");
 
             Assert.Contains("var currentDll = typeof(Plugin).Assembly.Location;", api);
+            Assert.Contains("var pluginsDir = Plugin.Instance.ApplicationPaths.PluginsPath;", api);
+            Assert.Contains("Path.DirectorySeparatorChar", api);
+            Assert.Contains("\"Emby.M3uEditor.Plugin.dll\";", api);
+            Assert.DoesNotContain("Path.Combine(pluginsDir", api);
             Assert.Contains("File.Move(tempPath, currentDll);", api);
-            Assert.Contains("Path.Combine(pluginsDir, \"Emby.M3uEditor.Plugin.dll\")", api);
         }
 
         [Fact]
