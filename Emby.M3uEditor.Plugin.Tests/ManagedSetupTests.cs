@@ -143,49 +143,48 @@ namespace Emby.M3uEditor.Plugin.Tests
                 BindingFlags.NonPublic | BindingFlags.Static);
             var previousInstance = Plugin.InstanceOrNull;
             var plugin = (TestPlugin)RuntimeHelpers.GetUninitializedObject(typeof(TestPlugin));
-            var setupCommitEntered = new ManualResetEventSlim(false);
-            var allowSetupCommit = new ManualResetEventSlim(false);
-            var updateAttempted = new ManualResetEventSlim(false);
-            plugin.SetAttributes(null, _owner.Path, null);
-            plugin.SetConfiguration(new PluginConfiguration { ManagedMappingsJson = "[]" });
-            plugin.BeforeUpdateConfiguration = () =>
+            using (var setupCommitEntered = new ManualResetEventSlim(false))
+            using (var allowSetupCommit = new ManualResetEventSlim(false))
+            using (var updateAttempted = new ManualResetEventSlim(false))
             {
-                setupCommitEntered.Set();
-                allowSetupCommit.Wait();
-            };
-            plugin.UpdateConfigurationAttempted = () => updateAttempted.Set();
-            instanceField.SetValue(null, plugin);
-            try
-            {
-                var setup = Task.Run(() => (ManagedSetupResult)new M3uEditorApi().Put(
-                    new ManagedSetupRequest { IntegrationId = 2 }));
-                Assert.True(await Task.Run(() => setupCommitEntered.Wait(TimeSpan.FromSeconds(5))));
-                updateAttempted.Reset();
-
-                var replacement = new PluginConfiguration
+                plugin.SetAttributes(null, _owner.Path, null);
+                plugin.SetConfiguration(new PluginConfiguration { ManagedMappingsJson = "[]" });
+                plugin.BeforeUpdateConfiguration = () =>
                 {
-                    HttpUserAgent = "unrelated-administrator-replacement"
+                    setupCommitEntered.Set();
+                    allowSetupCommit.Wait();
                 };
-                var update = Task.Run(() => plugin.UpdateConfiguration(replacement));
-                Assert.True(await Task.Run(() => updateAttempted.Wait(TimeSpan.FromSeconds(5))));
-                var completion = await Task.WhenAny(update, Task.Delay(TimeSpan.FromMilliseconds(100)));
-                Assert.NotSame(update, completion);
+                plugin.UpdateConfigurationAttempted = () => updateAttempted.Set();
+                instanceField.SetValue(null, plugin);
+                try
+                {
+                    var setup = Task.Run(() => (ManagedSetupResult)new M3uEditorApi().Put(
+                        new ManagedSetupRequest { IntegrationId = 2 }));
+                    Assert.True(await Task.Run(() => setupCommitEntered.Wait(TimeSpan.FromSeconds(5))));
+                    updateAttempted.Reset();
 
-                allowSetupCommit.Set();
-                var result = await setup;
-                await update;
+                    var replacement = new PluginConfiguration
+                    {
+                        HttpUserAgent = "unrelated-administrator-replacement"
+                    };
+                    var update = Task.Run(() => plugin.UpdateConfiguration(replacement));
+                    Assert.True(await Task.Run(() => updateAttempted.Wait(TimeSpan.FromSeconds(5))));
+                    var completion = await Task.WhenAny(update, Task.Delay(TimeSpan.FromMilliseconds(100)));
+                    Assert.NotSame(update, completion);
 
-                Assert.True(result.Ready, result.Result);
-                Assert.Same(replacement, plugin.Configuration);
-                Assert.Equal("unrelated-administrator-replacement", plugin.Configuration.HttpUserAgent);
-            }
-            finally
-            {
-                allowSetupCommit.Set();
-                instanceField.SetValue(null, previousInstance);
-                setupCommitEntered.Dispose();
-                allowSetupCommit.Dispose();
-                updateAttempted.Dispose();
+                    allowSetupCommit.Set();
+                    var result = await setup;
+                    await update;
+
+                    Assert.True(result.Ready, result.Result);
+                    Assert.Same(replacement, plugin.Configuration);
+                    Assert.Equal("unrelated-administrator-replacement", plugin.Configuration.HttpUserAgent);
+                }
+                finally
+                {
+                    allowSetupCommit.Set();
+                    instanceField.SetValue(null, previousInstance);
+                }
             }
         }
 
