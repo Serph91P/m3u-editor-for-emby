@@ -194,6 +194,24 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.False(M3uEditorTunerHost.IsOwnedChannel(channels, null, null, "News"));
         }
 
+        [Fact]
+        public void TryClearImageInfos_MissingProperty_ReturnsFalse()
+        {
+            Assert.False(M3uEditorTunerHost.TryClearImageInfos(new object()));
+        }
+
+        [Fact]
+        public void TryClearImageInfos_PopulatedArray_ClearsImages()
+        {
+            var item = new ChannelItemWithImages
+            {
+                ImageInfos = new[] { "cached-logo" },
+            };
+
+            Assert.True(M3uEditorTunerHost.TryClearImageInfos(item));
+            Assert.Empty(item.ImageInfos);
+        }
+
         private static void SetField(object obj, string name, object value)
         {
             var field = obj.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
@@ -206,6 +224,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             var field = obj.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.NotNull(field);
             return (T)field.GetValue(obj);
+        }
+
+        private sealed class ChannelItemWithImages
+        {
+            public string[] ImageInfos { get; set; }
         }
     }
 }

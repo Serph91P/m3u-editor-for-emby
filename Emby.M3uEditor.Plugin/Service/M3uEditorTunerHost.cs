@@ -676,15 +676,12 @@ namespace Emby.M3uEditor.Plugin.Service
                         }
 
                         result.MatchedChannels++;
-                        var imagesProperty = itemType.GetProperty("ImageInfos");
-                        var images = imagesProperty?.GetValue(item) as Array;
-                        if (images == null || images.Length == 0)
+                        if (!TryClearImageInfos(item))
                         {
                             result.AlreadyCleanChannels++;
                             continue;
                         }
 
-                        imagesProperty.SetValue(item, Array.CreateInstance(images.GetType().GetElementType(), 0));
                         updateItem.Invoke(libraryManager, new object[] { item, null, 4 });
                         result.ClearedChannels++;
                     }
@@ -708,6 +705,35 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             return result;
+        }
+
+        internal static bool TryClearImageInfos(object item)
+        {
+            if (item == null)
+            {
+                return false;
+            }
+
+            var imagesProperty = item.GetType().GetProperty("ImageInfos");
+            if (imagesProperty == null)
+            {
+                return false;
+            }
+
+            var images = imagesProperty.GetValue(item) as Array;
+            if (images == null || images.Length == 0)
+            {
+                return false;
+            }
+
+            var elementType = images.GetType().GetElementType();
+            if (elementType == null)
+            {
+                return false;
+            }
+
+            imagesProperty.SetValue(item, Array.CreateInstance(elementType, 0));
+            return true;
         }
 
         internal static bool IsOwnedChannel(
