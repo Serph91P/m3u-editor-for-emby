@@ -4,7 +4,7 @@
      data-forcescrollbar="true"
      data-centerfocus="true"
      data-bindheader="true"
-     data-controller="__plugin/m3ueditorconfigjsr2"
+     data-controller="__plugin/m3ueditorconfigjsr3"
      data-title="m3u-editor for Emby">
 
   <div class="scrollSlider flex-grow flex-direction-column padded-left padded-left-page padded-right padded-top-page padded-bottom-page">
@@ -97,6 +97,42 @@
                     .configTabs {
                         overflow-x: auto;
                         white-space: nowrap;
+                    }
+                    .managedViewTabs {
+                        display: flex;
+                        gap: 0.45em;
+                        flex-wrap: wrap;
+                        margin: 1em 0;
+                    }
+                    .managedViewBtn {
+                        padding: 0.45em 0.9em;
+                        border: 1px solid rgba(128,128,128,0.3);
+                        border-radius: 999px;
+                        background: transparent;
+                        color: inherit;
+                        cursor: pointer;
+                        opacity: 0.75;
+                    }
+                    .managedViewBtn.active {
+                        border-color: #52B54B;
+                        background: rgba(82,181,75,0.14);
+                        opacity: 1;
+                    }
+                    .managedMappingRow {
+                        padding: 0.75em 0;
+                        border-top: 1px solid rgba(128,128,128,0.12);
+                    }
+                    .managedMappingRoute {
+                        display: flex;
+                        align-items: center;
+                        gap: 0.55em;
+                        flex-wrap: wrap;
+                        margin-top: 0.35em;
+                    }
+                    .managedMappingCounts {
+                        margin-top: 0.3em;
+                        opacity: 0.65;
+                        font-size: 0.9em;
                     }
 
                     /* ---- Settings and publishing section cards ---- */
@@ -236,13 +272,30 @@
                     <div class="verticalSection managedPublishingCard">
                         <h2 class="sectionTitle">Managed m3u-editor Publishing</h2>
                         <div class="fieldDescription" style="margin-bottom:0.8em;">Managed by m3u-editor. Connection readiness and publishing status are read-only here.</div>
-                        <div class="managedPublishingStatus" style="opacity:0.7;">Checking versioned capability...</div>
-                        <div class="managedPublishingDetails" style="margin-top:0.7em; font-size:0.9em;"></div>
-                        <div class="managedPublishingMappings" style="margin-top:0.7em;"></div>
-                        <div class="managedPublishingPagination" style="display:flex; align-items:center; gap:0.5em; margin-top:0.5em;">
-                            <button class="btnManagedPreviousPage raised button-secondary" is="emby-button" type="button" disabled>Previous</button>
-                            <span class="managedPublishingPage" style="opacity:0.65;"></span>
-                            <button class="btnManagedNextPage raised button-secondary" is="emby-button" type="button" disabled>Next</button>
+                        <div class="managedPublishingViews managedViewTabs" aria-label="Managed publishing views">
+                            <button class="managedViewBtn active" data-managed-view="overview" type="button" aria-pressed="true">Overview</button>
+                            <button class="managedViewBtn" data-managed-view="movies" type="button" aria-pressed="false">Movies</button>
+                            <button class="managedViewBtn" data-managed-view="series" type="button" aria-pressed="false">Series</button>
+                        </div>
+                        <div class="managedViewPanel managedOverview" data-managed-panel="overview">
+                            <div class="managedPublishingStatus" style="opacity:0.7;">Checking versioned capability...</div>
+                            <div class="managedPublishingDetails" style="margin-top:0.7em; font-size:0.9em;"></div>
+                            <div class="managedPublishingMappings" style="margin-top:0.7em;"></div>
+                            <div class="managedPublishingPagination" style="display:flex; align-items:center; gap:0.5em; margin-top:0.5em;">
+                                <button class="btnManagedPreviousPage raised button-secondary" is="emby-button" type="button" disabled>Previous</button>
+                                <span class="managedPublishingPage" style="opacity:0.65;"></span>
+                                <button class="btnManagedNextPage raised button-secondary" is="emby-button" type="button" disabled>Next</button>
+                            </div>
+                        </div>
+                        <div class="managedViewPanel managedMovies" data-managed-panel="movies" style="display:none;">
+                            <h3>Managed movie publishing</h3>
+                            <div class="fieldDescription">Source groups published by m3u-editor into Emby movie libraries.</div>
+                            <div class="managedMovieMappings" style="margin-top:0.7em;"></div>
+                        </div>
+                        <div class="managedViewPanel managedSeries" data-managed-panel="series" style="display:none;">
+                            <h3>Managed series publishing</h3>
+                            <div class="fieldDescription">Source groups published by m3u-editor into Emby series libraries.</div>
+                            <div class="managedSeriesMappings" style="margin-top:0.7em;"></div>
                         </div>
                         <div class="managedPublishingWarning" style="display:none; margin-top:0.7em; color:#e6a23c;"></div>
                         <div class="managedPublishingError" style="display:none; margin-top:0.7em; color:#cc4444;"></div>

@@ -16,7 +16,7 @@ namespace Emby.M3uEditor.Plugin
 {
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
     {
-        private const string DashboardResourceRevision = "r2";
+        private const string DashboardResourceRevision = "r3";
         private static volatile Plugin _instance;
         internal static readonly object ConfigurationTransactionGate = new object();
         private readonly IApplicationHost _applicationHost;
@@ -122,6 +122,11 @@ namespace Emby.M3uEditor.Plugin
                 },
                 new PluginPageInfo
                 {
+                    Name = "m3ueditorconfigr2",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
                     // Preserve the previous main-page URL as an upgrade alias. The
                     // revised main URL bypasses Emby's public browser cache.
                     Name = "m3ueditorconfig",
@@ -146,6 +151,11 @@ namespace Emby.M3uEditor.Plugin
                 new PluginPageInfo
                 {
                     Name = GetJsPageName(),
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
+                },
+                new PluginPageInfo
+                {
+                    Name = "m3ueditorconfigjsr2",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
                 },
                 new PluginPageInfo

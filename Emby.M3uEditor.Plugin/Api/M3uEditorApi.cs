@@ -170,7 +170,6 @@ namespace Emby.M3uEditor.Plugin.Api
         public string CatalogRevision { get; set; }
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
-        public string MappingsJson { get; set; }
         public List<ManagedDashboardMapping> Mappings { get; set; }
         public int TotalMappings { get; set; }
         public int TotalFiles { get; set; }
@@ -194,6 +193,7 @@ namespace Emby.M3uEditor.Plugin.Api
     {
         public string MappingUuid { get; set; }
         public string LibraryName { get; set; }
+        public bool LibraryNameTruncated { get; set; }
         public string CollectionType { get; set; }
         public string ActiveRevision { get; set; }
         public string PreviousRevision { get; set; }
@@ -207,6 +207,8 @@ namespace Emby.M3uEditor.Plugin.Api
         public int Changed { get; set; }
         public int Removed { get; set; }
         public int OmittedVersions { get; set; }
+        public List<string> SourceGroups { get; set; }
+        public bool SourceGroupsTruncated { get; set; }
         public string Error { get; set; }
     }
 
@@ -230,7 +232,7 @@ namespace Emby.M3uEditor.Plugin.Api
             int requestedPageSize)
         {
             var page = Math.Max(1, requestedPage);
-            var pageSize = Math.Max(1, Math.Min(25, requestedPageSize));
+            var pageSize = Math.Max(1, Math.Min(100, requestedPageSize));
             List<ManagedMappingState> mappings;
             try
             {
@@ -250,24 +252,36 @@ namespace Emby.M3uEditor.Plugin.Api
             var pageMappings = mappings
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(mapping => new ManagedDashboardMapping
+                .Select(mapping =>
                 {
-                    MappingUuid = mapping.MappingUuid,
-                    LibraryName = mapping.LibraryName,
-                    CollectionType = mapping.CollectionType,
-                    ActiveRevision = mapping.ActiveRevision,
-                    PreviousRevision = mapping.PreviousRevision,
-                    Success = mapping.Success,
-                    Duplicate = mapping.Duplicate,
-                    FileCount = mapping.FileCount,
-                    StrmFileCount = mapping.StrmFileCount,
-                    SeriesCount = mapping.SeriesCount,
-                    SeasonCount = mapping.SeasonCount,
-                    Added = mapping.Added,
-                    Changed = mapping.Changed,
-                    Removed = mapping.Removed,
-                    OmittedVersions = mapping.OmittedVersions,
-                    Error = mapping.Error
+                    bool libraryNameTruncated;
+                    var libraryName = StrmSyncService.NormalizeManagedDashboardLabel(
+                        mapping.LibraryName,
+                        out libraryNameTruncated);
+                    return new ManagedDashboardMapping
+                    {
+                        MappingUuid = mapping.MappingUuid,
+                        LibraryName = libraryName,
+                        LibraryNameTruncated = libraryNameTruncated,
+                        CollectionType = mapping.CollectionType,
+                        ActiveRevision = mapping.ActiveRevision,
+                        PreviousRevision = mapping.PreviousRevision,
+                        Success = mapping.Success,
+                        Duplicate = mapping.Duplicate,
+                        FileCount = mapping.FileCount,
+                        StrmFileCount = mapping.StrmFileCount,
+                        SeriesCount = mapping.SeriesCount,
+                        SeasonCount = mapping.SeasonCount,
+                        Added = mapping.Added,
+                        Changed = mapping.Changed,
+                        Removed = mapping.Removed,
+                        OmittedVersions = mapping.OmittedVersions,
+                        SourceGroups = StrmSyncService.NormalizeManagedSourceGroups(
+                        mapping.SourceGroups,
+                        out var sourceGroupsTruncated),
+                        SourceGroupsTruncated = mapping.SourceGroupsTruncated || sourceGroupsTruncated,
+                        Error = mapping.Error
+                    };
                 })
                 .ToList();
             var libraryStats = BuildManagedLibraryStats(mappings);
@@ -285,7 +299,6 @@ namespace Emby.M3uEditor.Plugin.Api
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
-                MappingsJson = System.Text.Json.JsonSerializer.Serialize(pageMappings),
                 Mappings = pageMappings,
                 TotalMappings = mappings.Count,
                 TotalFiles = mappings.Sum(mapping => mapping.FileCount),

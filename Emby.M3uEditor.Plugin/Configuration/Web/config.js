@@ -70,6 +70,12 @@ function (BaseView, loading) {
             managedPage++;
             loadDashboard(view);
         });
+        var managedViewButtons = view.querySelectorAll('.managedViewBtn');
+        for (var managedViewIndex = 0; managedViewIndex < managedViewButtons.length; managedViewIndex++) {
+            managedViewButtons[managedViewIndex].addEventListener('click', function () {
+                switchManagedView(view, this.getAttribute('data-managed-view'));
+            });
+        }
         view.querySelector('.btnOpenManagedPublishing').addEventListener('click', function () {
             switchTab(view, 'managedPublishing');
         });
@@ -110,6 +116,7 @@ function (BaseView, loading) {
         }
 
         switchTab(view, 'dashboard');
+        switchManagedView(view, 'overview');
     }
 
     Object.assign(View.prototype, BaseView.prototype);
@@ -491,7 +498,7 @@ function (BaseView, loading) {
 
     function loadDashboard(view) {
         var url = ApiClient.getUrl('M3uEditor/Dashboard') +
-            '?ManagedPage=' + encodeURIComponent(managedPage) + '&ManagedPageSize=10';
+            '?ManagedPage=' + encodeURIComponent(managedPage) + '&ManagedPageSize=100';
         ApiClient.getJSON(url).then(function (data) {
             loadDashboard._retries = 0;
             renderPluginVersion(view, data.PluginVersion);
@@ -523,8 +530,8 @@ function (BaseView, loading) {
             sessionStorage.setItem('m3u-editor-for-emby-cache-bust', '1');
             var appVersion = document.documentElement.getAttribute('data-appversion') || '';
             Promise.all([
-                fetch('configurationpage?name=m3ueditorconfigr2&v=' + appVersion, { cache: 'reload' }),
-                fetch('configurationpage?name=m3ueditorconfigjsr2&v=' + appVersion, { cache: 'reload' })
+                fetch('configurationpage?name=m3ueditorconfigr3&v=' + appVersion, { cache: 'reload' }),
+                fetch('configurationpage?name=m3ueditorconfigjsr3&v=' + appVersion, { cache: 'reload' })
             ]).then(function () { location.reload(); });
             return;
         }
@@ -538,6 +545,8 @@ function (BaseView, loading) {
         var statusElement = view.querySelector('.managedPublishingStatus');
         var detailsElement = view.querySelector('.managedPublishingDetails');
         var mappingsElement = view.querySelector('.managedPublishingMappings');
+        var movieMappingsElement = view.querySelector('.managedMovieMappings');
+        var seriesMappingsElement = view.querySelector('.managedSeriesMappings');
         var warningElement = view.querySelector('.managedPublishingWarning');
         var errorElement = view.querySelector('.managedPublishingError');
         var selectElement = view.querySelector('.managedRollbackMapping');
@@ -580,26 +589,27 @@ function (BaseView, loading) {
             '<div><strong>Last success:</strong> ' + escapeHtml(managed.LastSuccess ? new Date(managed.LastSuccess).toLocaleString() : 'Never') + '</div>';
 
         var mappings = managed.Mappings || [];
-        if (!managed.Mappings) {
-            try {
-                mappings = managed.MappingsJson ? JSON.parse(managed.MappingsJson) : [];
-            } catch (error) {
-                console.warn('M3uEditor: managed mapping state parse failed', error);
-            }
-        }
         if (mappings.length === 0) {
             mappingsElement.innerHTML = '<div style="opacity:0.55;">No managed library mappings advertised.</div>';
+            if (movieMappingsElement) {
+                movieMappingsElement.innerHTML = '<div style="opacity:0.55;">No managed movie mappings advertised.</div>';
+            }
+            if (seriesMappingsElement) {
+                seriesMappingsElement.innerHTML = '<div style="opacity:0.55;">No managed series mappings advertised.</div>';
+            }
             selectElement.innerHTML = '<option value="">No mapping available</option>';
         } else {
-            mappingsElement.innerHTML = mappings.map(function (mapping) {
-                var state = mapping.Success ? 'success' : 'failed';
-                var label = mapping.Success ? (mapping.Duplicate ? 'Already current' : 'Published') : 'Failed';
-                return '<div style="padding:0.45em 0; border-top:1px solid rgba(128,128,128,0.12);">' +
-                    '<span class="status-badge ' + state + '">' + label + '</span> ' +
-                    '<strong>' + escapeHtml(mapping.LibraryName || mapping.MappingUuid) + '</strong> ' +
-                    '<span style="opacity:0.6;">(' + escapeHtml(mapping.CollectionType || '') + ', revision ' +
-                    escapeHtml(mapping.ActiveRevision || 'none') + ', ' + escapeHtml(mapping.FileCount || 0) + ' files)</span></div>';
-            }).join('');
+            mappingsElement.innerHTML = renderManagedMappingList(mappings, 'No managed library mappings advertised.');
+            if (movieMappingsElement) {
+                movieMappingsElement.innerHTML = renderManagedMappingList(mappings.filter(function (mapping) {
+                    return mapping.CollectionType === 'movies';
+                }), 'No managed movie mappings advertised.');
+            }
+            if (seriesMappingsElement) {
+                seriesMappingsElement.innerHTML = renderManagedMappingList(mappings.filter(function (mapping) {
+                    return mapping.CollectionType === 'tvshows';
+                }), 'No managed series mappings advertised.');
+            }
             selectElement.innerHTML = mappings.map(function (mapping) {
                 return '<option value="' + escapeHtml(mapping.MappingUuid) + '">' +
                     escapeHtml(mapping.LibraryName || mapping.MappingUuid) + '</option>';
@@ -634,6 +644,49 @@ function (BaseView, loading) {
             if ((job.State === 'succeeded' || job.State === 'failed') && job.Result) {
                 setPillResult(resultElement, job.State === 'succeeded', job.Result.Message || 'Managed action finished.');
             }
+        }
+    }
+
+    function renderManagedMappingList(mappings, emptyMessage) {
+        if (!mappings || mappings.length === 0) {
+            return '<div style="opacity:0.55;">' + escapeHtml(emptyMessage) + '</div>';
+        }
+        return mappings.map(renderManagedMapping).join('');
+    }
+
+    function renderManagedMapping(mapping) {
+        var state = mapping.Success ? 'success' : 'failed';
+        var label = mapping.Success ? (mapping.Duplicate ? 'Already current' : 'Published') : 'Failed';
+        var groups = Array.isArray(mapping.SourceGroups) ? mapping.SourceGroups : [];
+        var source = groups.length > 0
+            ? groups.map(escapeHtml).join(', ') + (mapping.SourceGroupsTruncated ? ', more groups' : '')
+            : 'Available after next reconcile';
+        var counts = escapeHtml(mapping.StrmFileCount || 0) + ' STRM, ' +
+            escapeHtml(mapping.FileCount || 0) + ' managed files';
+        if (mapping.CollectionType === 'tvshows') {
+            counts += ', ' + escapeHtml(mapping.SeriesCount || 0) + ' series, ' +
+                escapeHtml(mapping.SeasonCount || 0) + ' seasons';
+        }
+        return '<div class="managedMappingRow">' +
+            '<span class="status-badge ' + state + '">' + label + '</span>' +
+            '<div class="managedMappingRoute"><strong>' + source + '</strong>' +
+            '<span aria-hidden="true">&#x2192;</span><strong>' +
+            escapeHtml(mapping.LibraryName || mapping.MappingUuid) +
+            (mapping.LibraryNameTruncated ? '...' : '') + '</strong></div>' +
+            '<div class="managedMappingCounts">' + counts + '</div></div>';
+    }
+
+    function switchManagedView(view, managedView) {
+        var selected = managedView || 'overview';
+        var buttons = view.querySelectorAll('.managedViewBtn');
+        var panels = view.querySelectorAll('.managedViewPanel');
+        for (var buttonIndex = 0; buttonIndex < buttons.length; buttonIndex++) {
+            var active = buttons[buttonIndex].getAttribute('data-managed-view') === selected;
+            buttons[buttonIndex].classList.toggle('active', active);
+            buttons[buttonIndex].setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+        for (var panelIndex = 0; panelIndex < panels.length; panelIndex++) {
+            panels[panelIndex].style.display = panels[panelIndex].getAttribute('data-managed-panel') === selected ? '' : 'none';
         }
     }
 

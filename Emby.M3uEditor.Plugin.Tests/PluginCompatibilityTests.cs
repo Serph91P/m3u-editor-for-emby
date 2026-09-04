@@ -49,7 +49,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             var mainPage = Assert.Single(pages.Where(page => page.EnableInMainMenu));
 
             Assert.Equal("Emby.Xtr" + "eam.Plugin.xml", plugin.ConfigurationFileName);
-            Assert.Equal("m3ueditorconfigr2", mainPage.Name);
+            Assert.Equal("m3ueditorconfigr3", mainPage.Name);
+            Assert.Contains("m3ueditorconfigjsr3", pageNames);
+            Assert.Contains("m3ueditorconfigr2", pageNames);
             Assert.Contains("m3ueditorconfigjsr2", pageNames);
             Assert.Contains("m3ueditorconfig", pageNames);
             Assert.Contains("m3ueditorconfigjs", pageNames);
@@ -57,13 +59,13 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("xtr" + "eamconfig", pageNames);
             Assert.Contains("xtr" + "eamconfigjs", pageNames);
             Assert.Contains("Xtr" + "eamTuner", pageNames);
-            Assert.Equal(8, pageNames.Length);
+            Assert.Equal(10, pageNames.Length);
 
             using (var stream = typeof(Plugin).Assembly.GetManifestResourceStream(
                 "Emby.M3uEditor.Plugin.Configuration.Web.config.html"))
             using (var reader = new StreamReader(stream))
             {
-                Assert.Contains("data-controller=\"__plugin/m3ueditorconfigjsr2\"", reader.ReadToEnd());
+                Assert.Contains("data-controller=\"__plugin/m3ueditorconfigjsr3\"", reader.ReadToEnd());
             }
         }
 
@@ -153,6 +155,15 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             Assert.Contains("managedPublishingCard", html);
             Assert.Contains("managedPublishingMappings", html);
+            Assert.Contains("data-managed-view=\"overview\"", html);
+            Assert.Contains("data-managed-view=\"movies\"", html);
+            Assert.Contains("data-managed-view=\"series\"", html);
+            Assert.Contains("aria-pressed=\"true\"", html);
+            Assert.Contains("aria-pressed=\"false\"", html);
+            Assert.DoesNotContain("role=\"tablist\"", html);
+            Assert.DoesNotContain("role=\"tab\"", html);
+            Assert.Contains("managedMovieMappings", html);
+            Assert.Contains("managedSeriesMappings", html);
             Assert.Contains("btnManagedReconcile", html);
             Assert.Contains("btnManagedRollback", html);
             Assert.Contains("btnManagedPreviousPage", html);
@@ -160,6 +171,14 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("M3uEditor/Managed/Reconcile", javascript);
             Assert.Contains("M3uEditor/Managed/Rollback", javascript);
             Assert.Contains("ManagedPage", javascript);
+            Assert.Contains("mapping.SourceGroups", javascript);
+            Assert.Contains("mapping.LibraryNameTruncated", javascript);
+            Assert.Contains("switchManagedView", javascript);
+            Assert.Contains("renderManagedMapping", javascript);
+            Assert.Contains("if (movieMappingsElement)", javascript);
+            Assert.Contains("if (seriesMappingsElement)", javascript);
+            Assert.Contains("setAttribute('aria-pressed'", javascript);
+            Assert.DoesNotContain("setAttribute('aria-selected'", javascript);
             Assert.Contains("managed.Job", javascript);
             Assert.Contains("Managed publishing status unavailable", javascript);
             Assert.Contains("confirm(", javascript);

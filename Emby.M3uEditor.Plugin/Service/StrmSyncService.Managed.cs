@@ -67,6 +67,8 @@ namespace Emby.M3uEditor.Plugin.Service
         public int Changed { get; set; }
         public int Removed { get; set; }
         public int OmittedVersions { get; set; }
+        public List<string> SourceGroups { get; set; } = new List<string>();
+        public bool SourceGroupsTruncated { get; set; }
         public string Error { get; set; }
     }
 
@@ -98,6 +100,10 @@ namespace Emby.M3uEditor.Plugin.Service
     {
         private const string ManagedMetadataDirectoryName = ".m3u-editor-for-emby";
         private const int MaximumVisibleVersions = 8;
+        internal const int MaximumManagedDashboardLabelCharacters = 128;
+        internal const int MaximumManagedSourceGroups = 16;
+        internal const int MaximumManagedSourceGroupCharacters = 128;
+        internal const int MaximumManagedSourceGroupCharactersTotal = 512;
         internal const int MaximumGeneratedFileBytes = 1024 * 1024;
         internal const long MaximumGeneratedBytes = 8L * 1024L * 1024L;
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> ManagedRootLocks =
@@ -107,6 +113,106 @@ namespace Emby.M3uEditor.Plugin.Service
         internal Action<string, string> ManagedFileMoveHook { get; set; }
         internal Func<PluginConfiguration> ManagedConfigurationProvider { get; set; }
         internal Func<string> ManagedOwnerPathProvider { get; set; }
+
+        internal static List<string> BuildManagedSourceGroups(
+            IEnumerable<M3uEditorCatalogItem> items,
+            out bool truncated)
+        {
+            return NormalizeManagedSourceGroups(
+                items == null
+                    ? Enumerable.Empty<string>()
+                    : items.Where(item => item != null && item.Groups != null)
+                        .SelectMany(item => item.Groups),
+                out truncated);
+        }
+
+        internal static List<string> NormalizeManagedSourceGroups(
+            IEnumerable<string> groups,
+            out bool truncated)
+        {
+            var sourceGroups = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            truncated = false;
+
+            if (groups == null)
+            {
+                return sourceGroups;
+            }
+
+            var totalCharacters = 0;
+            foreach (var group in groups)
+            {
+                if (string.IsNullOrWhiteSpace(group))
+                {
+                    continue;
+                }
+
+                bool labelTruncated;
+                var label = NormalizeManagedDashboardLabel(group, out labelTruncated);
+                if (labelTruncated)
+                {
+                    truncated = true;
+                }
+
+                if (!seen.Add(label))
+                {
+                    continue;
+                }
+
+                if (sourceGroups.Count >= MaximumManagedSourceGroups ||
+                    totalCharacters >= MaximumManagedSourceGroupCharactersTotal)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                var remainingCharacters = MaximumManagedSourceGroupCharactersTotal - totalCharacters;
+                var boundedLabel = TruncateManagedSourceGroup(label, remainingCharacters);
+                if (boundedLabel.Length != label.Length)
+                {
+                    truncated = true;
+                }
+
+                if (boundedLabel.Length == 0)
+                {
+                    truncated = true;
+                    continue;
+                }
+
+                sourceGroups.Add(boundedLabel);
+                totalCharacters += boundedLabel.Length;
+            }
+
+            return sourceGroups;
+        }
+
+        internal static string NormalizeManagedDashboardLabel(string value, out bool truncated)
+        {
+            var normalized = (value ?? string.Empty).Trim();
+            var bounded = TruncateManagedSourceGroup(
+                normalized,
+                MaximumManagedDashboardLabelCharacters);
+            truncated = bounded.Length != normalized.Length;
+            return bounded;
+        }
+
+        private static string TruncateManagedSourceGroup(string value, int maximumLength)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= maximumLength)
+            {
+                return value;
+            }
+
+            var length = maximumLength;
+            if (length > 0 && length < value.Length &&
+                char.IsHighSurrogate(value[length - 1]) && char.IsLowSurrogate(value[length]))
+            {
+                length--;
+            }
+
+            return value.Substring(0, length);
+        }
+
         internal async Task<ManagedReconcileResult> ReconcileManagedAsync(
             PluginConfiguration config,
             Action saveConfig,
@@ -312,6 +418,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     result.AddedFiles += published.Added;
                     result.ChangedFiles += published.Changed;
                     result.RemovedFiles += published.Removed;
+                    bool sourceGroupsTruncated;
+                    var sourceGroups = BuildManagedSourceGroups(mapping.Items, out sourceGroupsTruncated);
                     states.Add(new ManagedMappingState
                     {
                         MappingUuid = mapping.MappingUuid,
@@ -337,6 +445,8 @@ namespace Emby.M3uEditor.Plugin.Service
                         Changed = published.Changed,
                         Removed = published.Removed,
                         OmittedVersions = published.OmittedVersions,
+                        SourceGroups = sourceGroups,
+                        SourceGroupsTruncated = sourceGroupsTruncated,
                         Error = published.Error
                     });
                     progress?.Report(10 + (catalog.Mappings.Count == 0
