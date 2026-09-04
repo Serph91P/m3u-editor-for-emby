@@ -202,12 +202,6 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         published = Failed(mapping.Revision, approvalError);
                     }
-                    else if (OverlapsEnabledLegacyRoot(config, mapping))
-                    {
-                        published = Failed(
-                            mapping.Revision,
-                            "Managed output overlaps an enabled legacy sync root. Disable the legacy writer first.");
-                    }
                     else
                     {
                         published = await PublishManagedMappingAsync(
@@ -522,14 +516,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
-            if ((config.SyncMovies || config.SyncSeries) &&
-                ManagedOutputPolicy.PathsOverlap(root, config.StrmLibraryPath))
-            {
-                root = null;
-                error = "The managed output root overlaps an enabled legacy writer.";
-                return false;
-            }
-
             if (!config.ManagedSetupReady)
             {
                 config.ManagedSetupReady = true;
@@ -615,83 +601,6 @@ namespace Emby.M3uEditor.Plugin.Service
             config.ManagedLastError = error;
             saveConfig?.Invoke();
             return result;
-        }
-
-        private static bool OverlapsEnabledLegacyRoot(
-            PluginConfiguration config,
-            M3uEditorMapping mapping)
-        {
-            var legacyEnabled = string.Equals(mapping.TargetLibrary.CollectionType, "movies", StringComparison.Ordinal)
-                ? config.SyncMovies
-                : config.SyncSeries;
-            if (!legacyEnabled || string.IsNullOrWhiteSpace(config.StrmLibraryPath))
-            {
-                return false;
-            }
-
-            var legacyRoot = Path.GetFullPath(config.StrmLibraryPath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var managedRoot = Path.GetFullPath(mapping.TargetLibrary.OutputPath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return IsSameOrChildPath(legacyRoot, managedRoot) || IsSameOrChildPath(managedRoot, legacyRoot);
-        }
-
-        private static bool IsSameOrChildPath(string parent, string candidate)
-        {
-            return string.Equals(parent, candidate, StringComparison.OrdinalIgnoreCase) ||
-                   candidate.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-        }
-
-        internal static bool HasManagedOwnershipConflict(PluginConfiguration config, string collectionType)
-        {
-            if (config == null || string.IsNullOrWhiteSpace(config.StrmLibraryPath))
-            {
-                return false;
-            }
-
-            var legacyRoot = Path.GetFullPath(config.StrmLibraryPath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (Directory.Exists(Path.Combine(legacyRoot, ManagedMetadataDirectoryName)))
-            {
-                return true;
-            }
-
-            if (string.IsNullOrWhiteSpace(config.ManagedMappingsJson))
-            {
-                return false;
-            }
-
-            List<ManagedMappingState> mappings;
-            try
-            {
-                mappings = JsonSerializer.Deserialize<List<ManagedMappingState>>(config.ManagedMappingsJson, JsonOptions);
-            }
-            catch (JsonException)
-            {
-                return true;
-            }
-
-            foreach (var mapping in mappings ?? new List<ManagedMappingState>())
-            {
-                if (!string.Equals(mapping.CollectionType, collectionType, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (string.IsNullOrWhiteSpace(mapping.OutputPath))
-                {
-                    return true;
-                }
-
-                var managedRoot = Path.GetFullPath(mapping.OutputPath)
-                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                if (IsSameOrChildPath(legacyRoot, managedRoot) || IsSameOrChildPath(managedRoot, legacyRoot))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         private void RemoveOnlyManagedGeneration(

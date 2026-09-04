@@ -470,29 +470,6 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void Setup_EnabledLegacyWriterOverlap_LeavesConfigurationUnchanged()
-        {
-            var originalRoot = Path.Join(_owner.Path, "old-root");
-            var config = new PluginConfiguration
-            {
-                ManagedPublishingIntegrationId = 9,
-                ManagedApprovedOutputRoots = originalRoot,
-                ManagedMappingsJson = "existing mappings",
-                SyncMovies = true,
-                StrmLibraryPath = _owner.Path
-            };
-
-            var result = new ManagedSetupService(_owner.Path).Put(config, 9, () => { });
-
-            Assert.False(result.Ready);
-            Assert.Contains("legacy", result.Result, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(9, config.ManagedPublishingIntegrationId);
-            Assert.Equal(originalRoot, config.ManagedApprovedOutputRoots);
-            Assert.Equal("existing mappings", config.ManagedMappingsJson);
-            Assert.False(config.ManagedSetupReady);
-        }
-
-        [Fact]
         public void Setup_OverlappingExistingApproval_LeavesConfigurationUnchanged()
         {
             var config = new PluginConfiguration

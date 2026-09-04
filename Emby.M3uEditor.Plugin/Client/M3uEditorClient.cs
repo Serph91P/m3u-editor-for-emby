@@ -51,6 +51,71 @@ namespace Emby.M3uEditor.Plugin.Client
             string password,
             CancellationToken cancellationToken)
         {
+            var body = await GetPanelResponseAsync(baseUrl, username, password, cancellationToken)
+                .ConfigureAwait(false);
+            if (body == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                using (var document = JsonDocument.Parse(body))
+                {
+                    M3uEditorPublishingCapability capability;
+                    return M3uEditorPublishingCapabilityParser.TryGetPublishingCapability(document.RootElement, out capability)
+                        ? capability
+                        : null;
+                }
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        public async Task<bool> TestConnectionAsync(
+            string baseUrl,
+            string username,
+            string password,
+            CancellationToken cancellationToken)
+        {
+            var body = await GetPanelResponseAsync(baseUrl, username, password, cancellationToken)
+                .ConfigureAwait(false);
+            if (body == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                using (var document = JsonDocument.Parse(body))
+                {
+                    JsonElement userInfo;
+                    JsonElement auth;
+                    if (!document.RootElement.TryGetProperty("user_info", out userInfo) ||
+                        userInfo.ValueKind != JsonValueKind.Object ||
+                        !userInfo.TryGetProperty("auth", out auth))
+                    {
+                        return false;
+                    }
+
+                    return (auth.ValueKind == JsonValueKind.Number && auth.TryGetInt32(out var value) && value == 1) ||
+                        (auth.ValueKind == JsonValueKind.String && string.Equals(auth.GetString(), "1", StringComparison.Ordinal));
+                }
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        private async Task<string> GetPanelResponseAsync(
+            string baseUrl,
+            string username,
+            string password,
+            CancellationToken cancellationToken)
+        {
             var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
             var requestUrl = BuildBaseUrl(endpoint.RequestBaseUrl, username, password);
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
@@ -77,21 +142,7 @@ namespace Emby.M3uEditor.Plugin.Client
                             }
 
                             EnsureConfinedResponse(response, requestUrl);
-                            var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
-                            try
-                            {
-                                using (var document = JsonDocument.Parse(body))
-                                {
-                                    M3uEditorPublishingCapability capability;
-                                    return BackendDetector.TryGetPublishingCapability(document.RootElement, out capability)
-                                        ? capability
-                                        : null;
-                                }
-                            }
-                            catch (JsonException)
-                            {
-                                return null;
-                            }
+                            return await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
                         }
                     }
                     catch (HttpRequestException) when (attempt == 0)
@@ -99,7 +150,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     }
                     catch (HttpRequestException)
                     {
-                        throw new InvalidOperationException("Managed capability request failed.");
+                        throw new InvalidOperationException("m3u-editor connection request failed.");
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -107,7 +158,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     }
                     catch (TaskCanceledException)
                     {
-                        throw new InvalidOperationException("Managed capability request timed out.");
+                        throw new InvalidOperationException("m3u-editor connection request timed out.");
                     }
                 }
             }

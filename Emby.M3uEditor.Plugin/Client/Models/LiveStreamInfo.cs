@@ -70,10 +70,8 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonConverter(typeof(IntAsBoolConverter))]
         public bool IsAdult { get; set; }
 
-        // Optional: some Xtream-compatible backends (notably m3u-editor) attach
-        // a probe-data block to each channel. When present, this lets Emby skip
-        // the FFprobe pass on stream start, identical to the Dispatcharr+Streamflow
-        // path. Field is null when the backend does not supply it.
+        // m3u-editor optionally attaches probe data to each channel so Emby can
+        // start playback without probing. This is null when stats are unavailable.
         [JsonPropertyName("stream_stats")]
         public StreamStatsInfo StreamStats { get; set; }
 

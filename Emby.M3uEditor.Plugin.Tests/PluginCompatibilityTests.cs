@@ -27,15 +27,6 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void NewConfiguration_UsesRebrandedOutputPathWithoutChangingPersistedProperty()
-        {
-            var configuration = new PluginConfiguration();
-
-            Assert.Equal("/config/m3u-editor-for-emby", configuration.StrmLibraryPath);
-            Assert.NotNull(typeof(PluginConfiguration).GetProperty("StrmLibraryPath"));
-        }
-
-        [Fact]
         public void ServiceExports_UseNewTunerIdentity()
         {
             Assert.True(typeof(LiveTvService).IsPublic);
@@ -66,7 +57,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void Dashboard_UsesNewBrandingAndRetainsGenericXtreamCopy()
+        public void Dashboard_UsesNewBrandingAndM3uEditorCopy()
         {
             using (var stream = typeof(Plugin).Assembly.GetManifestResourceStream(
                 "Emby.M3uEditor.Plugin.Configuration.Web.config.html"))
@@ -75,7 +66,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var html = reader.ReadToEnd();
 
                 Assert.Contains("data-title=\"m3u-editor for Emby\"", html);
-                Assert.Contains("Xtream-compatible", html);
+                Assert.Contains("m3u-editor", html);
             }
         }
 
@@ -90,27 +81,29 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             Assert.Contains("/M3uEditor/Epg", routeTypes);
             Assert.Contains("/M3uEditor/LiveTv", routeTypes);
-            Assert.Contains("/M3uEditor/Sync/Movies", routeTypes);
-            Assert.Contains("/M3uEditor/Sync/Series", routeTypes);
             Assert.Contains("/M3uEditor/Dashboard", routeTypes);
-            Assert.Contains("/M3uEditor/ValidateStrmPath", routeTypes);
             Assert.Contains("/M3uEditor/Managed/Reconcile", routeTypes);
             Assert.Contains("/M3uEditor/Managed/Rollback", routeTypes);
 
-            var moviesTask = (SyncMoviesTask)RuntimeHelpers.GetUninitializedObject(typeof(SyncMoviesTask));
-            var seriesTask = (SyncSeriesTask)RuntimeHelpers.GetUninitializedObject(typeof(SyncSeriesTask));
             var managedTask = (ManagedCatalogTask)RuntimeHelpers.GetUninitializedObject(typeof(ManagedCatalogTask));
-            Assert.Equal("M3uEditorSyncMovies", moviesTask.Key);
-            Assert.Equal("M3uEditorSyncSeries", seriesTask.Key);
             Assert.Equal("M3uEditorManagedReconcile", managedTask.Key);
         }
 
         [Fact]
-        public void ManagedDashboardAndActions_RequireExactAdminRole()
+        public void AdministrativeRoutes_RequireExactAdminRole()
         {
+            Assert.Equal("Admin", GetAuthenticationRoles<GetLiveCategories>());
+            Assert.Equal("Admin", GetAuthenticationRoles<RefreshCache>());
+            Assert.Equal("Admin", GetAuthenticationRoles<RefreshChannelIcons>());
             Assert.Equal("Admin", GetAuthenticationRoles<GetDashboard>());
             Assert.Equal("Admin", GetAuthenticationRoles<ReconcileManagedCatalog>());
             Assert.Equal("Admin", GetAuthenticationRoles<RollbackManagedCatalog>());
+            Assert.Equal("Admin", GetAuthenticationRoles<TestXtreamConnection>());
+            Assert.Equal("Admin", GetAuthenticationRoles<CheckProbeDataCoverage>());
+            Assert.Equal("Admin", GetAuthenticationRoles<CheckForUpdate>());
+            Assert.Equal("Admin", GetAuthenticationRoles<GetSanitizedLogs>());
+            Assert.Equal("Admin", GetAuthenticationRoles<InstallUpdate>());
+            Assert.Equal("Admin", GetAuthenticationRoles<RestartEmby>());
             Assert.Empty(typeof(GetM3UPlaylist).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
 
             Assert.Equal(
@@ -201,7 +194,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.DoesNotContain("config.ManagedApprovedOutputRoots =", javascript);
             Assert.Contains("switchTab(view, 'managedPublishing')", javascript);
             Assert.Contains("view.querySelector('.managedPublishingSummaryStatus')", javascript);
-            Assert.Contains("if (reconcileEl) reconcileEl.disabled = true;", javascript);
+            Assert.Contains("reconcileButton.disabled = jobRunning || !available;", javascript);
         }
     }
 }

@@ -49,32 +49,21 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ConfigurationSerializationContract_IsPreserved()
+        public void ActiveConfigurationSerializationContract_IsManagedAndLiveTvOnly()
         {
             var expected = new[]
             {
-                "AutoSyncDailyTime", "AutoSyncEnabled", "AutoSyncIntervalHours", "AutoSyncMode",
-                "BaseUrl", "CachedDispatcharrProfiles", "CachedLiveCategories", "CachedSeriesCategories",
-                "CachedVodCategories", "ChannelRemoveTerms", "CleanupOrphans", "ContentRemoveTerms",
-                "CustomEpgUrl", "DeferEpgToGuideData", "DetectedBackendName", "DetectedBackendType",
-                "DispatcharrFallbackToXtream", "DispatcharrPass", "DispatcharrUrl", "DispatcharrUser",
-                "EnableChannelNameCleaning", "EnableContentNameCleaning", "EnableDiagnosticsLogging",
-                "EnableDispatcharr", "EnableEpg", "EnableLiveTv", "EnableLiveTvDiagnostics",
-                "EnableNfoFiles", "EnableSeriesIdFolderNaming", "EnableSeriesMetadataLookup",
-                "EnableTmdbFallbackLookup", "EnableTmdbFolderNaming", "EpgCacheMinutes", "EpgDaysToFetch",
-                "EpgSource", "ForceAudioTranscode", "HttpUserAgent", "IncludeAdultChannels",
-                "LastBackendDetectionTicks", "LastChannelListHash", "LastInstalledVersion",
-                "LastMovieSyncTimestamp", "LastSeriesSyncTimestamp", "LiveTvOutputFormat", "M3UCacheMinutes",
+                "BaseUrl", "CachedLiveCategories", "ChannelRemoveTerms", "CustomEpgUrl",
+                "EnableChannelNameCleaning", "EnableDiagnosticsLogging", "EnableEpg", "EnableLiveTv",
+                "EnableLiveTvDiagnostics", "EpgCacheMinutes", "EpgDaysToFetch", "EpgSource",
+                "HttpUserAgent", "IncludeAdultChannels", "LastChannelListHash", "LastInstalledVersion",
+                "LiveTvOutputFormat", "M3UCacheMinutes",
                 "ManagedActiveGeneration", "ManagedApprovedOutputRoots", "ManagedCatalogRevision",
                 "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
                 "ManagedOmittedVersions", "ManagedPreviousGeneration", "ManagedPublishingApiVersion",
                 "ManagedPublishingEnabled", "ManagedPublishingIntegrationId", "ManagedSetupLastResult",
-                "ManagedSetupReady", "MovieFolderMappings", "MovieFolderMode", "OrphanSafetyThreshold",
-                "Password", "SelectedDispatcharrProfileIds", "SelectedLiveCategoryIds",
-                "SelectedSeriesCategoryIds", "SelectedVodCategoryIds", "SeriesEpisodeHashesJson",
-                "SeriesFolderMappings", "SeriesFolderMode", "SmartSkipExisting", "StrmLibraryPath",
-                "StrmNamingVersion", "SyncHistoryJson", "SyncMovies", "SyncParallelism", "SyncSeries",
-                "TvdbFolderIdOverrides", "UseBetaChannel", "UseM3uLogoForAllChannelImages", "Username",
+                "ManagedSetupReady", "Password", "SelectedLiveCategoryIds", "UseBetaChannel",
+                "UseM3uLogoForAllChannelImages", "Username",
             };
 
             var actual = typeof(PluginConfiguration)
@@ -109,6 +98,10 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             foreach (var relativePath in GetTrackedFiles())
             {
+                if (!File.Exists(Path.Combine(RepositoryRoot, relativePath)))
+                {
+                    continue;
+                }
                 Assert.DoesNotMatch(forbidden, relativePath);
                 var bytes = File.ReadAllBytes(Path.Combine(RepositoryRoot, relativePath));
                 var content = Encoding.Latin1.GetString(bytes);

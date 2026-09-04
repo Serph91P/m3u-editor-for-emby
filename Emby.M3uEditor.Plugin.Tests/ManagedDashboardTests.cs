@@ -46,7 +46,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void DashboardResponse_RetainedLegacyMapping_DoesNotExposeOutputPath()
+        public void DashboardResponse_RetainedManagedMapping_DoesNotExposeOutputPath()
         {
             var legacyPath = Path.Join(
                 Path.GetTempPath(),
@@ -80,7 +80,6 @@ namespace Emby.M3uEditor.Plugin.Tests
             };
             var response = new DashboardResult
             {
-                History = new List<SyncHistoryEntry>(),
                 LibraryStats = new LibraryStats(),
                 ManagedPublishing = M3uEditorApi.BuildManagedDashboardStatus(
                     config,

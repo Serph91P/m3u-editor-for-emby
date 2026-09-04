@@ -41,7 +41,7 @@ namespace Emby.M3uEditor.Plugin
         public override string Name => "m3u-editor for Emby";
 
         public override string Description =>
-            "Live TV, EPG, VOD, and managed library publishing for Xtream-compatible backends.";
+            "Managed movie and series publishing with direct m3u-editor Live TV and EPG.";
 
         public override Guid Id => Guid.Parse("b7e3c4a1-9f2d-4e8b-a5c6-d1f0e2b3c4a5");
 

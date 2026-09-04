@@ -57,8 +57,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void Deserialize_AudioChannelsAsNumber_StillBindsToString()
         {
-            // Dispatcharr/Streamflow sends audio_channels as a number rather
-            // than a string; the converter on StreamStatsInfo must accept both.
+            // m3u-editor may send audio_channels as a number rather than a
+            // string; the converter on StreamStatsInfo must accept both.
             var json = "[{\"num\":1,\"name\":\"X\",\"stream_id\":1," +
                        "\"stream_stats\":{\"audio_channels\":6}}]";
 

@@ -32,21 +32,27 @@ namespace Emby.M3uEditor.Plugin.Service
             @"([?&]api_key=)[^&\s]+",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        private static readonly Regex BearerTokenRegex = new Regex(
-            "(Authorization\\s*:\\s*Bearer\\s+)([^\\s,;\"']+)",
+        private static readonly Regex GenericSecretFieldRegex = new Regex(
+            @"(\b(?:password|passwd|token|api[_-]?key|secret)\b\s*[:=]\s*)(?:""[^""]*""|'[^']*'|[^\s,;]+)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static readonly Regex AuthorizationHeaderRegex = new Regex(
+            "(Authorization\\s*:\\s*(?:Bearer|Basic)\\s+)([^\\s,;\"']+)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static readonly Regex CookieHeaderRegex = new Regex(
+            @"((?:Set-)?Cookie\s*:\s*)[^\r\n]+",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex JsonTokenFieldRegex = new Regex(
-            "(\"(?:access|refresh|token)\"\\s*:\\s*\")(.*?)(\")",
+            "(\"(?:access|refresh|token|password|passwd|api[_-]?key|secret)\"\\s*:\\s*\")(.*?)(\")",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
         /// Sanitizes a single log line by redacting PII: known credentials, IP addresses,
         /// Xtream URL credentials, emails, and provider hostnames.
         /// </summary>
-        public static string SanitizeLine(string line,
-            string username, string password,
-            string dispatcharrUser, string dispatcharrPass)
+        public static string SanitizeLine(string line, string username, string password)
         {
             if (string.IsNullOrEmpty(line)) return line;
 
@@ -57,11 +63,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 s = s.Replace(username, "<redacted>");
             if (!string.IsNullOrEmpty(password))
                 s = s.Replace(password, "<redacted>");
-            if (!string.IsNullOrEmpty(dispatcharrUser))
-                s = s.Replace(dispatcharrUser, "<redacted>");
-            if (!string.IsNullOrEmpty(dispatcharrPass))
-                s = s.Replace(dispatcharrPass, "<redacted>");
-
             // Redact IP addresses, but preserve version numbers (e.g. Version=1.2.0.0)
             // Replace version patterns with placeholders first, then redact IPs, then restore
             var versionMatches = VersionContextRegex.Matches(s);
@@ -88,8 +89,11 @@ namespace Emby.M3uEditor.Plugin.Service
             s = QueryCredentialRegex.Replace(s, "$1<redacted>");
             s = QueryApiKeyRegex.Replace(s, "$1<redacted>");
 
-            // Redact common token formats from headers and JSON payload snippets.
-            s = BearerTokenRegex.Replace(s, "$1<redacted>");
+            // Redact generic historical key/value formats, authorization headers,
+            // cookies, and JSON payload snippets even after retired config fields are gone.
+            s = GenericSecretFieldRegex.Replace(s, "$1<redacted>");
+            s = AuthorizationHeaderRegex.Replace(s, "$1<redacted>");
+            s = CookieHeaderRegex.Replace(s, "$1<redacted>");
             s = JsonTokenFieldRegex.Replace(s, "$1<redacted>$3");
 
             // Redact email patterns

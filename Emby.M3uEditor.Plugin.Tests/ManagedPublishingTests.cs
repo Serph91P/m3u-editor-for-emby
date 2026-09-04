@@ -483,6 +483,33 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task ReconcileManagedAsync_PreSetupManagedState_MigratesWithoutLegacyWriterSettings()
+        {
+            Handler.RespondWith("player_api.php?username=", CapabilityJson);
+            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
+            Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
+            {
+                ApiVersion = 1,
+                FullSnapshot = true,
+                Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Mappings = new List<M3uEditorMapping>()
+            }));
+            var config = DefaultConfig();
+            config.ManagedSetupReady = false;
+            config.ManagedSetupLastResult = string.Empty;
+
+            var result = await ReconcileWithRefresh(MakeService(), config, null);
+
+            Assert.True(result.Success, result.Error);
+            Assert.True(config.ManagedSetupReady);
+            Assert.Equal("Migrated legacy managed setup", config.ManagedSetupLastResult);
+            Assert.True(config.ManagedPublishingEnabled);
+            Assert.Equal(1, SaveConfigCallCount);
+            Assert.Null(typeof(PluginConfiguration).GetProperty("SyncMovies"));
+            Assert.Null(typeof(PluginConfiguration).GetProperty("SyncSeries"));
+        }
+
+        [Fact]
         public async Task ReconcileManagedAsync_ExplicitStaleSetup_FailsBeforeRegistrationAndPreservesMappings()
         {
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
@@ -585,7 +612,6 @@ namespace Emby.M3uEditor.Plugin.Tests
             Handler.RespondWith("player_api.php?username=", CapabilityJson);
             var config = DefaultConfig();
             config.ManagedPublishingIntegrationId = integrationId;
-            config.SyncMovies = true;
             var service = MakeService();
 
             var result = await ReconcileWithRefresh(service, config, null);
@@ -593,7 +619,6 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(result.Compatible);
             Assert.False(result.Success);
             Assert.False(config.ManagedPublishingEnabled);
-            Assert.True(config.SyncMovies);
             Assert.Contains("integration ID", result.Error);
             Assert.Single(Handler.ReceivedUrls);
         }
@@ -864,34 +889,6 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public async Task ReconcileManagedAsync_EnabledLegacyWriterOnSameRoot_FailsBeforeWriting()
-        {
-            var mapping = MovieMapping(1);
-            Handler.RespondWith("player_api.php?username=", CapabilityJson);
-            Handler.RespondWith("action=m3u_editor_register_publisher", "{}");
-            Handler.RespondWith("action=m3u_editor_catalog", JsonSerializer.Serialize(new M3uEditorCatalog
-            {
-                ApiVersion = 1,
-                FullSnapshot = true,
-                Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                Mappings = new List<M3uEditorMapping> { mapping }
-            }));
-            Handler.RespondWith("action=m3u_editor_sync_result", "{\"error\":\"sync_failed\"}", HttpStatusCode.UnprocessableEntity);
-            var config = DefaultConfig();
-            config.SyncMovies = true;
-            var refreshCount = 0;
-
-            var result = await ReconcileWithRefresh(MakeService(), config, () => refreshCount++);
-
-            Assert.False(result.Success);
-            Assert.Contains("legacy", result.Error, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(0, refreshCount);
-            Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
-            Assert.Single(Handler.ReceivedUrls);
-            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("register_publisher"));
-        }
-
-        [Fact]
         public async Task ReconcileManagedAsync_DuplicateOnly_DoesNotRefresh()
         {
             var service = MakeService();
@@ -1051,24 +1048,6 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.False(config.ManagedPublishingEnabled);
                 Assert.Equal(0, SaveConfigCallCount);
             }
-        }
-
-        [Fact]
-        public void HasManagedOwnershipConflict_OverlappingPersistedMapping_BlocksLegacyWriter()
-        {
-            var config = DefaultConfig();
-            config.ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
-            {
-                new ManagedMappingState
-                {
-                    MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
-                    CollectionType = "movies",
-                    OutputPath = Path.Combine(TempDir.Path, "Movies")
-                }
-            });
-
-            Assert.True(StrmSyncService.HasManagedOwnershipConflict(config, "movies"));
-            Assert.False(StrmSyncService.HasManagedOwnershipConflict(config, "tvshows"));
         }
 
         [Fact]

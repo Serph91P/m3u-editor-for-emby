@@ -44,7 +44,7 @@ namespace Emby.M3uEditor.Plugin.Service
         // Open() is a no-op: Emby calls it to register the tuner host lifecycle
         // (RequiresOpening/RequiresClosing), but for browser HLS playback ffmpeg
         // opens its own connection directly. Connecting here would create a second
-        // idle connection in Dispatcharr. The actual HTTP connection is deferred to
+        // idle upstream connection. The actual HTTP connection is deferred to
         // the first CopyToAsync() call via ConnectAsync().
         public Task Open(CancellationToken openCancellationToken)
         {
