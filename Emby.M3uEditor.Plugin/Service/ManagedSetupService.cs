@@ -45,8 +45,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 _ownerPath,
                 candidate,
                 config.ManagedApprovedOutputRoots,
-                null,
-                false,
                 out root,
                 out validationError))
             {
@@ -90,8 +88,6 @@ namespace Emby.M3uEditor.Plugin.Service
                     _ownerPath,
                     candidate,
                     config.ManagedApprovedOutputRoots,
-                    config.StrmLibraryPath,
-                    config.SyncMovies || config.SyncSeries,
                     out root,
                     out validationError))
                 {
@@ -129,7 +125,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 if (config.ManagedSetupReady &&
                     config.ManagedPublishingIntegrationId == integrationId &&
                     string.Equals(config.ManagedApprovedOutputRoots, approvedRoots, PathComparison) &&
-                    config.ManagedPublishingApiVersion == ApiVersion)
+                    config.ManagedPublishingApiVersion == ApiVersion &&
+                    string.IsNullOrEmpty(config.ManagedLastError))
                 {
                     return Ready(integrationId, root);
                 }
@@ -139,11 +136,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 var oldReady = config.ManagedSetupReady;
                 var oldLastResult = config.ManagedSetupLastResult;
                 var oldApiVersion = config.ManagedPublishingApiVersion;
+                var oldLastError = config.ManagedLastError;
                 config.ManagedPublishingIntegrationId = integrationId;
                 config.ManagedApprovedOutputRoots = approvedRoots;
                 config.ManagedSetupReady = true;
                 config.ManagedSetupLastResult = "Ready";
                 config.ManagedPublishingApiVersion = ApiVersion;
+                config.ManagedLastError = string.Empty;
                 var persisted = false;
                 try
                 {
@@ -163,6 +162,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         config.ManagedSetupReady = oldReady;
                         config.ManagedSetupLastResult = oldLastResult;
                         config.ManagedPublishingApiVersion = oldApiVersion;
+                        config.ManagedLastError = oldLastError;
                     }
                 }
 
@@ -184,8 +184,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 ownerPath,
                 candidate,
                 string.Empty,
-                null,
-                false,
                 out root,
                 out error);
         }

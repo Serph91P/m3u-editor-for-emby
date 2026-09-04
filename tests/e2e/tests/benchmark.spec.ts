@@ -33,8 +33,8 @@ const CHANNELS_GRID = '.card, [data-type="Channel"], .channelCard, .gridItem';
 
 /**
  * Mandatory gap between stopping one stream and starting the next.
- * Gives Dispatcharr (and the upstream IPTV source) time to fully tear down the
- * previous connection before a new play request arrives.  Without this, the
+ * Gives the upstream IPTV source time to fully tear down the previous
+ * connection before a new play request arrives. Without this, the
  * next channel hits the source while the previous one is still closing, which
  * causes "No compatible streams" errors and inflated stream-start times.
  */
@@ -168,8 +168,8 @@ async function returnToChannels(page: Page): Promise<void> {
   await page.waitForTimeout(300);
 
   // Wait for the previous stream to fully tear down before the next measurement.
-  // This prevents back-to-back connections from colliding in Dispatcharr / the
-  // upstream IPTV source, which would cause playback errors or skewed timings.
+  // This prevents back-to-back upstream connections from colliding, which
+  // would cause playback errors or skewed timings.
   console.log(`  [gap] waiting ${BETWEEN_STREAMS_MS / 1000}s for stream teardown…`);
   await page.waitForTimeout(BETWEEN_STREAMS_MS);
 }
@@ -249,7 +249,7 @@ async function measureChannel(page: Page, channel: string): Promise<TimingPair> 
   }
 
   // Close the server-side live stream regardless of success or failure.
-  // This prevents Dispatcharr connection slots from being consumed by phantom clients.
+  // This prevents upstream connection slots from being consumed by phantom clients.
   await closeActiveStream(page, lastSession);
   lastSession = emptySession();
 

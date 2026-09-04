@@ -13,61 +13,31 @@ using Emby.M3uEditor.Plugin.Util;
 using MediaBrowser.Controller.Api;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
-using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Services;
 
 namespace Emby.M3uEditor.Plugin.Api
 {
     [Route("/M3uEditor/Epg", "GET", Summary = "Gets XMLTV EPG data for Live TV channels")]
-    public class GetEpgXml : IReturnVoid
-    {
-    }
+    public class GetEpgXml : IReturnVoid { }
 
     [Route("/M3uEditor/LiveTv", "GET", Summary = "Gets M3U playlist for Live TV channels")]
-    public class GetM3UPlaylist : IReturnVoid
-    {
-    }
+    public class GetM3UPlaylist : IReturnVoid { }
 
-    [Route("/M3uEditor/Categories/Live", "GET", Summary = "Gets Live TV categories from Xtream API")]
-    public class GetLiveCategories : IReturn<List<Category>>
-    {
-    }
+    [Route("/M3uEditor/Categories/Live", "GET", Summary = "Gets Live TV categories from m3u-editor")]
+    [Authenticated(Roles = "Admin")]
+    public class GetLiveCategories : IReturn<List<Category>> { }
 
     [Route("/M3uEditor/RefreshCache", "POST", Summary = "Invalidates M3U and EPG caches")]
-    public class RefreshCache : IReturnVoid
-    {
-    }
-
-    [Route("/M3uEditor/RefreshChannelIcons", "POST", Summary = "Reloads backend channel icon metadata without deleting existing Emby artwork")]
-    public class RefreshChannelIcons : IReturn<RefreshChannelIconsResult>
-    {
-    }
-
-    [Route("/M3uEditor/Categories/Vod", "GET", Summary = "Gets VOD movie categories from Xtream API")]
-    public class GetVodCategories : IReturn<List<Category>>
-    {
-    }
-
-    [Route("/M3uEditor/Categories/Series", "GET", Summary = "Gets Series categories from Xtream API")]
-    public class GetSeriesCategories : IReturn<List<Category>>
-    {
-    }
-
-    [Route("/M3uEditor/Sync/Movies", "POST", Summary = "Triggers VOD movie STRM sync")]
-    public class SyncMovies : IReturn<SyncResult>
-    {
-    }
-
-    [Route("/M3uEditor/Sync/Series", "POST", Summary = "Triggers series STRM sync")]
-    public class SyncSeries : IReturn<SyncResult>
-    {
-    }
-
-    [Route("/M3uEditor/Managed/Reconcile", "POST", Summary = "Reconciles a compatible m3u-editor managed publishing catalog")]
     [Authenticated(Roles = "Admin")]
-    public class ReconcileManagedCatalog : IReturn<ManagedActionResult>
-    {
-    }
+    public class RefreshCache : IReturnVoid { }
+
+    [Route("/M3uEditor/RefreshChannelIcons", "POST", Summary = "Reloads m3u-editor channel icon metadata")]
+    [Authenticated(Roles = "Admin")]
+    public class RefreshChannelIcons : IReturn<RefreshChannelIconsResult> { }
+
+    [Route("/M3uEditor/Managed/Reconcile", "POST", Summary = "Reconciles the m3u-editor managed publishing catalog")]
+    [Authenticated(Roles = "Admin")]
+    public class ReconcileManagedCatalog : IReturn<ManagedActionResult> { }
 
     [Route("/M3uEditor/Managed/Rollback", "POST", Summary = "Rolls a managed mapping back to its previous valid generation")]
     [Authenticated(Roles = "Admin")]
@@ -83,12 +53,7 @@ namespace Emby.M3uEditor.Plugin.Api
         public int IntegrationId { get; set; }
     }
 
-    [Route("/M3uEditor/Sync/Status", "GET", Summary = "Gets current sync progress")]
-    public class GetSyncStatus : IReturn<SyncStatusResult>
-    {
-    }
-
-    [Route("/M3uEditor/Dashboard", "GET", Summary = "Gets dashboard data including sync history and library stats")]
+    [Route("/M3uEditor/Dashboard", "GET", Summary = "Gets managed publishing and Live TV status")]
     [Authenticated(Roles = "Admin")]
     public class GetDashboard : IReturn<DashboardResult>
     {
@@ -96,34 +61,8 @@ namespace Emby.M3uEditor.Plugin.Api
         public int? ManagedPageSize { get; set; }
     }
 
-    [Route("/M3uEditor/Content/Movies", "DELETE", Summary = "Deletes all movie STRM content")]
-    public class DeleteMovieContent : IReturn<DeleteContentResult>
-    {
-    }
-
-    [Route("/M3uEditor/Content/Series", "DELETE", Summary = "Deletes all series STRM content")]
-    public class DeleteSeriesContent : IReturn<DeleteContentResult>
-    {
-    }
-
-    [Route("/M3uEditor/WritablePaths", "GET", Summary = "Returns writable mount points available to Emby")]
-    public class GetWritablePaths : IReturn<List<string>>
-    {
-    }
-
-    [Route("/M3uEditor/BrowsePath", "GET", Summary = "Lists subdirectories at the given path, or writable mounts if no path given")]
-    public class BrowsePath : IReturn<BrowsePathResult>
-    {
-        public string Path { get; set; }
-    }
-
-    [Route("/M3uEditor/ValidateStrmPath", "POST", Summary = "Validates that the STRM library path is writable")]
-    public class ValidateStrmPath : IReturn<TestConnectionResult>
-    {
-        public string Path { get; set; }
-    }
-
-    [Route("/M3uEditor/TestConnection", "POST", Summary = "Tests connection to Xtream server")]
+    [Route("/M3uEditor/TestConnection", "POST", Summary = "Tests the m3u-editor Xtream-compatible connection")]
+    [Authenticated(Roles = "Admin")]
     public class TestXtreamConnection : IReturn<TestConnectionResult>
     {
         public string Url { get; set; }
@@ -132,17 +71,33 @@ namespace Emby.M3uEditor.Plugin.Api
         public string UserAgent { get; set; }
     }
 
-    [Route("/M3uEditor/TestDispatcharr", "POST", Summary = "Tests connection to Dispatcharr")]
-    public class TestDispatcharrConnection : IReturn<TestConnectionResult>
+    [Route("/M3uEditor/ProbeDataCoverage", "GET", Summary = "Reports m3u-editor stream_stats coverage")]
+    [Authenticated(Roles = "Admin")]
+    public class CheckProbeDataCoverage : IReturn<ProbeDataCoverageResult> { }
+
+    [Route("/M3uEditor/CheckUpdate", "GET", Summary = "Checks GitHub for a newer plugin release")]
+    [Authenticated(Roles = "Admin")]
+    public class CheckForUpdate : IReturn<UpdateCheckResult>
     {
-        public string Url { get; set; }
-        public string Username { get; set; }
-        public string Password { get; set; }
+        public bool? Beta { get; set; }
     }
 
-    [Route("/M3uEditor/ProbeDataCoverage", "GET", Summary = "Reports how many channels carry probe data (resolution/codec) and where it came from")]
-    public class CheckProbeDataCoverage : IReturn<ProbeDataCoverageResult>
+    [Route("/M3uEditor/Logs", "GET", Summary = "Downloads sanitized plugin logs")]
+    [Authenticated(Roles = "Admin")]
+    public class GetSanitizedLogs : IReturnVoid { }
+
+    [Route("/M3uEditor/InstallUpdate", "POST", Summary = "Downloads and installs the latest plugin update")]
+    [Authenticated(Roles = "Admin")]
+    public class InstallUpdate : IReturn<InstallUpdateResult> { }
+
+    [Route("/M3uEditor/RestartEmby", "POST", Summary = "Restarts the Emby server")]
+    [Authenticated(Roles = "Admin")]
+    public class RestartEmby : IReturnVoid { }
+
+    public class TestConnectionResult
     {
+        public bool Success { get; set; }
+        public string Message { get; set; }
     }
 
     public class ProbeDataCoverageResult
@@ -151,128 +106,24 @@ namespace Emby.M3uEditor.Plugin.Api
         public string Message { get; set; }
         public int TotalChannels { get; set; }
         public int ChannelsWithProbeData { get; set; }
-        public string Source { get; set; } // "backend" | "dispatcharr" | "mixed" | "none"
-        public string BackendType { get; set; } // detected backend identifier (e.g. "M3uEditor")
+        public string Source { get; set; }
     }
 
     public class RefreshChannelIconsResult
     {
         public bool Success { get; set; }
         public string Message { get; set; }
-        public int TotalLibraryChannels { get; set; }
         public int MatchedChannels { get; set; }
         public int ClearedChannels { get; set; }
-        public int AlreadyCleanChannels { get; set; }
-        public int ProvidersDetached { get; set; }
         public int RebuiltChannels { get; set; }
         public int M3UBytes { get; set; }
         public int EpgBytes { get; set; }
-    }
-
-    [Route("/M3uEditor/DispatcharrProfiles", "GET", Summary = "Gets Channel Profiles from Dispatcharr")]
-    public class GetDispatcharrProfiles : IReturn<DispatcharrProfilesResult>
-    {
-    }
-
-    [Route("/M3uEditor/CheckUpdate", "GET", Summary = "Checks GitHub for a newer plugin release")]
-    public class CheckForUpdate : IReturn<UpdateCheckResult>
-    {
-        public bool? Beta { get; set; }
-    }
-
-    [Route("/M3uEditor/Sync/FailedItems", "GET", Summary = "Returns items that failed during the last sync")]
-    public class GetFailedItems : IReturn<List<FailedSyncItem>>
-    {
-    }
-
-    [Route("/M3uEditor/Sync/RetryFailed", "POST", Summary = "Retries all items that failed during the last sync")]
-    public class RetryFailed : IReturn<SyncResult>
-    {
-    }
-
-    [Route("/M3uEditor/Logs", "GET", Summary = "Downloads sanitized plugin logs")]
-    public class GetSanitizedLogs : IReturnVoid
-    {
-    }
-
-    [Route("/M3uEditor/InstallUpdate", "POST", Summary = "Downloads and installs the latest plugin update")]
-    public class InstallUpdate : IReturn<InstallUpdateResult>
-    {
-    }
-
-    [Route("/M3uEditor/RestartEmby", "POST", Summary = "Restarts the Emby server")]
-    public class RestartEmby : IReturnVoid
-    {
-    }
-
-    [Route("/M3uEditor/TestTmdbLookup", "GET", Summary = "Tests TMDB fallback lookup")]
-    public class TestTmdbLookup : IReturn<TestConnectionResult>
-    {
-        public string Name { get; set; }
-        public int? Year { get; set; }
-    }
-
-    [Route("/M3uEditor/SyncGuideMappings", "POST", Summary = "Detaches listing providers from the m3u-editor tuner so Gracenote EPG is fetched by the tuner directly")]
-    public class SyncGuideMappings : IReturn<SyncGuideMappingsResult>
-    {
-    }
-
-    public class SyncGuideMappingsResult
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; }
-        public int ProvidersUpdated { get; set; }
-    }
-
-    public class TestConnectionResult
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; }
-        public string BackendType { get; set; }
-        public string BackendName { get; set; }
-    }
-
-    public class BrowsePathResult
-    {
-        public string CurrentPath { get; set; }
-        public string ParentPath { get; set; }
-        public List<string> Directories { get; set; }
-    }
-
-    public class DispatcharrProfilesResult
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; }
-        public List<Client.Models.DispatcharrProfile> Profiles { get; set; } = new List<Client.Models.DispatcharrProfile>();
     }
 
     public class InstallUpdateResult
     {
         public bool Success { get; set; }
         public string Message { get; set; }
-    }
-
-    public class DeleteContentResult
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; }
-        public int DeletedFolders { get; set; }
-    }
-
-    public class SyncResult
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; }
-        public int Total { get; set; }
-        public int Completed { get; set; }
-        public int Skipped { get; set; }
-        public int Failed { get; set; }
-    }
-
-    public class SyncStatusResult
-    {
-        public SyncProgressInfo Movies { get; set; }
-        public SyncProgressInfo Series { get; set; }
     }
 
     public class ManagedActionResult
@@ -301,25 +152,10 @@ namespace Emby.M3uEditor.Plugin.Api
         public string Result { get; set; }
     }
 
-    public class SyncProgressInfo
-    {
-        public string Phase { get; set; }
-        public int Total { get; set; }
-        public int Completed { get; set; }
-        public int Skipped { get; set; }
-        public int Failed { get; set; }
-        public bool IsRunning { get; set; }
-    }
-
     public class DashboardResult
     {
         public string PluginVersion { get; set; }
-        public SyncHistoryEntry LastSync { get; set; }
-        public List<SyncHistoryEntry> History { get; set; }
-        public bool IsRunning { get; set; }
         public LibraryStats LibraryStats { get; set; }
-        public bool AutoSyncOn { get; set; }
-        public DateTime? NextSyncTime { get; set; }
         public ManagedDashboardStatus ManagedPublishing { get; set; }
     }
 
@@ -334,7 +170,6 @@ namespace Emby.M3uEditor.Plugin.Api
         public string CatalogRevision { get; set; }
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
-        public string MappingsJson { get; set; }
         public List<ManagedDashboardMapping> Mappings { get; set; }
         public int TotalMappings { get; set; }
         public int TotalFiles { get; set; }
@@ -358,6 +193,7 @@ namespace Emby.M3uEditor.Plugin.Api
     {
         public string MappingUuid { get; set; }
         public string LibraryName { get; set; }
+        public bool LibraryNameTruncated { get; set; }
         public string CollectionType { get; set; }
         public string ActiveRevision { get; set; }
         public string PreviousRevision { get; set; }
@@ -371,17 +207,19 @@ namespace Emby.M3uEditor.Plugin.Api
         public int Changed { get; set; }
         public int Removed { get; set; }
         public int OmittedVersions { get; set; }
+        public List<string> SourceGroups { get; set; }
+        public bool SourceGroupsTruncated { get; set; }
         public string Error { get; set; }
     }
 
     public class LibraryStats
     {
-        public int MovieFolders   { get; set; }
-        public int MovieCount     { get; set; }
-        public int SeriesFolders  { get; set; }
-        public int SeriesCount    { get; set; }
-        public int SeasonCount    { get; set; }
-        public int EpisodeCount   { get; set; }
+        public int MovieFolders { get; set; }
+        public int MovieCount { get; set; }
+        public int SeriesFolders { get; set; }
+        public int SeriesCount { get; set; }
+        public int SeasonCount { get; set; }
+        public int EpisodeCount { get; set; }
         public int LiveTvChannels { get; set; }
     }
 
@@ -394,7 +232,7 @@ namespace Emby.M3uEditor.Plugin.Api
             int requestedPageSize)
         {
             var page = Math.Max(1, requestedPage);
-            var pageSize = Math.Max(1, Math.Min(25, requestedPageSize));
+            var pageSize = Math.Max(1, Math.Min(100, requestedPageSize));
             List<ManagedMappingState> mappings;
             try
             {
@@ -408,35 +246,46 @@ namespace Emby.M3uEditor.Plugin.Api
                 mappings = new List<ManagedMappingState>();
             }
 
-            mappings = mappings
-                .OrderBy(mapping => mapping.MappingUuid, StringComparer.Ordinal)
-                .ToList();
+            mappings = mappings.OrderBy(mapping => mapping.MappingUuid, StringComparer.Ordinal).ToList();
             var maximumPage = mappings.Count == 0 ? 1 : ((mappings.Count - 1) / pageSize) + 1;
             page = Math.Min(page, maximumPage);
             var pageMappings = mappings
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(mapping => new ManagedDashboardMapping
+                .Select(mapping =>
                 {
-                    MappingUuid = mapping.MappingUuid,
-                    LibraryName = mapping.LibraryName,
-                    CollectionType = mapping.CollectionType,
-                    ActiveRevision = mapping.ActiveRevision,
-                    PreviousRevision = mapping.PreviousRevision,
-                    Success = mapping.Success,
-                    Duplicate = mapping.Duplicate,
-                    FileCount = mapping.FileCount,
-                    StrmFileCount = mapping.StrmFileCount,
-                    SeriesCount = mapping.SeriesCount,
-                    SeasonCount = mapping.SeasonCount,
-                    Added = mapping.Added,
-                    Changed = mapping.Changed,
-                    Removed = mapping.Removed,
-                    OmittedVersions = mapping.OmittedVersions,
-                    Error = mapping.Error
+                    bool libraryNameTruncated;
+                    var libraryName = StrmSyncService.NormalizeManagedDashboardLabel(
+                        mapping.LibraryName,
+                        out libraryNameTruncated);
+                    return new ManagedDashboardMapping
+                    {
+                        MappingUuid = mapping.MappingUuid,
+                        LibraryName = libraryName,
+                        LibraryNameTruncated = libraryNameTruncated,
+                        CollectionType = mapping.CollectionType,
+                        ActiveRevision = mapping.ActiveRevision,
+                        PreviousRevision = mapping.PreviousRevision,
+                        Success = mapping.Success,
+                        Duplicate = mapping.Duplicate,
+                        FileCount = mapping.FileCount,
+                        StrmFileCount = mapping.StrmFileCount,
+                        SeriesCount = mapping.SeriesCount,
+                        SeasonCount = mapping.SeasonCount,
+                        Added = mapping.Added,
+                        Changed = mapping.Changed,
+                        Removed = mapping.Removed,
+                        OmittedVersions = mapping.OmittedVersions,
+                        SourceGroups = StrmSyncService.NormalizeManagedSourceGroups(
+                        mapping.SourceGroups,
+                        out var sourceGroupsTruncated),
+                        SourceGroupsTruncated = mapping.SourceGroupsTruncated || sourceGroupsTruncated,
+                        Error = mapping.Error
+                    };
                 })
                 .ToList();
             var libraryStats = BuildManagedLibraryStats(mappings);
+
             return new ManagedDashboardStatus
             {
                 Enabled = config.ManagedPublishingEnabled,
@@ -450,7 +299,6 @@ namespace Emby.M3uEditor.Plugin.Api
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
-                MappingsJson = System.Text.Json.JsonSerializer.Serialize(pageMappings),
                 Mappings = pageMappings,
                 TotalMappings = mappings.Count,
                 TotalFiles = mappings.Sum(mapping => mapping.FileCount),
@@ -498,267 +346,100 @@ namespace Emby.M3uEditor.Plugin.Api
             };
         }
 
+        internal static ProbeDataCoverageResult BuildProbeDataCoverageResult(
+            int totalChannels,
+            int channelsWithProbeData,
+            bool autoLoaded)
+        {
+            var prefix = autoLoaded ? "(auto-loaded " + totalChannels + " channels) " : string.Empty;
+            if (totalChannels == 0)
+            {
+                return new ProbeDataCoverageResult
+                {
+                    Success = false,
+                    Source = "none",
+                    Message = "Channel cache is empty and an on-demand load returned no channels.",
+                };
+            }
+
+            if (channelsWithProbeData == 0)
+            {
+                return new ProbeDataCoverageResult
+                {
+                    Success = true,
+                    TotalChannels = totalChannels,
+                    Source = "none",
+                    Message = prefix + "No m3u-editor stream_stats probe data is available. Emby will probe streams on playback.",
+                };
+            }
+
+            return new ProbeDataCoverageResult
+            {
+                Success = true,
+                TotalChannels = totalChannels,
+                ChannelsWithProbeData = channelsWithProbeData,
+                Source = "m3u-editor",
+                Message = prefix + string.Format(
+                    "{0} of {1} channels have m3u-editor stream_stats probe data. FFprobe is bypassed for these channels.",
+                    channelsWithProbeData,
+                    totalChannels),
+            };
+        }
+
         public async Task<object> Get(GetEpgXml request)
         {
-            var liveTvService = Plugin.Instance.LiveTvService;
-            var xml = await liveTvService.GetXmltvEpgAsync(CancellationToken.None).ConfigureAwait(false);
-
-            var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
-            return ResultFactory.GetResult(Request, stream, "application/xml", new Dictionary<string, string>());
+            var xml = await Plugin.Instance.LiveTvService.GetXmltvEpgAsync(CancellationToken.None).ConfigureAwait(false);
+            return ResultFactory.GetResult(
+                Request,
+                new MemoryStream(Encoding.UTF8.GetBytes(xml)),
+                "application/xml",
+                new Dictionary<string, string>());
         }
 
         public async Task<object> Get(GetM3UPlaylist request)
         {
-            var liveTvService = Plugin.Instance.LiveTvService;
-            var m3u = await liveTvService.GetM3UPlaylistAsync(CancellationToken.None).ConfigureAwait(false);
-
-            var stream = new MemoryStream(Encoding.UTF8.GetBytes(m3u));
-            return ResultFactory.GetResult(Request, stream, "audio/x-mpegurl", new Dictionary<string, string>());
+            var m3u = await Plugin.Instance.LiveTvService.GetM3UPlaylistAsync(CancellationToken.None).ConfigureAwait(false);
+            return ResultFactory.GetResult(
+                Request,
+                new MemoryStream(Encoding.UTF8.GetBytes(m3u)),
+                "audio/x-mpegurl",
+                new Dictionary<string, string>());
         }
 
         public async Task<object> Get(GetLiveCategories request)
         {
-            var config = Plugin.Instance?.Configuration;
-            if (config == null || string.IsNullOrEmpty(config.BaseUrl) ||
-                string.IsNullOrEmpty(config.Username) || string.IsNullOrEmpty(config.Password))
+            var config = Plugin.Instance.Configuration;
+            if (string.IsNullOrEmpty(config.BaseUrl) ||
+                string.IsNullOrEmpty(config.Username) ||
+                string.IsNullOrEmpty(config.Password))
             {
                 return new List<Category>();
             }
 
-            var liveTvService = Plugin.Instance.LiveTvService;
-            var categories = await liveTvService.GetLiveCategoriesAsync(CancellationToken.None).ConfigureAwait(false);
-
-            // Cache for instant UI loading
+            var categories = await Plugin.Instance.LiveTvService
+                .GetLiveCategoriesAsync(CancellationToken.None)
+                .ConfigureAwait(false);
             config.CachedLiveCategories = System.Text.Json.JsonSerializer.Serialize(
-                    categories.Select(c => new { c.CategoryId, c.CategoryName }).ToList());
+                categories.Select(category => new { category.CategoryId, category.CategoryName }).ToList());
             Plugin.Instance.SaveConfiguration();
-
             return categories;
-        }
-
-        public async Task<object> Get(GetVodCategories request)
-        {
-            var config = Plugin.Instance?.Configuration;
-            if (config == null || string.IsNullOrEmpty(config.BaseUrl) ||
-                string.IsNullOrEmpty(config.Username) || string.IsNullOrEmpty(config.Password))
-            {
-                return new List<Category>();
-            }
-
-            var url = string.Format(
-                System.Globalization.CultureInfo.InvariantCulture,
-                "{0}/player_api.php?username={1}&password={2}&action=get_vod_categories",
-                config.BaseUrl, Uri.EscapeDataString(config.Username), Uri.EscapeDataString(config.Password));
-
-            using (var httpClient = Plugin.CreateHttpClient())
-            {
-                var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                var categories = System.Text.Json.JsonSerializer.Deserialize<List<Category>>(json,
-                    new System.Text.Json.JsonSerializerOptions
-                    {
-                        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString,
-                        PropertyNameCaseInsensitive = true,
-                    }) ?? new List<Category>();
-                var sorted = categories.OrderBy(c => c.CategoryName).ToList();
-
-                // Cache for instant UI loading
-                config.CachedVodCategories = System.Text.Json.JsonSerializer.Serialize(
-                    sorted.Select(c => new { c.CategoryId, c.CategoryName }).ToList());
-                Plugin.Instance.SaveConfiguration();
-
-                return sorted;
-            }
-        }
-
-        public async Task<object> Get(GetSeriesCategories request)
-        {
-            var config = Plugin.Instance?.Configuration;
-            if (config == null || string.IsNullOrEmpty(config.BaseUrl) ||
-                string.IsNullOrEmpty(config.Username) || string.IsNullOrEmpty(config.Password))
-            {
-                return new List<Category>();
-            }
-
-            var jsonOptions = new System.Text.Json.JsonSerializerOptions
-            {
-                NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString,
-                PropertyNameCaseInsensitive = true,
-            };
-
-            using (var httpClient = Plugin.CreateHttpClient())
-            {
-                var url = string.Format(
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    "{0}/player_api.php?username={1}&password={2}&action=get_series_categories",
-                    config.BaseUrl, Uri.EscapeDataString(config.Username), Uri.EscapeDataString(config.Password));
-
-                var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                var categories = System.Text.Json.JsonSerializer.Deserialize<List<Category>>(json, jsonOptions)
-                    ?? new List<Category>();
-                var sorted = categories.OrderBy(c => c.CategoryName).ToList();
-
-                // Fallback: derive categories from series list when server returns empty
-                if (sorted.Count == 0)
-                {
-                    var seriesUrl = string.Format(
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        "{0}/player_api.php?username={1}&password={2}&action=get_series",
-                        config.BaseUrl, Uri.EscapeDataString(config.Username), Uri.EscapeDataString(config.Password));
-
-                    var seriesJson = await httpClient.GetStringAsync(seriesUrl).ConfigureAwait(false);
-                    var seriesList = System.Text.Json.JsonSerializer.Deserialize<List<SeriesInfo>>(seriesJson, jsonOptions)
-                        ?? new List<SeriesInfo>();
-
-                    sorted = seriesList
-                        .Where(s => s.CategoryId.HasValue)
-                        .GroupBy(s => s.CategoryId.GetValueOrDefault())
-                        .Select(g => new Category
-                        {
-                            CategoryId = g.Key,
-                            CategoryName = g.FirstOrDefault(s => !string.IsNullOrEmpty(s.CategoryName))?.CategoryName
-                                ?? "Category " + g.Key,
-                        })
-                        .OrderBy(c => c.CategoryName)
-                        .ToList();
-                }
-
-                // Cache for instant UI loading
-                config.CachedSeriesCategories = System.Text.Json.JsonSerializer.Serialize(
-                    sorted.Select(c => new { c.CategoryId, c.CategoryName }).ToList());
-                Plugin.Instance.SaveConfiguration();
-
-                return sorted;
-            }
-        }
-
-        public async Task<object> Post(SyncMovies request)
-        {
-            var config = Plugin.Instance.Configuration;
-            var syncService = Plugin.Instance.StrmSyncService;
-            var result = new SyncResult();
-
-            if (!config.SyncMovies)
-            {
-                result.Success = false;
-                result.Message = "Movie sync is not enabled. Enable it in Settings first.";
-                return result;
-            }
-
-            if (syncService.MovieProgress.IsRunning)
-            {
-                result.Success = false;
-                result.Message = "Movie sync is already running.";
-                return result;
-            }
-
-            try
-            {
-                await syncService.SyncMoviesAsync(
-                    config,
-                    CancellationToken.None,
-                    () => Plugin.Instance.SaveConfiguration()).ConfigureAwait(false);
-                var progress = syncService.MovieProgress;
-                if (!string.IsNullOrEmpty(progress.AbortReason))
-                {
-                    result.Success = false;
-                    result.Message = progress.AbortReason;
-                    result.Total = progress.Total;
-                    result.Completed = progress.Completed;
-                    result.Skipped = progress.Skipped;
-                    result.Failed = progress.Failed;
-                }
-                else
-                {
-                    result.Success = true;
-                    result.Message = "Movie sync completed.";
-                    result.Total = progress.Total;
-                    result.Completed = progress.Completed;
-                    result.Skipped = progress.Skipped;
-                    result.Failed = progress.Failed;
-                }
-            }
-            catch (Exception ex)
-            {
-                result.Success = false;
-                result.Message = "Movie sync failed: " + ex.Message;
-            }
-
-            return result;
-        }
-
-        public async Task<object> Post(SyncSeries request)
-        {
-            var config = Plugin.Instance.Configuration;
-            var syncService = Plugin.Instance.StrmSyncService;
-            var result = new SyncResult();
-
-            if (!config.SyncSeries)
-            {
-                result.Success = false;
-                result.Message = "Series sync is not enabled. Enable it in Settings first.";
-                return result;
-            }
-
-            if (syncService.SeriesProgress.IsRunning)
-            {
-                result.Success = false;
-                result.Message = "Series sync is already running.";
-                return result;
-            }
-
-            try
-            {
-                await syncService.SyncSeriesAsync(
-                    config,
-                    CancellationToken.None,
-                    () => Plugin.Instance.SaveConfiguration()).ConfigureAwait(false);
-                var progress = syncService.SeriesProgress;
-                if (!string.IsNullOrEmpty(progress.AbortReason))
-                {
-                    result.Success = false;
-                    result.Message = progress.AbortReason;
-                    result.Total = progress.Total;
-                    result.Completed = progress.Completed;
-                    result.Skipped = progress.Skipped;
-                    result.Failed = progress.Failed;
-                }
-                else
-                {
-                    result.Success = true;
-                    result.Message = "Series sync completed.";
-                    result.Total = progress.Total;
-                    result.Completed = progress.Completed;
-                    result.Skipped = progress.Skipped;
-                    result.Failed = progress.Failed;
-                }
-            }
-            catch (Exception ex)
-            {
-                result.Success = false;
-                result.Message = "Series sync failed: " + ex.Message;
-            }
-
-            return result;
         }
 
         public object Post(ReconcileManagedCatalog request)
         {
             var jobs = Plugin.Instance.StrmSyncService.ManagedActionJobs;
-            return ToManagedActionAdmission(jobs.TryStart(
-                "reconcile",
-                null,
-                ReconcileManagedCatalogAsync));
+            return ToManagedActionAdmission(jobs.TryStart("reconcile", null, ReconcileManagedCatalogAsync));
         }
 
         private static async Task<ManagedActionResult> ReconcileManagedCatalogAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
-            var reconciled = await Plugin.Instance.StrmSyncService.ReconcileManagedAsync(
-                config,
-                () => Plugin.Instance.SaveConfiguration(),
+            var plugin = Plugin.Instance;
+            var reconciled = await plugin.StrmSyncService.ReconcileManagedAsync(
+                plugin.Configuration,
+                () => plugin.SaveConfiguration(),
                 null,
                 cancellationToken,
-                () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
+                () => plugin.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
                 .ConfigureAwait(false);
             return new ManagedActionResult
             {
@@ -766,7 +447,7 @@ namespace Emby.M3uEditor.Plugin.Api
                 Compatible = reconciled.Compatible,
                 Message = reconciled.Compatible
                     ? (reconciled.Success ? "Managed catalog reconcile completed." : reconciled.Error)
-                    : "Compatible m3u-editor publishing capability version 1 was not advertised; generic Xtream mode remains active.",
+                    : "Compatible m3u-editor publishing capability version 1 was not advertised.",
                 TotalMappings = reconciled.TotalMappings,
                 AppliedMappings = reconciled.AppliedMappings,
                 FailedMappings = reconciled.FailedMappings,
@@ -777,8 +458,8 @@ namespace Emby.M3uEditor.Plugin.Api
 
         public object Post(RollbackManagedCatalog request)
         {
-            var jobs = Plugin.Instance.StrmSyncService.ManagedActionJobs;
             var mappingUuid = request == null ? null : request.MappingUuid;
+            var jobs = Plugin.Instance.StrmSyncService.ManagedActionJobs;
             return ToManagedActionAdmission(jobs.TryStart(
                 "rollback",
                 mappingUuid,
@@ -793,18 +474,15 @@ namespace Emby.M3uEditor.Plugin.Api
 
         public object Put(ManagedSetupRequest request)
         {
-            var plugin = Plugin.Instance;
-            return new ManagedSetupService(plugin.DataFolderPath).Put(
-                plugin.Configuration,
-                request == null ? 0 : request.IntegrationId,
-                plugin.SaveConfiguration);
+            return Plugin.Instance.UpdateManagedSetup(request == null ? 0 : request.IntegrationId);
         }
 
         private static async Task<ManagedActionResult> RollbackManagedCatalogAsync(
             string mappingUuid,
             CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var plugin = Plugin.Instance;
+            var config = plugin.Configuration;
             List<ManagedMappingState> mappings;
             try
             {
@@ -821,33 +499,21 @@ namespace Emby.M3uEditor.Plugin.Api
                 string.Equals(value.MappingUuid, mappingUuid, StringComparison.OrdinalIgnoreCase));
             if (mapping == null)
             {
-                return new ManagedActionResult
-                {
-                    Success = false,
-                    Message = "The managed mapping was not found in plugin-owned state."
-                };
+                return new ManagedActionResult { Message = "The managed mapping was not found in plugin-owned state." };
             }
 
             string approvalError;
-            if (!ManagedOutputPolicy.IsApproved(
-                mapping.OutputPath,
-                config.ManagedApprovedOutputRoots,
-                out approvalError))
+            if (!ManagedOutputPolicy.IsApproved(mapping.OutputPath, config.ManagedApprovedOutputRoots, out approvalError))
             {
-                return new ManagedActionResult
-                {
-                    Success = false,
-                    Message = approvalError
-                };
+                return new ManagedActionResult { Message = approvalError };
             }
 
-            var rollback = await Plugin.Instance.StrmSyncService.RollbackManagedMappingAsync(
+            var rollback = await plugin.StrmSyncService.RollbackManagedMappingAsync(
                 mapping.OutputPath,
                 mapping.MappingUuid,
                 cancellationToken,
-                () => Plugin.Instance.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan(),
-                config.ManagedApprovedOutputRoots)
-                .ConfigureAwait(false);
+                () => plugin.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan(),
+                config.ManagedApprovedOutputRoots).ConfigureAwait(false);
             if (rollback.Success)
             {
                 mapping.ActiveRevision = rollback.Revision;
@@ -860,13 +526,12 @@ namespace Emby.M3uEditor.Plugin.Api
                 config.ManagedActiveGeneration = rollback.Revision ?? string.Empty;
                 config.ManagedPreviousGeneration = rollback.PreviousRevision ?? string.Empty;
                 config.ManagedLastError = string.Empty;
-                Plugin.Instance.SaveConfiguration();
             }
             else
             {
                 config.ManagedLastError = rollback.Error ?? "Managed rollback failed.";
-                Plugin.Instance.SaveConfiguration();
             }
+            plugin.SaveConfiguration();
 
             return new ManagedActionResult
             {
@@ -887,394 +552,50 @@ namespace Emby.M3uEditor.Plugin.Api
                 Duplicate = status.Duplicate,
                 JobId = status.JobId,
                 State = status.State,
-                Message = status.Accepted
-                    ? "Managed action accepted."
-                    : "A managed action is already running."
-            };
-        }
-
-        public object Get(GetSyncStatus request)
-        {
-            var syncService = Plugin.Instance.StrmSyncService;
-            var movieProg = syncService.MovieProgress;
-            var seriesProg = syncService.SeriesProgress;
-
-            return new SyncStatusResult
-            {
-                Movies = new SyncProgressInfo
-                {
-                    Phase = movieProg.Phase,
-                    Total = movieProg.Total,
-                    Completed = movieProg.Completed,
-                    Skipped = movieProg.Skipped,
-                    Failed = movieProg.Failed,
-                    IsRunning = movieProg.IsRunning,
-                },
-                Series = new SyncProgressInfo
-                {
-                    Phase = seriesProg.Phase,
-                    Total = seriesProg.Total,
-                    Completed = seriesProg.Completed,
-                    Skipped = seriesProg.Skipped,
-                    Failed = seriesProg.Failed,
-                    IsRunning = seriesProg.IsRunning,
-                },
-            };
-        }
-
-        public object Get(GetFailedItems request)
-        {
-            return Plugin.Instance.StrmSyncService.FailedItems.ToList();
-        }
-
-        public async Task<object> Post(RetryFailed request)
-        {
-            var syncService = Plugin.Instance.StrmSyncService;
-            if (syncService.MovieProgress.IsRunning || syncService.SeriesProgress.IsRunning)
-                return new SyncResult { Success = false, Message = "A sync is already running." };
-            if (syncService.FailedItems.Count == 0)
-                return new SyncResult { Success = false, Message = "No failed items to retry." };
-
-            await syncService.RetryFailedAsync(CancellationToken.None).ConfigureAwait(false);
-            var p = syncService.MovieProgress;
-            return new SyncResult
-            {
-                Success = true,
-                Message = "Retry complete.",
-                Total = p.Total,
-                Completed = p.Completed,
-                Failed = p.Failed
+                Message = status.Accepted ? "Managed action accepted." : "A managed action is already running."
             };
         }
 
         public object Get(GetDashboard request)
         {
-            var syncService = Plugin.Instance.StrmSyncService;
-            var config = Plugin.Instance.Configuration;
-            var history = syncService.GetSyncHistory();
-            var managedStatus = BuildManagedDashboardStatus(
-                config,
-                syncService.ManagedActionJobs.GetStatus(),
+            var plugin = Plugin.Instance;
+            var managed = BuildManagedDashboardStatus(
+                plugin.Configuration,
+                plugin.StrmSyncService.ManagedActionJobs.GetStatus(),
                 request?.ManagedPage ?? 1,
                 request?.ManagedPageSize ?? 10);
-
-            var movieFolders = 0;
-            var movieCount = 0;
-            var seriesCount = 0;
-            var seasonCount = 0;
-            var episodeCount = 0;
-
-            if (config.ManagedPublishingEnabled)
-            {
-                movieFolders = managedStatus.MovieFolders;
-                movieCount = managedStatus.MovieCount;
-                seriesCount = managedStatus.SeriesCount;
-                seasonCount = managedStatus.SeasonCount;
-                episodeCount = managedStatus.EpisodeCount;
-            }
-
-            try
-            {
-                var moviesRoot = Path.Combine(config.StrmLibraryPath, "Movies");
-                if (!config.ManagedPublishingEnabled && Directory.Exists(moviesRoot))
-                {
-                    movieFolders = Directory.GetDirectories(moviesRoot, "*", SearchOption.TopDirectoryOnly).Length;
-                    movieCount = Directory.GetFiles(moviesRoot, "*.strm", SearchOption.AllDirectories).Length;
-                }
-            }
-            catch (IOException ex)
-            {
-                Logger.Debug("Dashboard movie stats scan failed: {0}", ex.Message);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                Logger.Debug("Dashboard movie stats scan failed: {0}", ex.Message);
-            }
-
-            try
-            {
-                var showsRoot = Path.Combine(config.StrmLibraryPath, "Shows");
-                if (!config.ManagedPublishingEnabled && Directory.Exists(showsRoot))
-                {
-                    // In single mode: Shows/ShowName/Season XX/
-                    // In multiple/custom mode: Shows/Category/ShowName/Season XX/
-                    var isFlat = string.Equals(config.SeriesFolderMode, "single", StringComparison.OrdinalIgnoreCase);
-                    var topDirs = Directory.GetDirectories(showsRoot, "*", SearchOption.TopDirectoryOnly);
-                    var seriesDirList = isFlat
-                        ? topDirs
-                        : topDirs.SelectMany(cat =>
-                        {
-                            try
-                            {
-                                return Directory.GetDirectories(cat, "*", SearchOption.TopDirectoryOnly);
-                            }
-                            catch (IOException ex)
-                            {
-                                Logger.Debug("Dashboard category scan failed for '{0}': {1}", cat, ex.Message);
-                                return Array.Empty<string>();
-                            }
-                            catch (UnauthorizedAccessException ex)
-                            {
-                                Logger.Debug("Dashboard category scan access denied for '{0}': {1}", cat, ex.Message);
-                                return Array.Empty<string>();
-                            }
-                        }).ToArray();
-                    seriesCount = seriesDirList.Length;
-                    foreach (var seriesDir in seriesDirList)
-                    {
-                        try
-                        {
-                            seasonCount += Directory.GetDirectories(seriesDir, "*", SearchOption.TopDirectoryOnly).Length;
-                        }
-                        catch (IOException ex)
-                        {
-                            Logger.Debug("Dashboard season scan failed for '{0}': {1}", seriesDir, ex.Message);
-                        }
-                        catch (UnauthorizedAccessException ex)
-                        {
-                            Logger.Debug("Dashboard season scan failed for '{0}': {1}", seriesDir, ex.Message);
-                        }
-                    }
-                    episodeCount = Directory.GetFiles(showsRoot, "*.strm", SearchOption.AllDirectories).Length;
-                }
-            }
-            catch (IOException ex)
-            {
-                Logger.Debug("Dashboard series stats scan failed: {0}", ex.Message);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                Logger.Debug("Dashboard series stats scan failed: {0}", ex.Message);
-            }
-
-            // Compute next sync time
-            DateTime? nextSyncTime = null;
-            if (config.AutoSyncEnabled)
-            {
-                if (string.Equals(config.AutoSyncMode, "daily", StringComparison.OrdinalIgnoreCase))
-                {
-                    var parts = (config.AutoSyncDailyTime ?? "03:00").Split(':');
-                    int hour = 0, minute = 0;
-                    if (parts.Length >= 1) int.TryParse(parts[0], out hour);
-                    if (parts.Length >= 2) int.TryParse(parts[1], out minute);
-                    var nextLocal = DateTime.Today.AddHours(hour).AddMinutes(minute);
-                    if (nextLocal <= DateTime.Now) nextLocal = nextLocal.AddDays(1);
-                    nextSyncTime = nextLocal.ToUniversalTime();
-                }
-                else
-                {
-                    var intervalHours = Math.Max(1, config.AutoSyncIntervalHours);
-                    var lastEnd = history.Count > 0 ? history[0].EndTime : DateTime.UtcNow;
-                    nextSyncTime = lastEnd.AddHours(intervalHours);
-                }
-            }
-
             return new DashboardResult
             {
-                PluginVersion = Emby.M3uEditor.Plugin.Service.PluginVersionHelper.CurrentVersion,
-                LastSync = history.Count > 0 ? history[0] : null,
-                History = history,
-                IsRunning = syncService.MovieProgress.IsRunning || syncService.SeriesProgress.IsRunning,
-                AutoSyncOn = config.AutoSyncEnabled,
-                NextSyncTime = nextSyncTime,
-                ManagedPublishing = managedStatus,
+                PluginVersion = PluginVersionHelper.CurrentVersion,
+                ManagedPublishing = managed,
                 LibraryStats = new LibraryStats
                 {
-                    MovieFolders   = movieFolders,
-                    MovieCount     = movieCount,
-                    SeriesFolders  = seriesCount,
-                    SeriesCount    = seriesCount,
-                    SeasonCount    = seasonCount,
-                    EpisodeCount   = episodeCount,
-                    LiveTvChannels = Emby.M3uEditor.Plugin.Service.M3uEditorTunerHost.Instance?.CachedChannelCount ?? 0,
-                },
+                    MovieFolders = managed.MovieFolders,
+                    MovieCount = managed.MovieCount,
+                    SeriesFolders = managed.SeriesCount,
+                    SeriesCount = managed.SeriesCount,
+                    SeasonCount = managed.SeasonCount,
+                    EpisodeCount = managed.EpisodeCount,
+                    LiveTvChannels = M3uEditorTunerHost.Instance?.CachedChannelCount ?? 0,
+                }
             };
-        }
-
-        public object Delete(DeleteMovieContent request)
-        {
-            return DeleteContentFolder("Movies");
-        }
-
-        public object Delete(DeleteSeriesContent request)
-        {
-            return DeleteContentFolder("Shows");
-        }
-
-        private DeleteContentResult DeleteContentFolder(string folderName)
-        {
-            var config = Plugin.Instance.Configuration;
-            var result = new DeleteContentResult();
-
-            try
-            {
-                var root = Path.Combine(config.StrmLibraryPath, folderName);
-                if (!Directory.Exists(root))
-                {
-                    result.Success = true;
-                    result.Message = folderName + " folder does not exist. Nothing to delete.";
-                    return result;
-                }
-
-                var dirs = Directory.GetDirectories(root, "*", SearchOption.TopDirectoryOnly);
-                result.DeletedFolders = dirs.Length;
-
-                Directory.Delete(root, true);
-                Directory.CreateDirectory(root);
-
-                result.Success = true;
-                result.Message = string.Format("Deleted {0} folders from {1}.", dirs.Length, folderName);
-            }
-            catch (Exception ex)
-            {
-                result.Success = false;
-                result.Message = "Failed to delete " + folderName + " content: " + ex.Message;
-            }
-
-            return result;
-        }
-
-        public async Task<object> Get(TestTmdbLookup request)
-        {
-            var result = new TestConnectionResult();
-            try
-            {
-                var host = Plugin.Instance?.ApplicationHost;
-                if (host == null)
-                {
-                    result.Message = "ApplicationHost is null";
-                    return result;
-                }
-
-                var providerManager = host.Resolve<MediaBrowser.Controller.Providers.IProviderManager>();
-                if (providerManager == null)
-                {
-                    result.Message = "IProviderManager resolved to null";
-                    return result;
-                }
-
-                result.Message = "IProviderManager resolved: " + providerManager.GetType().FullName;
-
-                var name = request.Name ?? "Apocalypto";
-                var movieType = typeof(MediaBrowser.Controller.Entities.Movies.Movie);
-                var lookupInfoType = typeof(MediaBrowser.Controller.Providers.ItemLookupInfo);
-
-                // Find MovieInfo type at runtime (not in compile-time SDK)
-                Type movieInfoType = null;
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        foreach (var t in asm.GetTypes())
-                        {
-                            if (t.Name == "MovieInfo" && lookupInfoType.IsAssignableFrom(t))
-                            {
-                                movieInfoType = t;
-                                break;
-                            }
-                        }
-                        if (movieInfoType != null) break;
-                    }
-                    catch (System.Reflection.ReflectionTypeLoadException ex)
-                    {
-                        Logger.Debug("TestTmdbLookup type scan failed in '{0}': {1}", asm.FullName, ex.Message);
-                    }
-                    catch (NotSupportedException ex)
-                    {
-                        Logger.Debug("TestTmdbLookup type scan unsupported in '{0}': {1}", asm.FullName, ex.Message);
-                    }
-                }
-
-                result.Message += " | MovieInfoType: " + (movieInfoType != null ? movieInfoType.FullName : "NOT FOUND");
-
-                if (movieInfoType != null)
-                {
-                    var searchInfo = Activator.CreateInstance(movieInfoType);
-                    movieInfoType.GetProperty("Name").SetValue(searchInfo, name);
-                    if (request.Year.HasValue)
-                        movieInfoType.GetProperty("Year").SetValue(searchInfo, request.Year);
-
-                    var queryType = typeof(MediaBrowser.Controller.Providers.RemoteSearchQuery<>).MakeGenericType(movieInfoType);
-                    var queryObj = Activator.CreateInstance(queryType);
-                    queryType.GetProperty("SearchInfo").SetValue(queryObj, searchInfo);
-                    queryType.GetProperty("IncludeDisabledProviders").SetValue(queryObj, true);
-
-                    // Use GetMethods() filtering to avoid AmbiguousMatchException
-                    var methods = typeof(MediaBrowser.Controller.Providers.IProviderManager).GetMethods();
-                    System.Reflection.MethodInfo method = null;
-                    foreach (var m in methods)
-                    {
-                        if (m.Name == "GetRemoteSearchResults" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 2)
-                        {
-                            method = m;
-                            break;
-                        }
-                    }
-
-                    if (method == null)
-                    {
-                        result.Message += " | GetRemoteSearchResults method not found";
-                        return result;
-                    }
-
-                    var genericMethod = method.MakeGenericMethod(movieType, movieInfoType);
-                    var task = (Task)genericMethod.Invoke(providerManager, new object[] { queryObj, CancellationToken.None });
-                    await task.ConfigureAwait(false);
-
-                    var resultProp = task.GetType().GetProperty("Result");
-                    var searchResults = resultProp.GetValue(task) as System.Collections.IEnumerable;
-                    var count = 0;
-                    MediaBrowser.Model.Providers.RemoteSearchResult firstResult = null;
-                    if (searchResults != null)
-                    foreach (var item in searchResults)
-                    {
-                        if (count == 0) firstResult = item as MediaBrowser.Model.Providers.RemoteSearchResult;
-                        count++;
-                    }
-
-                    result.Message += " | Results: " + count;
-                    if (firstResult != null)
-                    {
-                        result.Message += " | First: " + firstResult.Name;
-                        result.Success = true;
-                        if (firstResult.ProviderIds != null)
-                        {
-                            foreach (var kvp in firstResult.ProviderIds)
-                                result.Message += " | " + kvp.Key + "=" + kvp.Value;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                result.Message = "Exception: [" + ex.GetType().FullName + "] " + ex.Message;
-                if (ex.InnerException != null)
-                {
-                    result.Message += " | Inner: [" + ex.InnerException.GetType().FullName + "] " + ex.InnerException.Message;
-                }
-            }
-
-            return result;
         }
 
         public void Post(RefreshCache request)
         {
-            // Normal cache refresh must only invalidate volatile plugin caches.
-            // Do not clear Emby's channel ImageInfos here: that deletes the
-            // user's backend-provided logos and makes Emby fall back to EPG art.
             Plugin.Instance.LiveTvService.InvalidateCache();
             M3uEditorTunerHost.Instance?.ClearCaches();
         }
 
         public async Task<object> Post(RefreshChannelIcons request)
         {
-            var result = new RefreshChannelIconsResult();
             var host = M3uEditorTunerHost.Instance;
             if (host == null)
             {
-                result.Success = false;
-                result.Message = "m3u-editor tuner host is not initialized.";
-                return result;
+                return new RefreshChannelIconsResult
+                {
+                    Message = "m3u-editor tuner host is not initialized."
+                };
             }
 
             try
@@ -1285,751 +606,215 @@ namespace Emby.M3uEditor.Plugin.Api
                     {
                         await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
                     }
-
-                    result.ProvidersDetached = host.DetachListingProviders(false);
-
-                    var cleanup = host.ClearWrongChannelArtwork();
-                    result.TotalLibraryChannels = cleanup.TotalLibraryChannels;
-                    result.MatchedChannels = cleanup.MatchedChannels;
-                    result.ClearedChannels = cleanup.ClearedChannels;
-                    result.AlreadyCleanChannels = cleanup.AlreadyCleanChannels;
-
-                    if (!cleanup.Success)
-                    {
-                        result.Success = false;
-                        result.Message = "Channel icon reload failed while clearing existing Emby artwork: " + cleanup.Message;
-                        return result;
-                    }
-
+                    var cleanup = host.ClearCachedChannelArtwork();
                     Plugin.Instance.LiveTvService.InvalidateCache();
                     host.ClearCaches();
-
-                    var rebuilt = await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
-                    result.RebuiltChannels = host.CachedChannelCount;
-
+                    var loaded = await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
                     var m3u = await Plugin.Instance.LiveTvService.GetM3UPlaylistAsync(cts.Token).ConfigureAwait(false);
                     var epg = await Plugin.Instance.LiveTvService.GetXmltvEpgAsync(cts.Token).ConfigureAwait(false);
-                    result.M3UBytes = m3u == null ? 0 : Encoding.UTF8.GetByteCount(m3u);
-                    result.EpgBytes = epg == null ? 0 : Encoding.UTF8.GetByteCount(epg);
-                    result.Success = rebuilt;
-                    result.Message = rebuilt
-                        ? string.Format("Cleared existing Emby artwork for {0} Xtream channel(s), detached {1} listing provider(s), and reloaded backend icon metadata for {2} channel(s). Now run Emby Live TV -> Refresh Guide so Emby pulls the logos again.", result.ClearedChannels, result.ProvidersDetached, result.RebuiltChannels)
-                        : "Existing Emby artwork was cleared, but backend icon metadata reload returned no channels. Verify Xtream credentials before refreshing guide data.";
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                result.Success = false;
-                result.Message = "Channel icon refresh failed: " + ex.Message;
-            }
-            catch (ArgumentException ex)
-            {
-                result.Success = false;
-                result.Message = "Channel icon refresh failed: " + ex.Message;
-            }
-            catch (HttpRequestException ex)
-            {
-                result.Success = false;
-                result.Message = "Channel icon refresh failed: " + ex.Message;
-            }
-            catch (TaskCanceledException ex)
-            {
-                result.Success = false;
-                result.Message = "Channel icon refresh timed out: " + ex.Message;
-            }
-            catch (OperationCanceledException ex)
-            {
-                result.Success = false;
-                result.Message = "Channel icon refresh was canceled: " + ex.Message;
-            }
-
-            return result;
-        }
-
-        public object Get(GetWritablePaths request)
-        {
-            return EnumerateWritableMountPaths();
-        }
-
-        public object Get(BrowsePath request)
-        {
-            var path = string.IsNullOrWhiteSpace(request.Path) ? null : request.Path.TrimEnd('/').TrimEnd('\\');
-
-            if (path == null)
-            {
-                return new BrowsePathResult
-                {
-                    CurrentPath = null,
-                    ParentPath = null,
-                    Directories = EnumerateWritableMountPaths()
-                };
-            }
-
-            var dirs = new List<string>();
-            try
-            {
-                foreach (var dir in Directory.GetDirectories(path)
-                    .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
-                    .Where(d => !System.IO.Path.GetFileName(d).StartsWith(".", StringComparison.Ordinal)))
-                {
-                    dirs.Add(dir);
-                }
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                Logger.Debug("BrowsePath failed for '{0}': {1}", path, ex.Message);
-            }
-            catch (DirectoryNotFoundException ex)
-            {
-                Logger.Debug("BrowsePath failed for '{0}': {1}", path, ex.Message);
-            }
-            catch (PathTooLongException ex)
-            {
-                Logger.Debug("BrowsePath failed for '{0}': {1}", path, ex.Message);
-            }
-            catch (IOException ex)
-            {
-                Logger.Debug("BrowsePath failed for '{0}': {1}", path, ex.Message);
-            }
-            catch (ArgumentException ex)
-            {
-                Logger.Debug("BrowsePath failed for '{0}': {1}", path, ex.Message);
-            }
-            catch (NotSupportedException ex)
-            {
-                Logger.Debug("BrowsePath failed for '{0}': {1}", path, ex.Message);
-            }
-
-            var parentInfo = Directory.GetParent(path);
-            var parentPath = (parentInfo == null || parentInfo.FullName == "/") ? null : parentInfo.FullName;
-
-            return new BrowsePathResult
-            {
-                CurrentPath = path,
-                ParentPath = parentPath,
-                Directories = dirs
-            };
-        }
-
-        internal static List<string> EnumerateWritableMountPaths()
-        {
-            var paths = new List<string>();
-
-            try
-            {
-                if (File.Exists("/proc/mounts"))
-                {
-                    var skipFsTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    return new RefreshChannelIconsResult
                     {
-                        "proc", "sysfs", "tmpfs", "devpts", "cgroup", "cgroup2",
-                        "mqueue", "overlay", "nsfs", "pstore", "securityfs", "debugfs"
+                        Success = loaded,
+                        MatchedChannels = cleanup.MatchedChannels,
+                        ClearedChannels = cleanup.ClearedChannels,
+                        RebuiltChannels = host.CachedChannelCount,
+                        M3UBytes = m3u == null ? 0 : Encoding.UTF8.GetByteCount(m3u),
+                        EpgBytes = epg == null ? 0 : Encoding.UTF8.GetByteCount(epg),
+                        Message = loaded
+                            ? string.Format(
+                                "Cleared cached artwork for {0} m3u-editor channel(s) and reloaded {1} channel(s). Refresh the Emby guide to apply the icons.",
+                                cleanup.ClearedChannels,
+                                host.CachedChannelCount)
+                            : "m3u-editor returned no channels. Verify the configured connection."
                     };
-
-                    var skipPrefixes = new[] { "/proc", "/sys", "/dev", "/etc", "/run" };
-                    var seen = new HashSet<string>(StringComparer.Ordinal);
-
-                    foreach (var line in File.ReadAllLines("/proc/mounts"))
-                    {
-                        var parts = line.Split(' ');
-                        if (parts.Length < 4) continue;
-
-                        var fsType = parts[2];
-                        var mountPoint = parts[1].Replace("\\040", " ").Replace("\\011", "\t").Replace("\\134", "\\");
-                        var options = parts[3].Split(',');
-
-                        if (skipFsTypes.Contains(fsType)) continue;
-                        if (!options.Contains("rw")) continue;
-                        if (!Directory.Exists(mountPoint)) continue;
-                        if (skipPrefixes.Any(p => mountPoint == p || mountPoint.StartsWith(p + "/"))) continue;
-                        if (!seen.Add(mountPoint)) continue;
-
-                        if (IsWritableDirectory(mountPoint))
-                            paths.Add(mountPoint);
-                    }
                 }
             }
-            catch (IOException)
+            catch (Exception ex) when (
+                ex is InvalidOperationException || ex is ArgumentException ||
+                ex is HttpRequestException || ex is TaskCanceledException)
             {
-                return paths;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return paths;
-            }
-
-            paths.Sort();
-            return paths;
-        }
-
-        private static bool IsWritableDirectory(string path)
-        {
-            var testFile = System.IO.Path.Combine(
-                path,
-                ".xtream_write_test_" + Guid.NewGuid().ToString("N"));
-            FileStream probe = null;
-            try
-            {
-                probe = new FileStream(
-                    testFile,
-                    FileMode.CreateNew,
-                    FileAccess.Write,
-                    FileShare.None,
-                    1,
-                    FileOptions.DeleteOnClose);
-                return true;
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
-            finally
-            {
-                if (probe != null)
-                {
-                    try
-                    {
-                        probe.Dispose();
-                    }
-                    catch (IOException)
-                    {
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                    }
-                }
-            }
-        }
-
-        public object Post(ValidateStrmPath request)
-        {
-            var path = (request.Path ?? string.Empty).TrimEnd('/').TrimEnd('\\');
-
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return new TestConnectionResult { Success = false, Message = "Path cannot be empty." };
-            }
-
-            try
-            {
-                Directory.CreateDirectory(path);
-
-                if (!IsWritableDirectory(path))
-                {
-                    return new TestConnectionResult { Success = false, Message = string.Format("Access denied: Emby cannot write to '{0}'.", path) };
-                }
-
-                return new TestConnectionResult { Success = true, Message = "Path is valid and writable." };
-            }
-            catch (Exception ex)
-            {
-                return new TestConnectionResult { Success = false, Message = string.Format("Invalid path: {0}", ex.Message) };
+                return new RefreshChannelIconsResult { Message = "Channel icon refresh failed: " + ex.Message };
             }
         }
 
         public async Task<object> Post(TestXtreamConnection request)
         {
             var config = Plugin.Instance.Configuration;
-            var result = new TestConnectionResult();
-
-            var baseUrl = !string.IsNullOrWhiteSpace(request.Url)
-                ? request.Url.TrimEnd('/')
-                : (config.BaseUrl ?? string.Empty).TrimEnd('/');
-            var username = !string.IsNullOrWhiteSpace(request.Username)
-                ? request.Username
-                : config.Username;
-            var password = !string.IsNullOrWhiteSpace(request.Password)
-                ? request.Password
-                : config.Password;
             var userAgent = !string.IsNullOrWhiteSpace(request.UserAgent)
                 ? request.UserAgent
                 : config.HttpUserAgent;
-
-            if (string.IsNullOrEmpty(baseUrl) ||
-                string.IsNullOrEmpty(username) ||
-                string.IsNullOrEmpty(password))
+            using (var handler = new HttpClientHandler
             {
-                result.Success = false;
-                result.Message = "Please configure server URL, username, and password first.";
-                return result;
-            }
-
-            try
+                AllowAutoRedirect = false,
+                UseProxy = false
+            })
+            using (var httpClient = new HttpClient(handler)
             {
-                var url = string.Format(
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    "{0}/player_api.php?username={1}&password={2}",
-                    baseUrl, Uri.EscapeDataString(username), Uri.EscapeDataString(password));
-
-                using (var httpClient = Plugin.CreateHttpClient(10, userAgent))
-                {
-                    var response = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-
-                    try
-                    {
-                        using (var doc = System.Text.Json.JsonDocument.Parse(response))
-                        {
-                            var detectedBackend = BackendDetector.DetectFromXtreamResponse(baseUrl, doc.RootElement);
-                            if (string.Equals(detectedBackend, BackendTypes.Unknown, StringComparison.OrdinalIgnoreCase))
-                            {
-                                detectedBackend = await BackendDetector.DetectDispatcharrProbeAsync(
-                                    httpClient,
-                                    baseUrl,
-                                    CancellationToken.None).ConfigureAwait(false);
-                            }
-
-                            result.BackendType = detectedBackend;
-                            result.BackendName = BackendTypes.ToDisplayName(detectedBackend);
-
-                            if (doc.RootElement.TryGetProperty("user_info", out var userInfo))
-                            {
-                                var auth = 0;
-                                if (userInfo.TryGetProperty("auth", out var authEl))
-                                {
-                                    if (authEl.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                        auth = authEl.GetInt32();
-                                    else if (authEl.ValueKind == System.Text.Json.JsonValueKind.String
-                                             && int.TryParse(authEl.GetString(), out var n))
-                                        auth = n;
-                                }
-
-                                string status = null;
-                                if (userInfo.TryGetProperty("status", out var statusEl))
-                                    status = statusEl.GetString();
-
-                                string active = null;
-                                if (userInfo.TryGetProperty("active_cons", out var activeEl))
-                                    active = activeEl.ToString();
-
-                                string maxConnections = null;
-                                if (userInfo.TryGetProperty("max_connections", out var maxEl))
-                                    maxConnections = maxEl.ToString();
-
-                                if (auth == 1)
-                                {
-                                    result.Success = true;
-                                    result.Message = string.Format(
-                                        "Connection successful ({0}){1}{2}.",
-                                        result.BackendName,
-                                        string.IsNullOrWhiteSpace(status) ? string.Empty : ", status: " + status,
-                                        string.IsNullOrWhiteSpace(active)
-                                            ? string.Empty
-                                            : string.Format(
-                                                ", streams: {0}{1}",
-                                                active,
-                                                string.IsNullOrWhiteSpace(maxConnections) ? string.Empty : "/" + maxConnections));
-
-                                    PersistBackendDetection(config, result.BackendType, result.BackendName);
-                                }
-                                else
-                                {
-                                    result.Success = false;
-                                    result.Message = string.Format(
-                                        "Authentication failed ({0}): account status is '{1}'.",
-                                        result.BackendName,
-                                        status ?? "unknown");
-                                }
-                            }
-                            else
-                            {
-                                result.Success = false;
-                                result.Message = "Server responded but returned an unexpected format. Verify the server URL.";
-                            }
-                        }
-                    }
-                    catch (System.Text.Json.JsonException)
-                    {
-                        result.Success = false;
-                        result.Message = "Server did not return a valid Xtream API response. Verify the server URL.";
-
-                        var probeType = await BackendDetector.DetectDispatcharrProbeAsync(
-                            httpClient,
-                            baseUrl,
-                            CancellationToken.None).ConfigureAwait(false);
-                        result.BackendType = probeType;
-                        result.BackendName = BackendTypes.ToDisplayName(probeType);
-                    }
-                }
-            }
-            catch (Exception ex)
+                Timeout = TimeSpan.FromSeconds(10)
+            })
             {
-                result.Success = false;
-                result.Message = "Connection failed: " + ex.Message;
-                result.BackendType = BackendTypes.Unknown;
-                result.BackendName = BackendTypes.ToDisplayName(result.BackendType);
-            }
+                if (!string.IsNullOrWhiteSpace(userAgent))
+                    httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", userAgent);
 
-            if (Diagnostics.IsEnabled)
-            {
-                Logger.Info("[diag] xtream-test success={0} backend={1}", result.Success, result.BackendName ?? "unknown");
-            }
-
-            return result;
-        }
-
-        private static void PersistBackendDetection(PluginConfiguration config, string backendType, string backendName)
-        {
-            if (config == null)
-            {
-                return;
-            }
-
-            config.DetectedBackendType = backendType ?? BackendTypes.Unknown;
-            config.DetectedBackendName = backendName ?? BackendTypes.ToDisplayName(BackendTypes.Unknown);
-            config.LastBackendDetectionTicks = DateTime.UtcNow.Ticks;
-            Plugin.Instance.SaveConfiguration();
-        }
-
-        public async Task<object> Post(TestDispatcharrConnection request)
-        {
-            var result = new TestConnectionResult();
-            var url = request.Url;
-            var user = request.Username ?? "";
-            var pass = request.Password ?? "";
-
-            if (string.IsNullOrEmpty(url))
-            {
-                result.Success = false;
-                result.Message = "Please enter Dispatcharr URL.";
-                return result;
-            }
-
-            try
-            {
-                var logManager = Plugin.Instance.ApplicationHost.Resolve<ILogManager>();
-                var client = new DispatcharrClient(logManager.GetLogger("M3uEditor.DispatcharrTest"));
-                client.Configure(user, pass);
-
-                var (success, message) = await client.TestConnectionDetailedAsync(
-                    url, user, pass,
+                return await TestConnectionAsync(
+                    request,
+                    config,
+                    httpClient,
                     CancellationToken.None).ConfigureAwait(false);
-
-                result.Success = success;
-                result.Message = message;
             }
-            catch (Exception ex)
+        }
+
+        internal static async Task<TestConnectionResult> TestConnectionAsync(
+            TestXtreamConnection request,
+            PluginConfiguration config,
+            HttpClient httpClient,
+            CancellationToken cancellationToken)
+        {
+            var baseUrl = !string.IsNullOrWhiteSpace(request.Url)
+                ? request.Url.TrimEnd('/')
+                : (config.BaseUrl ?? string.Empty).TrimEnd('/');
+            var username = !string.IsNullOrWhiteSpace(request.Username) ? request.Username : config.Username;
+            var password = !string.IsNullOrWhiteSpace(request.Password) ? request.Password : config.Password;
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
-                result.Success = false;
-                result.Message = "Unexpected error: " + ex.Message;
+                return new TestConnectionResult
+                {
+                    Message = "Please configure the m3u-editor URL, username, and password first."
+                };
             }
 
-            if (Diagnostics.IsEnabled)
+            try
             {
-                Logger.Info("[diag] dispatcharr-test success={0}", result.Success);
-            }
+                var authenticated = await new M3uEditorClient(httpClient).TestConnectionAsync(
+                    baseUrl,
+                    username,
+                    password,
+                    cancellationToken).ConfigureAwait(false);
+                if (!authenticated)
+                {
+                    return new TestConnectionResult
+                    {
+                        Message = "m3u-editor authentication failed."
+                    };
+                }
 
-            return result;
+                return new TestConnectionResult
+                {
+                    Success = true,
+                    Message = "Connection to the m3u-editor Xtream-compatible interface succeeded."
+                };
+            }
+            catch (Exception ex) when (
+                ex is HttpRequestException || ex is TaskCanceledException ||
+                ex is System.Text.Json.JsonException || ex is InvalidOperationException ||
+                ex is ArgumentException)
+            {
+                return new TestConnectionResult
+                {
+                    Message = "Connection failed: " + LogSanitizer.SanitizeLine(ex.Message, username, password)
+                };
+            }
         }
 
         public async Task<object> Get(CheckProbeDataCoverage request)
         {
-            var result = new ProbeDataCoverageResult();
-            try
+            var host = M3uEditorTunerHost.Instance;
+            if (host == null)
             {
-                var host = M3uEditorTunerHost.Instance;
-                if (host == null)
+                return new ProbeDataCoverageResult
                 {
-                    result.Success = false;
-                    result.Message = "Tuner host not initialized.";
-                    return result;
-                }
-
-                int total = host.CachedChannelCount;
-                int withStats = host.CachedStreamStatsCount;
-                int backend = host.BackendStreamStatsCount;
-                int dispatcharr = host.DispatcharrStreamStatsCount;
-
-                // The diagnostics page is the single most common spot the user
-                // hits right after a restart, before any guide refresh has had
-                // a chance to populate the channel cache. Rather than telling
-                // them to bounce to Live TV and refresh, do it for them once.
-                bool autoLoaded = false;
-                if (total == 0)
-                {
-                    using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
-                    {
-                        autoLoaded = await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
-                    }
-                    if (autoLoaded)
-                    {
-                        total = host.CachedChannelCount;
-                        withStats = host.CachedStreamStatsCount;
-                        backend = host.BackendStreamStatsCount;
-                        dispatcharr = host.DispatcharrStreamStatsCount;
-                    }
-                }
-
-                result.TotalChannels = total;
-                result.ChannelsWithProbeData = withStats;
-
-                var cfg = Plugin.Instance?.Configuration;
-                var detected = cfg?.DetectedBackendType;
-                if (string.IsNullOrEmpty(detected) && cfg != null && !string.IsNullOrEmpty(cfg.BaseUrl))
-                {
-                    detected = BackendDetector.DetectFromBaseUrl(cfg.BaseUrl);
-                }
-                result.BackendType = BackendTypes.ToDisplayName(string.IsNullOrEmpty(detected) ? BackendTypes.Unknown : detected);
-
-                if (total == 0)
-                {
-                    result.Success = false;
-                    result.Message = "Channel cache is empty and an on-demand load returned no channels. " +
-                        "Verify the Xtream credentials, then try Live TV \u2192 Refresh Guide.";
-                    result.Source = "none";
-                    return result;
-                }
-
-                string autoPrefix = autoLoaded ? "(auto-loaded " + total + " channels) " : string.Empty;
-
-                if (withStats == 0)
-                {
-                    result.Source = "none";
-                    result.Success = true;
-                    result.Message = autoPrefix + "No probe data available. " + total + " channels cached but none carry stream_stats. " +
-                        "Emby will FFprobe each stream on first playback. " +
-                        (result.BackendType != null && result.BackendType.IndexOf("m3u-editor", StringComparison.OrdinalIgnoreCase) >= 0
-                            ? "(m3u-editor detected; verify probing is enabled in m3u-editor for these channels.)"
-                            : "Enable Dispatcharr or use a backend like m3u-editor that probes streams to skip FFprobe.");
-                    return result;
-                }
-
-                if (backend > 0 && dispatcharr > 0) result.Source = "mixed";
-                else if (backend > 0) result.Source = "backend";
-                else result.Source = "dispatcharr";
-
-                result.Success = true;
-                result.Message = autoPrefix + string.Format(
-                    "{0} of {1} channels have probe data ({2} from backend payload, {3} from Dispatcharr). FFprobe is bypassed for these on playback.",
-                    withStats, total, backend, dispatcharr);
-            }
-            catch (InvalidOperationException ex)
-            {
-                result.Success = false;
-                result.Message = "Unexpected error: " + ex.Message;
-            }
-            catch (ArgumentException ex)
-            {
-                result.Success = false;
-                result.Message = "Unexpected error: " + ex.Message;
-            }
-
-            return result;
-        }
-
-        public async Task<object> Get(GetDispatcharrProfiles request)
-        {
-            var config = Plugin.Instance?.Configuration;
-            if (config == null || !config.EnableDispatcharr || string.IsNullOrEmpty(config.DispatcharrUrl))
-            {
-                return new DispatcharrProfilesResult
-                {
-                    Success = false,
-                    Message = "Dispatcharr is not enabled or URL is missing.",
-                    Profiles = new List<Client.Models.DispatcharrProfile>()
+                    Message = "Tuner host not initialized.",
+                    Source = "none"
                 };
             }
 
-            try
+            var autoLoaded = false;
+            if (host.CachedChannelCount == 0)
             {
-                var logManager = Plugin.Instance.ApplicationHost.Resolve<ILogManager>();
-                var client = new DispatcharrClient(logManager.GetLogger("M3uEditor.DispatcharrProfiles"));
-                client.Configure(config.DispatcharrUser, config.DispatcharrPass);
-
-                var profiles = await client.GetProfilesAsync(config.DispatcharrUrl, CancellationToken.None)
-                    .ConfigureAwait(false);
-
-                // Cache for instant UI loading on next page open
-                config.CachedDispatcharrProfiles = System.Text.Json.JsonSerializer.Serialize(
-                    profiles.Select(p => new { p.Id, p.Name }).ToList());
-                Plugin.Instance.SaveConfiguration();
-
-                return new DispatcharrProfilesResult
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
                 {
-                    Success = true,
-                    Message = string.Format("Loaded {0} profiles.", profiles.Count),
-                    Profiles = profiles
-                };
+                    autoLoaded = await host.EnsureChannelsLoadedAsync(cts.Token).ConfigureAwait(false);
+                }
             }
-            catch (Exception ex)
-            {
-                Logger.Warn("Failed to fetch Dispatcharr profiles: {0}", ex.Message);
-                return new DispatcharrProfilesResult
-                {
-                    Success = false,
-                    Message = "Failed to fetch Dispatcharr profiles: " + ex.Message,
-                    Profiles = new List<Client.Models.DispatcharrProfile>()
-                };
-            }
+
+            return BuildProbeDataCoverageResult(
+                host.CachedChannelCount,
+                host.BackendStreamStatsCount,
+                autoLoaded);
         }
 
         public async Task<object> Get(CheckForUpdate request)
         {
-            // Always invalidate before a user-initiated check so the dashboard
-            // reflects releases published since the last page load.
             UpdateChecker.InvalidateCache();
-            var result = await UpdateChecker.CheckForUpdateAsync(request.Beta).ConfigureAwait(false);
-            if (Diagnostics.IsEnabled)
-            {
-                Logger.Info("[diag] update-check betaOverride={0} available={1} current={2} latest={3}",
-                    request.Beta.HasValue, result.UpdateAvailable, result.CurrentVersion, result.LatestVersion);
-            }
-
-            return result;
+            return await UpdateChecker.CheckForUpdateAsync(request.Beta).ConfigureAwait(false);
         }
 
         public async Task<object> Post(InstallUpdate request)
         {
             var result = new InstallUpdateResult();
-
             try
             {
                 var checkResult = await UpdateChecker.CheckForUpdateAsync().ConfigureAwait(false);
-
-                if (!checkResult.UpdateAvailable)
+                if (!checkResult.UpdateAvailable || string.IsNullOrEmpty(checkResult.DownloadUrl))
                 {
                     result.Message = "No update available.";
                     return result;
                 }
 
-                if (string.IsNullOrEmpty(checkResult.DownloadUrl))
-                {
-                    result.Message = "No DLL download URL found in the release.";
-                    return result;
-                }
-
-                // Determine current plugin DLL path
                 var currentDll = typeof(Plugin).Assembly.Location;
                 if (string.IsNullOrEmpty(currentDll) || !File.Exists(currentDll))
                 {
-                    // Fallback for Docker/single-file: use Emby's PluginsPath
                     var pluginsDir = Plugin.Instance.ApplicationPaths.PluginsPath;
-                    if (!string.IsNullOrEmpty(pluginsDir))
-                    {
-                        currentDll = Path.Combine(pluginsDir, "Emby.M3uEditor.Plugin.dll");
-                    }
+                    currentDll = Path.Combine(pluginsDir, "Emby.M3uEditor.Plugin.dll");
                 }
-
-                if (string.IsNullOrEmpty(currentDll) || !File.Exists(currentDll))
+                if (!File.Exists(currentDll))
                 {
                     result.Message = "Could not determine plugin DLL path.";
                     return result;
                 }
 
-                var tempPath = currentDll + ".temp";
-                var bakPath = currentDll + ".bak";
-
-                // Download the new DLL
                 byte[] dllBytes;
-                using (var httpClient = new System.Net.Http.HttpClient())
+                using (var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(60) })
                 {
                     httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("M3u-Editor-for-Emby/1.0");
-                    httpClient.Timeout = TimeSpan.FromSeconds(60);
                     dllBytes = await httpClient.GetByteArrayAsync(checkResult.DownloadUrl).ConfigureAwait(false);
                 }
-
                 if (dllBytes.Length < 1024)
                 {
-                    result.Message = "Downloaded file is too small (" + dllBytes.Length + " bytes). Aborting.";
+                    result.Message = "Downloaded file is too small. Aborting.";
                     return result;
                 }
 
-                // Atomic replacement with backup
+                var tempPath = currentDll + ".temp";
+                var backupPath = currentDll + ".bak";
                 File.WriteAllBytes(tempPath, dllBytes);
-
+                if (File.Exists(backupPath)) File.Delete(backupPath);
+                File.Move(currentDll, backupPath);
                 try
                 {
-                    // Back up current DLL
-                    if (File.Exists(bakPath))
-                        File.Delete(bakPath);
-                    File.Move(currentDll, bakPath);
-
-                    // Move new DLL into place
                     File.Move(tempPath, currentDll);
-
-                    // Clean up backup on success
-                    try { File.Delete(bakPath); } catch (IOException ex) { Logger.Debug("InstallUpdate backup cleanup failed: {0}", ex.Message); } catch (UnauthorizedAccessException ex) { Logger.Debug("InstallUpdate backup cleanup failed: {0}", ex.Message); }
+                    File.Delete(backupPath);
                 }
-                catch (IOException)
+                catch
                 {
-                    // Restore backup on failure
-                    try
-                    {
-                        if (File.Exists(bakPath) && !File.Exists(currentDll))
-                            File.Move(bakPath, currentDll);
-                    }
-                    catch (IOException ex) { Logger.Debug("InstallUpdate backup restore failed: {0}", ex.Message); }
-                    catch (UnauthorizedAccessException ex) { Logger.Debug("InstallUpdate backup restore failed: {0}", ex.Message); }
-
-                    try { File.Delete(tempPath); } catch (IOException ex) { Logger.Debug("InstallUpdate temp cleanup failed: {0}", ex.Message); } catch (UnauthorizedAccessException ex) { Logger.Debug("InstallUpdate temp cleanup failed: {0}", ex.Message); }
-                    throw;
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    // Restore backup on failure
-                    try
-                    {
-                        if (File.Exists(bakPath) && !File.Exists(currentDll))
-                            File.Move(bakPath, currentDll);
-                    }
-                    catch (IOException ex) { Logger.Debug("InstallUpdate backup restore failed: {0}", ex.Message); }
-                    catch (UnauthorizedAccessException ex) { Logger.Debug("InstallUpdate backup restore failed: {0}", ex.Message); }
-
-                    try { File.Delete(tempPath); } catch (IOException ex) { Logger.Debug("InstallUpdate temp cleanup failed: {0}", ex.Message); } catch (UnauthorizedAccessException ex) { Logger.Debug("InstallUpdate temp cleanup failed: {0}", ex.Message); }
+                    if (File.Exists(backupPath) && !File.Exists(currentDll))
+                        File.Move(backupPath, currentDll);
                     throw;
                 }
 
                 UpdateChecker.UpdateInstalled = true;
                 UpdateChecker.InvalidateCache();
-
-                // Persist installed version so banner stays hidden after restart
-                try
-                {
-                    var config = Plugin.Instance.Configuration;
-                    config.LastInstalledVersion = checkResult.LatestVersion;
-                    Plugin.Instance.SaveConfiguration();
-                }
-                catch (IOException ex)
-                {
-                    Logger.Debug("InstallUpdate version persistence failed: {0}", ex.Message);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    Logger.Debug("InstallUpdate version persistence failed: {0}", ex.Message);
-                }
-
-                // Notify Emby that a restart is needed
-                try
-                {
-                    var appHost = Plugin.Instance.ApplicationHost;
-                    var notifyMethod = appHost.GetType().GetMethod("NotifyPendingRestart",
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                    if (notifyMethod != null)
-                        notifyMethod.Invoke(appHost, null);
-                }
-                catch (System.Reflection.TargetInvocationException ex)
-                {
-                    Logger.Debug("InstallUpdate restart notification failed: {0}", ex.Message);
-                }
-                catch (MethodAccessException ex)
-                {
-                    Logger.Debug("InstallUpdate restart notification failed: {0}", ex.Message);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    Logger.Debug("InstallUpdate restart notification failed: {0}", ex.Message);
-                }
-
+                Plugin.Instance.Configuration.LastInstalledVersion = checkResult.LatestVersion;
+                Plugin.Instance.SaveConfiguration();
                 result.Success = true;
-                result.Message = "Update installed successfully (" + dllBytes.Length + " bytes). Restart Emby to apply.";
+                result.Message = "Update installed successfully. Restart Emby to apply.";
             }
-            catch (Exception ex)
+            catch (Exception ex) when (
+                ex is HttpRequestException || ex is TaskCanceledException ||
+                ex is IOException || ex is UnauthorizedAccessException || ex is InvalidOperationException)
             {
                 result.Message = "Install failed: " + ex.Message;
             }
-
             return result;
         }
 
@@ -2038,91 +823,39 @@ namespace Emby.M3uEditor.Plugin.Api
             try
             {
                 var appHost = Plugin.Instance.ApplicationHost;
-                var restartMethod = appHost.GetType().GetMethod("Restart",
+                var restartMethod = appHost.GetType().GetMethod(
+                    "Restart",
                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
-                    null, Type.EmptyTypes, null);
-                if (restartMethod != null)
-                {
-                    restartMethod.Invoke(appHost, null);
-                }
+                    null,
+                    Type.EmptyTypes,
+                    null);
+                restartMethod?.Invoke(appHost, null);
             }
-            catch (System.Reflection.TargetInvocationException ex)
+            catch (Exception ex) when (
+                ex is System.Reflection.TargetInvocationException ||
+                ex is MethodAccessException || ex is InvalidOperationException)
             {
                 Logger.Warn("RestartEmby failed: {0}", ex.Message);
             }
-            catch (MethodAccessException ex)
-            {
-                Logger.Warn("RestartEmby failed: {0}", ex.Message);
-            }
-            catch (InvalidOperationException ex)
-            {
-                Logger.Warn("RestartEmby failed: {0}", ex.Message);
-            }
-        }
-
-        public object Post(SyncGuideMappings request)
-        {
-            var result = new SyncGuideMappingsResult();
-
-            var tunerHost = M3uEditorTunerHost.Instance;
-            if (tunerHost == null)
-            {
-                result.Message = "m3u-editor tuner host is not initialized.";
-                return result;
-            }
-
-            try
-            {
-                var updated = tunerHost.DetachListingProviders();
-                result.Success = true;
-                result.ProvidersUpdated = updated;
-                result.Message = updated > 0
-                    ? string.Format("Detached m3u-editor tuner from {0} listing provider(s). Gracenote EPG is now fetched by the tuner directly for channels with station IDs; all other channels use Xtream EPG.", updated)
-                    : "m3u-editor tuner is already detached from all listing providers. Gracenote EPG will be fetched by the tuner for channels with station IDs.";
-            }
-            catch (Exception ex)
-            {
-                result.Message = "Failed: " + ex.Message;
-            }
-
-            return result;
         }
 
         public object Get(GetSanitizedLogs request)
         {
             var config = Plugin.Instance.Configuration;
-            var logDir = Plugin.Instance.ApplicationPaths.LogDirectoryPath;
             var lines = new List<string>();
-
             try
             {
-                var logFiles = Directory.GetFiles(logDir, "*.txt")
-                    .Concat(Directory.GetFiles(logDir, "*.log"))
-                    .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
-                    .Take(5)
-                    .ToArray();
-
-                var keywords = new[] { "M3uEditor", "Xtream", "Dispatcharr", "LiveTv" };
-
-                foreach (var logFile in logFiles)
+                foreach (var logFile in Directory.GetFiles(Plugin.Instance.ApplicationPaths.LogDirectoryPath, "*.*")
+                    .Where(path => path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) ||
+                                   path.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Take(5))
                 {
                     try
                     {
-                        using (var reader = new StreamReader(logFile, Encoding.UTF8))
-                        {
-                            string line;
-                            while ((line = reader.ReadLine()) != null)
-                            {
-                                foreach (var kw in keywords)
-                                {
-                                    if (line.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0)
-                                    {
-                                        lines.Add(line);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                        lines.AddRange(File.ReadLines(logFile).Where(line =>
+                            line.IndexOf("M3uEditor", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            line.IndexOf("LiveTv", StringComparison.OrdinalIgnoreCase) >= 0));
                     }
                     catch (IOException ex)
                     {
@@ -2136,32 +869,28 @@ namespace Emby.M3uEditor.Plugin.Api
             }
             catch (IOException ex)
             {
-                Logger.Debug("Log discovery failed in '{0}': {1}", logDir, ex.Message);
+                Logger.Debug("Log discovery failed: {0}", ex.Message);
             }
             catch (UnauthorizedAccessException ex)
             {
-                Logger.Debug("Log discovery failed in '{0}': {1}", logDir, ex.Message);
+                Logger.Debug("Log discovery failed: {0}", ex.Message);
             }
 
-            // Sanitize PII
             var sanitized = new StringBuilder();
             foreach (var line in lines)
-            {
-                var s = LogSanitizer.SanitizeLine(line,
-                    config.Username, config.Password,
-                    config.DispatcharrUser, config.DispatcharrPass);
-                sanitized.AppendLine(s);
-            }
-
+                sanitized.AppendLine(LogSanitizer.SanitizeLine(line, config.Username, config.Password));
             if (sanitized.Length == 0)
                 sanitized.AppendLine("No plugin-related log entries found.");
 
-            var stream = new MemoryStream(Encoding.UTF8.GetBytes(sanitized.ToString()));
             var headers = new Dictionary<string, string>
             {
                 { "Content-Disposition", "attachment; filename=\"m3u-editor-log.txt\"" },
             };
-            return ResultFactory.GetResult(Request, stream, "text/plain", headers);
+            return ResultFactory.GetResult(
+                Request,
+                new MemoryStream(Encoding.UTF8.GetBytes(sanitized.ToString())),
+                "text/plain",
+                headers);
         }
     }
 }

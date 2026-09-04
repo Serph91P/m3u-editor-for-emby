@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Services;
 using Xunit;
 
@@ -58,6 +61,131 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(config.ManagedSetupReady);
             Assert.Equal("Ready", config.ManagedSetupLastResult);
             Assert.Equal(1, saves);
+        }
+
+        [Fact]
+        public void SetupRoute_SuccessfullyReplacesLiveConfigurationUsedByDashboard()
+        {
+            var instanceField = typeof(Plugin).GetField(
+                "_instance",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var previousInstance = Plugin.InstanceOrNull;
+            var plugin = (TestPlugin)RuntimeHelpers.GetUninitializedObject(typeof(TestPlugin));
+            plugin.SetAttributes(null, _owner.Path, null);
+            plugin.SetConfiguration(new PluginConfiguration { ManagedMappingsJson = "[]" });
+            instanceField.SetValue(null, plugin);
+            try
+            {
+                var result = (ManagedSetupResult)new M3uEditorApi().Put(
+                    new ManagedSetupRequest { IntegrationId = 2 });
+                var dashboard = M3uEditorApi.BuildManagedDashboardStatus(
+                    plugin.Configuration,
+                    new ManagedJobStatus { State = "idle" },
+                    1,
+                    10);
+
+                Assert.True(result.Ready, result.Result);
+                Assert.True(plugin.UpdateConfigurationCalled);
+                Assert.True(dashboard.SetupReady);
+                Assert.Equal("Ready", dashboard.SetupResult);
+                Assert.True(dashboard.ConfigurationValid);
+                Assert.Equal(2, dashboard.IntegrationId);
+            }
+            finally
+            {
+                instanceField.SetValue(null, previousInstance);
+            }
+        }
+
+        [Fact]
+        public void SetupRoute_SuccessClearsPriorValidationErrorFromLiveDashboardState()
+        {
+            var instanceField = typeof(Plugin).GetField(
+                "_instance",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var previousInstance = Plugin.InstanceOrNull;
+            var plugin = (TestPlugin)RuntimeHelpers.GetUninitializedObject(typeof(TestPlugin));
+            plugin.SetAttributes(null, _owner.Path, null);
+            plugin.SetConfiguration(new PluginConfiguration
+            {
+                ManagedMappingsJson = "[]",
+                ManagedLastError = "The managed backend base URL must be a confined HTTPS origin."
+            });
+            instanceField.SetValue(null, plugin);
+            try
+            {
+                var result = (ManagedSetupResult)new M3uEditorApi().Put(
+                    new ManagedSetupRequest { IntegrationId = 2 });
+                var dashboard = M3uEditorApi.BuildManagedDashboardStatus(
+                    plugin.Configuration,
+                    new ManagedJobStatus { State = "idle" },
+                    1,
+                    10);
+
+                Assert.True(result.Ready, result.Result);
+                Assert.True(dashboard.SetupReady);
+                Assert.Equal("Ready", dashboard.SetupResult);
+                Assert.True(dashboard.ConfigurationValid);
+                Assert.Equal(2, dashboard.IntegrationId);
+                Assert.Equal(string.Empty, dashboard.LastError);
+            }
+            finally
+            {
+                instanceField.SetValue(null, previousInstance);
+            }
+        }
+
+        [Fact]
+        public async Task SetupRoute_ConfigurationTransactionDoesNotOverwriteConcurrentReplacement()
+        {
+            var instanceField = typeof(Plugin).GetField(
+                "_instance",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var previousInstance = Plugin.InstanceOrNull;
+            var plugin = (TestPlugin)RuntimeHelpers.GetUninitializedObject(typeof(TestPlugin));
+            using (var setupCommitEntered = new ManualResetEventSlim(false))
+            using (var allowSetupCommit = new ManualResetEventSlim(false))
+            using (var updateAttempted = new ManualResetEventSlim(false))
+            {
+                plugin.SetAttributes(null, _owner.Path, null);
+                plugin.SetConfiguration(new PluginConfiguration { ManagedMappingsJson = "[]" });
+                plugin.BeforeUpdateConfiguration = () =>
+                {
+                    setupCommitEntered.Set();
+                    allowSetupCommit.Wait();
+                };
+                plugin.UpdateConfigurationAttempted = () => updateAttempted.Set();
+                instanceField.SetValue(null, plugin);
+                try
+                {
+                    var setup = Task.Run(() => (ManagedSetupResult)new M3uEditorApi().Put(
+                        new ManagedSetupRequest { IntegrationId = 2 }));
+                    Assert.True(await Task.Run(() => setupCommitEntered.Wait(TimeSpan.FromSeconds(5))));
+                    updateAttempted.Reset();
+
+                    var replacement = new PluginConfiguration
+                    {
+                        HttpUserAgent = "unrelated-administrator-replacement"
+                    };
+                    var update = Task.Run(() => plugin.UpdateConfiguration(replacement));
+                    Assert.True(await Task.Run(() => updateAttempted.Wait(TimeSpan.FromSeconds(5))));
+                    var completion = await Task.WhenAny(update, Task.Delay(TimeSpan.FromMilliseconds(100)));
+                    Assert.NotSame(update, completion);
+
+                    allowSetupCommit.Set();
+                    var result = await setup;
+                    await update;
+
+                    Assert.True(result.Ready, result.Result);
+                    Assert.Same(replacement, plugin.Configuration);
+                    Assert.Equal("unrelated-administrator-replacement", plugin.Configuration.HttpUserAgent);
+                }
+                finally
+                {
+                    allowSetupCommit.Set();
+                    instanceField.SetValue(null, previousInstance);
+                }
+            }
         }
 
         [Fact]
@@ -293,6 +421,35 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Setup_IdempotentRequestWithStaleError_PersistsClearAndRestoresOnSaveFailure()
+        {
+            const string staleError = "The managed backend base URL must be a confined HTTPS origin.";
+            var config = new PluginConfiguration();
+            var service = new ManagedSetupService(_owner.Path);
+
+            var initial = service.Put(config, 17, () => { });
+            config.ManagedLastError = staleError;
+            var successful = service.Put(config, 17, () =>
+            {
+                Assert.Equal(string.Empty, config.ManagedLastError);
+            });
+
+            Assert.True(initial.Ready, initial.Result);
+            Assert.True(successful.Ready, successful.Result);
+            Assert.Equal(string.Empty, config.ManagedLastError);
+
+            config.ManagedLastError = staleError;
+            var failed = service.Put(config, 17, () =>
+            {
+                Assert.Equal(string.Empty, config.ManagedLastError);
+                throw new IOException("save failed");
+            });
+
+            Assert.False(failed.Ready);
+            Assert.Equal(staleError, config.ManagedLastError);
+        }
+
+        [Fact]
         public async Task Setup_ConcurrentConflictingBindings_OnlyOneCommits()
         {
             var config = new PluginConfiguration();
@@ -309,29 +466,6 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(0, rejected.IntegrationId);
             Assert.Contains("conflict", rejected.Result, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(string.Empty, config.ManagedMappingsJson);
-        }
-
-        [Fact]
-        public void Setup_EnabledLegacyWriterOverlap_LeavesConfigurationUnchanged()
-        {
-            var originalRoot = Path.Join(_owner.Path, "old-root");
-            var config = new PluginConfiguration
-            {
-                ManagedPublishingIntegrationId = 9,
-                ManagedApprovedOutputRoots = originalRoot,
-                ManagedMappingsJson = "existing mappings",
-                SyncMovies = true,
-                StrmLibraryPath = _owner.Path
-            };
-
-            var result = new ManagedSetupService(_owner.Path).Put(config, 9, () => { });
-
-            Assert.False(result.Ready);
-            Assert.Contains("legacy", result.Result, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(9, config.ManagedPublishingIntegrationId);
-            Assert.Equal(originalRoot, config.ManagedApprovedOutputRoots);
-            Assert.Equal("existing mappings", config.ManagedMappingsJson);
-            Assert.False(config.ManagedSetupReady);
         }
 
         [Fact]
@@ -497,7 +631,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 ManagedPublishingIntegrationId = 8,
                 ManagedApprovedOutputRoots = originalRoot,
-                ManagedMappingsJson = mappings
+                ManagedMappingsJson = mappings,
+                ManagedLastError = "The managed backend base URL must be a confined HTTPS origin."
             };
 
             var result = new ManagedSetupService(_owner.Path).Put(
@@ -513,6 +648,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                         Path.Join(_owner.Path, "managed-publishing", "series"),
                         config.ManagedApprovedOutputRoots,
                         out var candidateError), candidateError);
+                    Assert.Equal(string.Empty, config.ManagedLastError);
                     throw new IOException("secret /path/to/config");
                 });
 
@@ -525,6 +661,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(originalRoot, config.ManagedApprovedOutputRoots);
             Assert.Equal(mappings, config.ManagedMappingsJson);
             Assert.False(config.ManagedSetupReady);
+            Assert.Equal("The managed backend base URL must be a confined HTTPS origin.", config.ManagedLastError);
         }
 
         [Fact]
@@ -550,6 +687,40 @@ namespace Emby.M3uEditor.Plugin.Tests
         public void Dispose()
         {
             _owner.Dispose();
+        }
+
+        private sealed class TestPlugin : Plugin
+        {
+            public bool UpdateConfigurationCalled { get; private set; }
+
+            public Action BeforeUpdateConfiguration { get; set; }
+
+            public Action UpdateConfigurationAttempted { get; set; }
+
+            private TestPlugin()
+                : base(null, null, null, null)
+            {
+            }
+
+            public void SetConfiguration(PluginConfiguration configuration)
+            {
+                Configuration = configuration;
+            }
+
+            public override void UpdateConfiguration(BasePluginConfiguration configuration)
+            {
+                UpdateConfigurationAttempted?.Invoke();
+                lock (ConfigurationTransactionGate)
+                {
+                    UpdateConfigurationCalled = true;
+                    BeforeUpdateConfiguration?.Invoke();
+                    Configuration = (PluginConfiguration)configuration;
+                }
+            }
+
+            public override void SaveConfiguration()
+            {
+            }
         }
     }
 }

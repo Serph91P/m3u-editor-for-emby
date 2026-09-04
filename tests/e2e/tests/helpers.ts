@@ -88,7 +88,7 @@ export interface StreamSession {
  * Close an active Emby live stream via the server API.
  *
  * Mirrors the three-step `close_stream()` in tools/benchmark_livetv.py:
- *   1. LiveStreams/Close   - disposes the ILiveStream (drops Dispatcharr connection)
+ *   1. LiveStreams/Close   - disposes the ILiveStream and upstream connection
  *   2. Sessions/Playing/Stopped - releases tuner locks
  *   3. Videos/ActiveEncodings DELETE - kills transcoding processes for this browser device
  *
