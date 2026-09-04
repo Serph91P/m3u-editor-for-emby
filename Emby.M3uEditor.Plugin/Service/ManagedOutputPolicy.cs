@@ -47,8 +47,6 @@ namespace Emby.M3uEditor.Plugin.Service
             string ownerPath,
             string candidatePath,
             string existingApprovedRoots,
-            string legacyRoot,
-            bool legacyWriterEnabled,
             out string normalizedCandidate,
             out string error)
         {
@@ -99,16 +97,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 (IsSameOrChild(root, candidate) || IsSameOrChild(candidate, root))))
             {
                 error = "The managed output root overlaps an existing approved root.";
-                normalizedCandidate = null;
-                return false;
-            }
-
-            string normalizedLegacy;
-            if (legacyWriterEnabled && TryNormalize(legacyRoot, out normalizedLegacy) &&
-                (IsSameOrChild(normalizedLegacy, normalizedCandidate) ||
-                 IsSameOrChild(normalizedCandidate, normalizedLegacy)))
-            {
-                error = "The managed output root overlaps an enabled legacy writer.";
                 normalizedCandidate = null;
                 return false;
             }

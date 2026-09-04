@@ -1,53 +1,71 @@
-# Contributing to m3u-editor for Emby plugin
+# Contributing to m3u-editor for Emby
 
 ## Architecture
 
-### Emby DI / SimpleInjector - service class construction
+### Emby DI and SimpleInjector
 
-Emby's `ApplicationHost.CreateInstanceSafe` scans the plugin assembly and auto-registers **all public classes** whose constructor matches known DI types (e.g. `ILogger`). It instantiates these via SimpleInjector **before** the `Plugin` constructor runs.
+Emby's `ApplicationHost.CreateInstanceSafe` scans the plugin assembly and
+auto-registers public classes whose constructors match known DI types. These
+classes can be instantiated before the `Plugin` constructor runs.
 
-This means:
-- `Plugin.Instance` is **null** when Emby creates service classes
-- `Plugin.Instance.Configuration` will throw (wrapped as `ActivationException` by SimpleInjector)
-- **Never call `Plugin.Instance.*` in a service class constructor** (`StrmSyncService`, `LiveTvService`, `TmdbLookupService`, etc.)
+Consequently, `Plugin.Instance` may be null and plugin configuration paths may
+not be initialized during service construction. Never access
+`Plugin.Instance`, `Plugin.Instance.Configuration`, or configuration-backed
+paths from a service constructor. Defer that work to runtime methods.
 
-**Safe pattern**: access `Plugin.Instance.Configuration` only from methods called at runtime, not from constructors.
+### Persistent Configuration
 
-### Plugin configuration path requires ApplicationPaths
+Emby serializes `PluginConfiguration` to XML. Use it only for durable settings
+and state that must survive restarts. Keep transient connection, probe, cache,
+and managed-action state in the service responsible for it.
 
-`BasePlugin<T>.get_Configuration()` calls `Path.Combine(ApplicationPaths.PluginConfigurationsPath, ...)` internally. This path may not be initialised when Emby is scanning services, causing `ArgumentNullException: Value cannot be null. (Parameter 'path2')`. Same rule applies - defer config access to runtime methods.
+### Direct Live TV Path
 
-### Delta sync state via PluginConfiguration
+The tuner consumes the configured Xtream-compatible m3u-editor output directly.
+Changes to channel identity must preserve a stable mapping between Emby's tuner
+channel ID and the upstream stream ID so guide and playback requests resolve the
+same channel.
 
-`PluginConfiguration` is serialised to XML by Emby automatically. Fields added to it persist across restarts without any extra work. Use this for sync watermarks (`LastMovieSyncTimestamp`, `LastSeriesSyncTimestamp`), channel hashes (`LastChannelListHash`), and similar durable state.
+When m3u-editor supplies `stream_stats`, pass the available media metadata to
+Emby and bypass redundant probing only for covered streams. Streams without
+complete metadata must retain Emby's normal probe path.
 
-### SupportsGuideData and EPG
+### Managed Publishing
 
-When `SupportsGuideData()` returns `true`, Emby calls `GetProgramsInternal` on the tuner host for each channel. The `tunerChannelId` parameter is whatever was set in `ChannelInfo.TunerChannelId` - the Gracenote station ID (e.g. `"51529"`) when Dispatcharr is enabled and a station ID exists, or the raw stream ID (e.g. `"12345"`) otherwise. Use `_tunerChannelIdToStreamId` to translate either form back to a stream ID.
+Managed publishing is capability-gated and owned by m3u-editor. Preserve these
+boundaries when changing the integration:
 
-### Dispatcharr proxy - never enable probing
+- Treat setup and advertised catalogs as versioned backend contracts.
+- Write only beneath approved, confined local roots.
+- Apply a complete generation atomically; never mutate an active generation in
+  place.
+- Keep the previous plugin-owned generation available for rollback.
+- Report mapping results to m3u-editor and restore the previous generation when
+  a required callback fails.
+- Never delete files that are not recorded as plugin-owned.
 
-When `SupportsProbing = true` and `AnalyzeDurationMs > 0`, Emby runs ffprobe against `MediaSource.Path` independently of `GetChannelStream`. For Dispatcharr proxy URLs (`/proxy/ts/stream/{uuid}`) this is destructive: the probe opens a short-lived connection then closes it, Dispatcharr interprets the close as the last client leaving and tears down the channel, and the real playback connection that follows hits the "channel stop signal" - triggering a rapid retry storm.
+The Emby configuration page is an operations surface for readiness, reconcile,
+rollback, logs, updates, and direct Live TV settings. Publishing setup remains
+in m3u-editor.
 
-**Rule**: always set `SupportsProbing = false` and `AnalyzeDurationMs = 0` for Dispatcharr proxy URLs. Direct Xtream URLs can still use probing when stream stats are absent.
+### Empty Guide Grid
 
-### Guide grid empty after setup
+If the Emby guide has data but displays no channels, check browser local storage
+for a stale `guide-tagids` filter. Clear it from the guide filter UI or run:
 
-If the Emby guide shows no channels despite having data, check browser localStorage for a stale `guide-tagids` filter. The guide calls `/LiveTv/EPG?TagIds=<id>` - if the stored tag ID doesn't match any channel the grid is empty. Fix: click the filter icon in the guide, or run `localStorage.removeItem('guide-tagids')` in the browser console.
-
----
+```js
+localStorage.removeItem('guide-tagids');
+```
 
 ## Development Workflow
 
-### One concern per branch
+Keep unrelated changes on separate short-lived branches. Do not carry an
+uncommitted change into unrelated work; commit a work-in-progress snapshot or
+stash it first.
 
-Unrelated fixes should live on separate short-lived branches and be merged to `main` independently. This makes each change revertable without touching unrelated code.
+### Build
 
-### Commit before switching context
-
-Never leave changes in the working tree when starting unrelated work. An uncommitted change is easy to tangle with later work. Use a `WIP:` commit or `git stash` if the change isn't ready.
-
-### Building
+Requires .NET SDK 6.0 or newer:
 
 ```bash
 cd Emby.M3uEditor.Plugin
@@ -55,5 +73,3 @@ bash build.sh
 ```
 
 Output: `Emby.M3uEditor.Plugin/out/Emby.M3uEditor.Plugin.dll`
-
-Requires .NET SDK 6.0+.

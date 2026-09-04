@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
 using Emby.M3uEditor.Plugin.Service;
@@ -91,6 +92,54 @@ namespace Emby.M3uEditor.Plugin.Tests
 
                 Assert.NotNull(capability);
                 Assert.Equal(1, capability.ApiVersion);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_AuthenticatedM3uEditorWithoutPublishingAdvertisement_Succeeds()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":1},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "https://editor.example",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.True(result.Success);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_PublicHttpOrigin_FailsBeforeRequest()
+        {
+            var handler = new FakeHttpHandler();
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "http://198.51.100.10",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.False(result.Success);
+                Assert.Empty(handler.ReceivedUrls);
+                Assert.DoesNotContain("credential", result.Message);
             }
         }
 

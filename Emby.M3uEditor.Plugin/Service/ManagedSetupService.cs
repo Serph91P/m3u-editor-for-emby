@@ -45,8 +45,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 _ownerPath,
                 candidate,
                 config.ManagedApprovedOutputRoots,
-                null,
-                false,
                 out root,
                 out validationError))
             {
@@ -90,8 +88,6 @@ namespace Emby.M3uEditor.Plugin.Service
                     _ownerPath,
                     candidate,
                     config.ManagedApprovedOutputRoots,
-                    config.StrmLibraryPath,
-                    config.SyncMovies || config.SyncSeries,
                     out root,
                     out validationError))
                 {
@@ -188,8 +184,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 ownerPath,
                 candidate,
                 string.Empty,
-                null,
-                false,
                 out root,
                 out error);
         }

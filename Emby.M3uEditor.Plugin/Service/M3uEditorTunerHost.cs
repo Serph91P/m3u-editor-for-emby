@@ -5,7 +5,6 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
 using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
@@ -23,7 +22,7 @@ using Emby.M3uEditor.Plugin.Util;
 #pragma warning disable CS0612 // SupportsProbing and AnalyzeDurationMs are obsolete but still functional
 namespace Emby.M3uEditor.Plugin.Service
 {
-    internal class ChannelArtworkCleanupResult
+    internal sealed class ChannelArtworkCleanupResult
     {
         public bool Success { get; set; }
         public string Message { get; set; }
@@ -48,21 +47,11 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static volatile M3uEditorTunerHost _instance;
 
-        private readonly DispatcharrClient _dispatcharrClient;
         private readonly IServerApplicationHost _applicationHost;
 
         private volatile Dictionary<int, StreamStatsInfo> _streamStats = new Dictionary<int, StreamStatsInfo>();
-        private volatile Dictionary<int, string> _channelUuidMap = new Dictionary<int, string>();
-        private volatile Dictionary<int, string> _tvgIdMap = new Dictionary<int, string>();
-        private volatile Dictionary<int, string> _stationIdMap = new Dictionary<int, string>();
-        private volatile Dictionary<int, double> _channelNumberMap = new Dictionary<int, double>();
-        private volatile Dictionary<string, int> _tunerChannelIdToStreamId = new Dictionary<string, int>();
-        private volatile bool _dispatcharrDataLoaded;
-        private readonly System.Threading.SemaphoreSlim _ensureStatsLock = new System.Threading.SemaphoreSlim(1, 1);
-        private volatile HashSet<int> _allowedStreamIds;
         private List<ChannelInfo> _cachedChannels;
         private DateTime _cacheTime = DateTime.MinValue;
-
 
         public int CachedChannelCount => _cachedChannels?.Count ?? 0;
 
@@ -73,21 +62,14 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public int CachedStreamStatsCount => _streamStats?.Count ?? 0;
 
-        /// <summary>Channels whose stream_stats came from the Xtream backend payload (e.g. m3u-editor).</summary>
+        /// <summary>Channels whose stream_stats came from the m3u-editor backend payload.</summary>
         public int BackendStreamStatsCount { get; private set; }
-
-        /// <summary>Channels whose stream_stats came from Dispatcharr's REST API.</summary>
-        public int DispatcharrStreamStatsCount { get; private set; }
-
-        public IReadOnlyDictionary<int, string> TvgIdMap => _tvgIdMap;
-        public IReadOnlyDictionary<int, string> StationIdMap => _stationIdMap;
 
         public M3uEditorTunerHost(IServerApplicationHost applicationHost)
             : base(applicationHost)
         {
             _instance = this;
             _applicationHost = applicationHost;
-            _dispatcharrClient = new DispatcharrClient(Logger);
         }
 
         public static M3uEditorTunerHost Instance => _instance;
@@ -225,12 +207,7 @@ namespace Emby.M3uEditor.Plugin.Service
             DateTimeOffset startDateUtc, DateTimeOffset endDateUtc,
             CancellationToken cancellationToken)
         {
-            int streamId;
-            if (_tunerChannelIdToStreamId.TryGetValue(tunerChannelId, out streamId))
-            {
-                // Translated station ID → stream ID via mapping
-            }
-            else if (!int.TryParse(tunerChannelId, NumberStyles.None, CultureInfo.InvariantCulture, out streamId))
+            if (!int.TryParse(tunerChannelId, NumberStyles.None, CultureInfo.InvariantCulture, out var streamId))
             {
                 Logger.Warn("GetProgramsInternal: cannot parse tunerChannelId '{0}'", tunerChannelId);
                 if (IsLiveTvDiagnosticsEnabled())
@@ -238,38 +215,6 @@ namespace Emby.M3uEditor.Plugin.Service
                     Logger.Info("[livetv-diag] GetProgramsInternal rejected channelId='{0}' because it is not mapped and not numeric", tunerChannelId);
                 }
                 return new List<ProgramInfo>();
-            }
-
-            // If this channel has a Gracenote station ID, fetch programs directly from the
-            // listings provider rather than returning Xtream EPG. This gives the channel
-            // rich Gracenote metadata (artwork, descriptions, genres) without relying on
-            // Emby's auto-mapper - which would incorrectly match other channels too.
-            var stationMap = _stationIdMap;
-            if (stationMap != null && stationMap.TryGetValue(streamId, out var stationId)
-                && !string.IsNullOrEmpty(stationId)
-                && Plugin.Instance.Configuration.DeferEpgToGuideData)
-            {
-                try
-                {
-                    var gracenotePrograms = await FetchGracenotePrograms(
-                        stationId, tunerChannelId, startDateUtc, endDateUtc, cancellationToken)
-                        .ConfigureAwait(false);
-
-                    if (gracenotePrograms != null && gracenotePrograms.Count > 0)
-                    {
-                        Logger.Debug("GetProgramsInternal: stream {0} using {1} Gracenote programs (station {2})",
-                            streamId, gracenotePrograms.Count, stationId);
-                        return gracenotePrograms;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warn("GetProgramsInternal: Gracenote fetch failed for stream {0} (station {1}): {2}",
-                        streamId, stationId, ex.Message);
-                }
-
-                Logger.Debug("GetProgramsInternal: stream {0} has station ID {1} but no Gracenote data, falling back to Xtream EPG",
-                    streamId, stationId);
             }
 
             var liveTvService = Plugin.Instance.LiveTvService;
@@ -454,45 +399,14 @@ namespace Emby.M3uEditor.Plugin.Service
             // Return cached channels if available and not expired
             if (_cachedChannels != null && DateTime.UtcNow - _cacheTime < CacheDuration)
             {
-                // Emby mutates ChannelInfo objects after receiving them, clearing ListingsChannelId.
-                // Re-apply from _stationIdMap on every cache hit so the field is always correct.
-                foreach (var ch in _cachedChannels)
-                {
-                    if (config.EnableDispatcharr
-                        && _tunerChannelIdToStreamId.TryGetValue(ch.TunerChannelId, out var streamIdForLookup)
-                        && _stationIdMap.TryGetValue(streamIdForLookup, out var stId)
-                        && !string.IsNullOrEmpty(stId))
-                        ch.ListingsChannelId = stId;
-                    else
-                        ch.ListingsChannelId = null;
-                }
-                var cachedGracenote = _cachedChannels.Count(c => c.ListingsChannelId != null);
-                Logger.Debug("Returning cached channel list ({0} channels, {1} with Gracenote station ID)",
-                    _cachedChannels.Count, cachedGracenote);
-
-                // Run listing-provider detach even on cache hits so that
-                // "Refresh Guide Data" always fixes provider ownership, not
-                // just when the 5-minute channel cache expires. Do not clear
-                // Emby's channel ImageInfos here: a normal guide refresh must
-                // preserve the user's backend-provided logos.
-                if (config.DeferEpgToGuideData && cachedGracenote > 0)
-                {
-                    _ = Task.Run(() =>
-                    {
-                        try { DetachListingProviders(); }
-                        catch (Exception ex) { Logger.Warn("Auto detach (cache hit) failed: {0}", ex.Message); }
-                    });
-                }
-
+                Logger.Debug("Returning cached channel list ({0} channels)", _cachedChannels.Count);
                 return _cachedChannels;
             }
 
             Logger.Info("Fetching channels from Xtream API");
 
             var liveTvService = Plugin.Instance.LiveTvService;
-            var newStats = new Dictionary<int, StreamStatsInfo>();
-
-            // All three fetches run concurrently; each handles its own errors internally.
+            // Both fetches run concurrently; each handles its own errors internally.
             async Task<List<Client.Models.LiveStreamInfo>> channelsFetch()
             {
                 try
@@ -521,87 +435,15 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
             }
 
-            async Task dispatcharrFetch()
-            {
-                if (!config.EnableDispatcharr || string.IsNullOrEmpty(config.DispatcharrUrl))
-                    return;
-                try
-                {
-                    _dispatcharrClient.Configure(config.DispatcharrUser, config.DispatcharrPass);
-
-                    // Profile filtering: build the set of allowed Dispatcharr channel IDs.
-                    HashSet<int> enabledChannelIds = null;
-                    if (config.SelectedDispatcharrProfileIds != null && config.SelectedDispatcharrProfileIds.Length > 0)
-                    {
-                        var profiles = await _dispatcharrClient.GetProfilesAsync(
-                            config.DispatcharrUrl, cancellationToken).ConfigureAwait(false);
-                        enabledChannelIds = new HashSet<int>();
-                        foreach (var profile in profiles
-                            .Where(p => Array.IndexOf(config.SelectedDispatcharrProfileIds, p.Id) >= 0))
-                        {
-                            foreach (var chId in profile.Channels)
-                                enabledChannelIds.Add(chId);
-                        }
-                        Logger.Info("Profile filter active: {0} profile(s), {1} enabled Dispatcharr channel IDs",
-                            config.SelectedDispatcharrProfileIds.Length, enabledChannelIds.Count);
-                    }
-
-                    var (uuidMap, statsMap, tvgIdMap, stationIdMap, allowedStreamIds, channelNumberMap) =
-                        await _dispatcharrClient.GetChannelDataAsync(
-                            config.DispatcharrUrl, cancellationToken, enabledChannelIds).ConfigureAwait(false);
-                    newStats = statsMap;
-                    _channelUuidMap = uuidMap;
-                    _tvgIdMap = tvgIdMap;
-                    _stationIdMap = stationIdMap;
-                    _channelNumberMap = channelNumberMap;
-                    _allowedStreamIds = allowedStreamIds;
-                    _dispatcharrDataLoaded = true;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warn("Failed to fetch Dispatcharr channel data: {0}", ex.Message);
-                }
-            }
-
             var channelsTask = channelsFetch();
             var categoriesTask = categoriesFetch();
-            var dispatcharrTask = dispatcharrFetch();
 
-            await Task.WhenAll(channelsTask, categoriesTask, dispatcharrTask).ConfigureAwait(false);
+            await Task.WhenAll(channelsTask, categoriesTask).ConfigureAwait(false);
 
             var channels = channelsTask.Result;
             var categoryMap = categoriesTask.Result;
 
-            // Merge probe data carried by the Xtream backend itself (notably
-            // m3u-editor exposes a stream_stats block on each channel that maps
-            // 1:1 onto StreamStatsInfo). This lets Emby skip the FFprobe pass
-            // even when Dispatcharr is not configured. Dispatcharr-supplied
-            // entries win when both are present, since dispatcharrFetch is the
-            // authoritative source whenever it is enabled.
-            int backendStatsCount = 0;
-            if (channels != null)
-            {
-                foreach (var ch in channels.Where(c => c.StreamStats != null && !newStats.ContainsKey(c.StreamId)))
-                {
-                    newStats[ch.StreamId] = ch.StreamStats;
-                    backendStatsCount++;
-                }
-            }
-            int statsCount = newStats.Count;
-
-            // Profile filtering: if a profile filter is active, restrict the Xtream channel list
-            // to only those channels whose stream ID is in the allowed set.
-            var allowedIds = _allowedStreamIds;
-            if (allowedIds != null)
-            {
-                var before = channels.Count;
-                channels = channels.Where(c => allowedIds.Contains(c.StreamId)).ToList();
-                Logger.Info("Profile filter applied: {0} → {1} channels ({2} excluded)",
-                    before, channels.Count, before - channels.Count);
-            }
-
-            var usedStationIds = new HashSet<string>(StringComparer.Ordinal);
-            var newTunerChannelIdToStreamId = new Dictionary<string, int>();
+            var newStats = CollectBackendStreamStats(channels);
 
             var result = channels.Select(channel =>
             {
@@ -620,65 +462,15 @@ namespace Emby.M3uEditor.Plugin.Service
                     tags = new[] { groupTitle };
                 }
 
-                // Determine TunerChannelId: use Gracenote station ID for guide matching
-                // when available, otherwise use stream ID. Emby's matching waterfall uses
-                // TunerChannelId (not ListingsChannelId) to correlate channels with guide data.
-                string tunerChannelId = streamIdStr;
-                string listingsChannelId = null;
-                if (config.EnableDispatcharr
-                    && _stationIdMap.TryGetValue(channel.StreamId, out var stationId)
-                    && !string.IsNullOrEmpty(stationId))
-                {
-                    if (usedStationIds.Add(stationId))
-                    {
-                        tunerChannelId = stationId;
-                        listingsChannelId = stationId;
-                        Logger.Debug("Stream {0} ({1}): TunerChannelId = {2} (Gracenote station ID)",
-                            channel.StreamId, cleanName, stationId);
-                    }
-                    else
-                    {
-                        Logger.Warn("Stream {0} ({1}): duplicate station ID {2}, falling back to stream ID as TunerChannelId",
-                            channel.StreamId, cleanName, stationId);
-                    }
-                }
-
-                newTunerChannelIdToStreamId[tunerChannelId] = channel.StreamId;
-
-                string channelNumber;
-                if (config.EnableDispatcharr
-                    && _channelNumberMap.TryGetValue(channel.StreamId, out var dispatcharrNum))
-                {
-                    // Use Dispatcharr's real channel_number (supports decimals like 2.1).
-                    // Format as integer when there is no fractional part (e.g. 5.0 → "5").
-                    channelNumber = dispatcharrNum == Math.Floor(dispatcharrNum)
-                        ? ((int)dispatcharrNum).ToString(CultureInfo.InvariantCulture)
-                        : dispatcharrNum.ToString("G", CultureInfo.InvariantCulture);
-                }
-                else
-                {
-                    channelNumber = channel.DisplayChannelNumber;
-                }
-
-                string callSign = null;
-                if (config.EnableDispatcharr
-                    && _tvgIdMap.TryGetValue(channel.StreamId, out var tvgId)
-                    && !string.IsNullOrEmpty(tvgId))
-                {
-                    callSign = tvgId;
-                }
-
                 var channelInfo = new ChannelInfo
                 {
                     Id = CreateEmbyChannelId(tuner, streamIdStr),
-                    TunerChannelId = tunerChannelId,
+                    TunerChannelId = streamIdStr,
                     Name = cleanName,
-                    Number = channelNumber,
-                    CallSign = callSign,
+                    Number = channel.DisplayChannelNumber,
                     ChannelType = ChannelType.TV,
                     TunerHostId = tuner.Id,
                     Tags = tags,
-                    ListingsChannelId = listingsChannelId,
                 };
 
                 ApplyChannelLogoVariants(
@@ -690,33 +482,30 @@ namespace Emby.M3uEditor.Plugin.Service
             }).ToList();
 
             _streamStats = newStats;
-            BackendStreamStatsCount = backendStatsCount;
-            DispatcharrStreamStatsCount = statsCount - backendStatsCount;
-            _tunerChannelIdToStreamId = newTunerChannelIdToStreamId;
+            BackendStreamStatsCount = newStats.Count;
             _cachedChannels = result;
             _cacheTime = DateTime.UtcNow;
-            var gracenoteCount = result.Count(c => c.ListingsChannelId != null);
-            Logger.Info("Channel list cached with {0} channels ({1} with stream stats: {2} from backend, {3} from Dispatcharr; {4} with Gracenote station ID)",
-                result.Count, statsCount, backendStatsCount, statsCount - backendStatsCount, gracenoteCount);
-
-            if (config.DeferEpgToGuideData && gracenoteCount > 0)
-            {
-                _ = Task.Run(() =>
-                {
-                    try
-                    {
-                        var updated = DetachListingProviders();
-                        if (updated > 0)
-                            Logger.Info("Auto-detached m3u-editor tuner from {0} listing provider(s) - Gracenote EPG will be fetched by the tuner directly", updated);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Warn("Auto detach listing providers failed: {0}", ex.Message);
-                    }
-                });
-            }
+            Logger.Info("Channel list cached with {0} channels ({1} with backend stream stats)",
+                result.Count, newStats.Count);
 
             return result;
+        }
+
+        internal static Dictionary<int, StreamStatsInfo> CollectBackendStreamStats(
+            IEnumerable<Client.Models.LiveStreamInfo> channels)
+        {
+            var stats = new Dictionary<int, StreamStatsInfo>();
+            if (channels == null)
+            {
+                return stats;
+            }
+
+            foreach (var channel in channels.Where(channel => channel.StreamStats != null))
+            {
+                stats[channel.StreamId] = channel.StreamStats;
+            }
+
+            return stats;
         }
 
         private static async Task<List<Client.Models.LiveStreamInfo>> FetchAllChannelsDirectAsync(PluginConfiguration config)
@@ -734,49 +523,36 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        protected override async Task<List<MediaSourceInfo>> GetChannelStreamMediaSources(
+        protected override Task<List<MediaSourceInfo>> GetChannelStreamMediaSources(
             TunerHostInfo tuner, MediaBrowser.Controller.Entities.BaseItem dbChannel,
             ChannelInfo tunerChannel, CancellationToken cancellationToken)
         {
             if (!TryResolveStreamId(tunerChannel, out int streamId))
             {
-                return new List<MediaSourceInfo>();
+                return Task.FromResult(new List<MediaSourceInfo>());
             }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-
-            await EnsureStatsLoadedAsync(cancellationToken).ConfigureAwait(false);
-            if (IsLiveTvDiagnosticsEnabled())
-            {
-                Logger.Info("[stream-timing] ch={0} EnsureStats={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
-            }
-            sw.Restart();
-
             var config = Plugin.Instance.Configuration;
-            var (streamUrl, isDispatcharr) = BuildStreamUrl(config, streamId);
+            var streamUrl = BuildStreamUrl(config, streamId);
             if (IsLiveTvDiagnosticsEnabled())
             {
-                Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms isDispatcharr={2}", tunerChannel.Name, sw.ElapsedMilliseconds, isDispatcharr);
+                Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
             }
             sw.Restart();
-
-            if (streamUrl == null)
-            {
-                return new List<MediaSourceInfo>();
-            }
 
             _streamStats.TryGetValue(streamId, out var stats);
 
-            var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, isDispatcharr, config.ForceAudioTranscode, config.HttpUserAgent);
+            var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, config.HttpUserAgent);
             if (IsLiveTvDiagnosticsEnabled())
             {
                 Logger.Info("[stream-timing] ch={0} CreateMediaSource={1}ms hasStats={2}", tunerChannel.Name, sw.ElapsedMilliseconds, stats != null);
             }
 
-            return new List<MediaSourceInfo> { mediaSource };
+            return Task.FromResult(new List<MediaSourceInfo> { mediaSource });
         }
 
-        protected override async Task<ILiveStream> GetChannelStream(
+        protected override Task<ILiveStream> GetChannelStream(
             TunerHostInfo tuner, MediaBrowser.Controller.Entities.BaseItem dbChannel,
             ChannelInfo tunerChannel, string mediaSourceId,
             CancellationToken cancellationToken)
@@ -788,29 +564,16 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-
-            await EnsureStatsLoadedAsync(cancellationToken).ConfigureAwait(false);
-            if (IsLiveTvDiagnosticsEnabled())
-            {
-                Logger.Info("[stream-timing] ch={0} EnsureStats={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
-            }
-            sw.Restart();
-
             var config = Plugin.Instance.Configuration;
-            var (streamUrl, isDispatcharr) = BuildStreamUrl(config, streamId);
-            if (streamUrl == null)
-            {
-                throw new System.IO.FileNotFoundException(
-                    string.Format("Channel {0}: Dispatcharr proxy unavailable and fallback disabled", streamId));
-            }
+            var streamUrl = BuildStreamUrl(config, streamId);
             _streamStats.TryGetValue(streamId, out var stats);
             if (IsLiveTvDiagnosticsEnabled())
             {
-                Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms isDispatcharr={2}", tunerChannel.Name, sw.ElapsedMilliseconds, isDispatcharr);
+                Logger.Info("[stream-timing] ch={0} BuildUrl={1}ms", tunerChannel.Name, sw.ElapsedMilliseconds);
             }
             sw.Restart();
 
-            var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, isDispatcharr, config.ForceAudioTranscode, config.HttpUserAgent);
+            var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, config.HttpUserAgent);
             if (IsLiveTvDiagnosticsEnabled())
             {
                 Logger.Info("[stream-timing] ch={0} CreateMediaSource={1}ms hasStats={2}", tunerChannel.Name, sw.ElapsedMilliseconds, stats != null);
@@ -822,17 +585,13 @@ namespace Emby.M3uEditor.Plugin.Service
             Logger.Info("Opening live stream for channel {0} (stream {1})",
                 tunerChannel.Name ?? tunerChannel.Id, streamId);
 
-            return liveStream;
+            return Task.FromResult(liveStream);
         }
 
         /// <summary>
         /// Lightweight cache invalidation invoked by <see cref="LiveTvService"/> when
         /// the upstream Xtream channel list has changed (rename / add / delete).
-        /// Drops the tuner channel cache only - Dispatcharr-side maps (_streamStats,
-        /// _tvgIdMap, _stationIdMap, _channelNumberMap, _tunerChannelIdToStreamId)
-        /// are intentionally preserved so the next GetChannelsInternal pass keeps
-        /// working EPG/station-id mappings while it refetches; they are refreshed
-        /// in-place by dispatcharrFetch() during the next channel scan.
+        /// Drops the tuner channel cache while preserving stream stats for in-flight playback.
         /// Safe to call concurrently - assignment of these fields is atomic and
         /// they are only read by GetChannelsInternal under its own cache check.
         /// </summary>
@@ -846,384 +605,123 @@ namespace Emby.M3uEditor.Plugin.Service
         }
 
         /// <summary>
-        /// User-triggered cache invalidation (Live TV tab → "Clear caches" button).
-        ///
-        /// Wipes only VOLATILE data - channel list snapshot, stream stats,
-        /// allowed-stream-id set and the dispatcharr-loaded flag - so the next
-        /// channel scan re-fetches everything from upstream.
-        ///
-        /// STABILIZER maps (_channelUuidMap, _tvgIdMap, _stationIdMap,
-        /// _channelNumberMap, _tunerChannelIdToStreamId) are intentionally
-        /// PRESERVED. They are pure lookup tables: every successful
-        /// dispatcharrFetch() inside GetChannelsInternal overwrites them
-        /// atomically. Wiping them up-front created a transient empty-map
-        /// window during which a channel scan could run without them - for
-        /// example when Dispatcharr is disabled, when the Dispatcharr fetch
-        /// failed (caught and logged), or when the next scan reused an EPG-only
-        /// path. In those windows TunerChannelId fell back from the stable
-        /// Gracenote station ID to the raw stream ID, which Emby then treated
-        /// as a brand-new channel and dropped the cached logo association.
-        ///
-        /// Keeping the maps means the worst case after ClearCaches is "logos
-        /// stay attached, stats refetch on next stream open" instead of "all
-        /// logos vanish until Emby re-downloads them".
+        /// User-triggered cache invalidation. The next channel scan repopulates
+        /// both channels and stream stats from m3u-editor.
         /// </summary>
         public new void ClearCaches()
         {
             _cachedChannels = null;
             _cacheTime = DateTime.MinValue;
             _streamStats = new Dictionary<int, StreamStatsInfo>();
-            _allowedStreamIds = null;
-            _dispatcharrDataLoaded = false;
+            BackendStreamStatsCount = 0;
             // Logger?. covers the case where Logger has not been wired up yet
             // (early init / unit tests). ILogger.Info itself does not throw.
-            Logger?.Info("m3u-editor tuner caches cleared (stabilizer maps preserved)");
+            Logger?.Info("m3u-editor tuner caches cleared");
         }
 
-        /// <summary>
-        /// Removes the m3u-editor tuner from all listing providers' enabled-tuner lists so
-        /// that Emby's auto-mapper does not assign (wrong) Gracenote entries to our
-        /// channels. Instead, <see cref="GetProgramsInternal"/> fetches Gracenote programs
-        /// directly for channels that have a station ID and returns Xtream EPG for the rest.
-        /// </summary>
-        /// <returns>Number of listing providers updated.</returns>
-        public int DetachListingProviders(bool clearWrongArtwork = false)
-        {
-            IConfigurationManager configManager;
-            try
-            {
-                configManager = _applicationHost.Resolve<IConfigurationManager>();
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn("DetachListingProviders: failed to resolve IConfigurationManager: {0}", ex.Message);
-                return 0;
-            }
-
-            LiveTvOptions liveTvOptions;
-            try
-            {
-                liveTvOptions = configManager.GetConfiguration("livetv") as LiveTvOptions;
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn("DetachListingProviders: failed to read LiveTvOptions: {0}", ex.Message);
-                return 0;
-            }
-
-            if (liveTvOptions?.ListingProviders == null || liveTvOptions.ListingProviders.Length == 0)
-            {
-                Logger.Info("DetachListingProviders: no listing providers configured");
-                return 0;
-            }
-
-            var m3uEditorIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (liveTvOptions.TunerHosts != null)
-            {
-                foreach (var th in liveTvOptions.TunerHosts)
-                {
-                    if (string.Equals(th.Type, TunerType, StringComparison.OrdinalIgnoreCase)
-                        && !string.IsNullOrEmpty(th.Id))
-                    {
-                        m3uEditorIds.Add(th.Id);
-                    }
-                }
-            }
-
-            if (m3uEditorIds.Count == 0)
-            {
-                Logger.Info("DetachListingProviders: no m3u-editor tuner hosts found in config");
-                return 0;
-            }
-
-            var allTunerIds = liveTvOptions.TunerHosts?
-                .Where(t => !string.IsNullOrEmpty(t.Id))
-                .Select(t => t.Id)
-                .ToArray() ?? Array.Empty<string>();
-
-            int updated = 0;
-            bool configChanged = false;
-
-            foreach (var provider in liveTvOptions.ListingProviders)
-            {
-                if (string.IsNullOrEmpty(provider.Id))
-                    continue;
-
-                bool coversXtream;
-                if (provider.EnableAllTuners)
-                {
-                    coversXtream = true;
-                }
-                else
-                {
-                    coversXtream = provider.EnabledTuners != null
-                        && provider.EnabledTuners.Any(id => m3uEditorIds.Contains(id));
-                }
-
-                if (!coversXtream)
-                    continue;
-
-                if (provider.EnableAllTuners)
-                {
-                    provider.EnableAllTuners = false;
-                    provider.EnabledTuners = allTunerIds
-                        .Where(id => !m3uEditorIds.Contains(id))
-                        .ToArray();
-                }
-                else
-                {
-                    provider.EnabledTuners = provider.EnabledTuners
-                        .Where(id => !m3uEditorIds.Contains(id))
-                        .ToArray();
-                }
-
-                Logger.Info("DetachListingProviders: removed m3u-editor tuner from provider '{0}' (id={1}), remaining tuners: [{2}]",
-                    provider.Name ?? provider.ListingsId, provider.Id,
-                    string.Join(", ", provider.EnabledTuners));
-                updated++;
-                configChanged = true;
-            }
-
-            if (configChanged)
-            {
-                try
-                {
-                    configManager.SaveConfiguration("livetv", liveTvOptions);
-                    Logger.Info("DetachListingProviders: saved config, {0} providers updated", updated);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warn("DetachListingProviders: failed to save config: {0}", ex.Message);
-                    return 0;
-                }
-
-                if (ShouldClearWrongChannelArtworkAfterDetach(clearWrongArtwork, configChanged))
-                {
-                    ClearWrongChannelArtwork();
-                }
-                else
-                {
-                    Logger.Info("DetachListingProviders: preserved channel artwork cache");
-                }
-            }
-            else
-            {
-                Logger.Info("DetachListingProviders: m3u-editor tuner already detached from all providers");
-            }
-
-            return updated;
-        }
-
-        internal static bool ShouldClearWrongChannelArtworkAfterDetach(bool clearWrongArtwork, bool configChanged)
-        {
-            return clearWrongArtwork && configChanged;
-        }
-
-        /// <summary>
-        /// Deletes all cached images from Live TV channels that belong to the m3u-editor tuner.
-        /// Clears ALL Xtream channels (including Gracenote-matched ones) because Emby's
-        /// auto-mapper may have assigned artwork from the wrong station during the brief
-        /// window before the plugin detached. Correct artwork returns on the next guide
-        /// refresh from the proper source.
-        /// </summary>
-        internal ChannelArtworkCleanupResult ClearWrongChannelArtwork()
+        internal ChannelArtworkCleanupResult ClearCachedChannelArtwork()
         {
             var result = new ChannelArtworkCleanupResult();
+            var cachedChannels = _cachedChannels;
+            if (_applicationHost == null || cachedChannels == null || cachedChannels.Count == 0)
+            {
+                result.Message = "No cached m3u-editor channels are available.";
+                return result;
+            }
+
             try
             {
                 var libraryManager = _applicationHost.Resolve<ILibraryManager>();
-
-                // Resolve LiveTvChannel type at runtime to avoid a hard compile-time dependency
-                // on internal Emby types not exposed in the SDK.
-                Type liveTvChannelType = null;
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+                var channelType = assemblies
+                    .Select(assembly => assembly.GetType("MediaBrowser.Controller.LiveTv.LiveTvChannel"))
+                    .FirstOrDefault(type => type != null);
+                var queryType = assemblies
+                    .Select(assembly => assembly.GetType("MediaBrowser.Controller.Entities.InternalItemsQuery"))
+                    .FirstOrDefault(type => type != null);
+                if (channelType == null || queryType == null)
                 {
-                    try
-                    {
-                        liveTvChannelType = asm.GetType("MediaBrowser.Controller.LiveTv.LiveTvChannel");
-                        if (liveTvChannelType != null) break;
-                    }
-                    catch (TypeLoadException ex)
-                    {
-                        Logger.Debug("ClearWrongChannelArtwork: type scan failed in '{0}': {1}", asm.FullName, ex.Message);
-                    }
-                    catch (System.IO.FileLoadException ex)
-                    {
-                        Logger.Debug("ClearWrongChannelArtwork: assembly load failed in '{0}': {1}", asm.FullName, ex.Message);
-                    }
-                    catch (BadImageFormatException ex)
-                    {
-                        Logger.Debug("ClearWrongChannelArtwork: invalid assembly image in '{0}': {1}", asm.FullName, ex.Message);
-                    }
-                    catch (NotSupportedException ex)
-                    {
-                        Logger.Debug("ClearWrongChannelArtwork: type scan unsupported in '{0}': {1}", asm.FullName, ex.Message);
-                    }
-                }
-
-                if (liveTvChannelType == null)
-                {
-                    result.Message = "LiveTvChannel type not found.";
-                    Logger.Warn("ClearWrongChannelArtwork: LiveTvChannel type not found");
+                    result.Message = "Emby Live TV channel metadata is unavailable.";
                     return result;
                 }
 
-                var internalQueryType = AppDomain.CurrentDomain.GetAssemblies()
-                    .Select(a =>
-                    {
-                        try
-                        {
-                            return a.GetType("MediaBrowser.Controller.Entities.InternalItemsQuery");
-                        }
-                        catch (TypeLoadException ex)
-                        {
-                            Logger.Debug("ClearWrongChannelArtwork: query type scan failed in '{0}': {1}", a.FullName, ex.Message);
-                            return null;
-                        }
-                        catch (System.IO.FileLoadException ex)
-                        {
-                            Logger.Debug("ClearWrongChannelArtwork: query assembly load failed in '{0}': {1}", a.FullName, ex.Message);
-                            return null;
-                        }
-                        catch (BadImageFormatException ex)
-                        {
-                            Logger.Debug("ClearWrongChannelArtwork: invalid query assembly image in '{0}': {1}", a.FullName, ex.Message);
-                            return null;
-                        }
-                        catch (NotSupportedException ex)
-                        {
-                            Logger.Debug("ClearWrongChannelArtwork: query type scan unsupported in '{0}': {1}", a.FullName, ex.Message);
-                            return null;
-                        }
-                    })
-                    .FirstOrDefault(t => t != null);
-
-                if (internalQueryType == null)
+                var query = Activator.CreateInstance(queryType);
+                queryType.GetProperty("IncludeItemTypes")?.SetValue(query, new[] { "LiveTvChannel" });
+                var getItems = typeof(ILibraryManager).GetMethods()
+                    .FirstOrDefault(method => method.Name == "GetItemList" &&
+                        method.GetParameters().Length == 1 &&
+                        method.GetParameters()[0].ParameterType == queryType);
+                var updateItem = typeof(ILibraryManager).GetMethods()
+                    .FirstOrDefault(method => method.Name == "UpdateItem" &&
+                        method.GetParameters().Length == 3);
+                var items = getItems?.Invoke(libraryManager, new[] { query }) as System.Collections.IEnumerable;
+                if (items == null || updateItem == null)
                 {
-                    result.Message = "InternalItemsQuery type not found.";
-                    Logger.Warn("ClearWrongChannelArtwork: InternalItemsQuery type not found");
+                    result.Message = "Emby Live TV channel updates are unavailable.";
                     return result;
                 }
-
-                var query = Activator.CreateInstance(internalQueryType);
-                var includeItemTypesProp = internalQueryType.GetProperty("IncludeItemTypes");
-                if (includeItemTypesProp != null)
-                    includeItemTypesProp.SetValue(query, new[] { "LiveTvChannel" });
-
-                var getItemListMethod = typeof(ILibraryManager).GetMethods()
-                    .FirstOrDefault(m => m.Name == "GetItemList"
-                        && m.GetParameters().Length == 1
-                        && m.GetParameters()[0].ParameterType == internalQueryType);
-
-                if (getItemListMethod == null)
-                {
-                    result.Message = "GetItemList method not found.";
-                    Logger.Warn("ClearWrongChannelArtwork: GetItemList method not found");
-                    return result;
-                }
-
-                var items = getItemListMethod.Invoke(libraryManager, new[] { query }) as System.Collections.IEnumerable;
-                if (items == null)
-                {
-                    result.Message = "GetItemList returned null.";
-                    Logger.Info("ClearWrongChannelArtwork: GetItemList returned null");
-                    return result;
-                }
-
-                // Build lookups for Xtream channel ownership checks.
-                // ServiceName on LiveTvChannel is set by Emby's internal service layer
-                // (typically "Emby"), not the tuner host Name, so we can't filter on it.
-                var cachedChannels = GetChannelsForArtworkCleanup();
-                if (cachedChannels == null || cachedChannels.Count == 0)
-                {
-                    result.Message = "No cached Xtream channels available. Refresh the channel cache first.";
-                    Logger.Info("ClearWrongChannelArtwork: no cached channels - skipping");
-                    return result;
-                }
-
-                var xtreamChannelNumbers = new HashSet<string>(StringComparer.Ordinal);
-                var xtreamChannelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var ch in cachedChannels)
-                {
-                    if (!string.IsNullOrEmpty(ch.Number))
-                    {
-                        xtreamChannelNumbers.Add(ch.Number);
-                    }
-
-                    if (!string.IsNullOrEmpty(ch.Name))
-                    {
-                        xtreamChannelNames.Add(ch.Name);
-                    }
-                }
-
-                int cleared = 0;
-                int noImages = 0;
-                int totalLibraryChannels = 0;
 
                 foreach (var item in items)
                 {
                     try
                     {
-                        totalLibraryChannels++;
-
-                        var numberProp = item.GetType().GetProperty("Number");
-                        var channelNumber = numberProp?.GetValue(item) as string;
-                        var nameProp = item.GetType().GetProperty("Name");
-                        var channelName = nameProp?.GetValue(item) as string;
-
-                        var numberMatch = !string.IsNullOrEmpty(channelNumber) && xtreamChannelNumbers.Contains(channelNumber);
-                        var nameMatch = !string.IsNullOrEmpty(channelName) && xtreamChannelNames.Contains(channelName);
-                        if (!numberMatch && !nameMatch)
-                            continue;
-
-                        var imageInfosProp = item.GetType().GetProperty("ImageInfos");
-                        var imageInfos = imageInfosProp?.GetValue(item) as System.Array;
-                        if (imageInfos == null || imageInfos.Length == 0)
+                        result.TotalLibraryChannels++;
+                        var itemType = item.GetType();
+                        var name = itemType.GetProperty("Name")?.GetValue(item) as string;
+                        var number = itemType.GetProperty("Number")?.GetValue(item) as string;
+                        var tunerChannelId = itemType.GetProperty("TunerChannelId")?.GetValue(item) as string;
+                        if (!IsOwnedChannel(cachedChannels, tunerChannelId, number, name))
                         {
-                            noImages++;
                             continue;
                         }
 
-                        channelName = channelName ?? channelNumber;
-
-                        imageInfosProp?.SetValue(item, Array.CreateInstance(imageInfos.GetType().GetElementType(), 0));
-
-                        var updateMethods = typeof(ILibraryManager).GetMethods()
-                            .Where(m => m.Name == "UpdateItem" && m.GetParameters().Length == 3)
-                            .ToArray();
-
-                        if (updateMethods.Length > 0)
+                        result.MatchedChannels++;
+                        var imagesProperty = itemType.GetProperty("ImageInfos");
+                        var images = imagesProperty?.GetValue(item) as Array;
+                        if (images == null || images.Length == 0)
                         {
-                            updateMethods[0].Invoke(libraryManager, new object[] { item, null, 4 });
+                            result.AlreadyCleanChannels++;
+                            continue;
                         }
 
-                        Logger.Debug("ClearWrongChannelArtwork: cleared {0} image(s) from '{1}' (ch {2})",
-                            imageInfos.Length, channelName, channelNumber);
-                        cleared++;
+                        imagesProperty.SetValue(item, Array.CreateInstance(images.GetType().GetElementType(), 0));
+                        updateItem.Invoke(libraryManager, new object[] { item, null, 4 });
+                        result.ClearedChannels++;
                     }
                     catch (Exception ex)
                     {
-                        Logger.Warn("ClearWrongChannelArtwork: error clearing item: {0}", ex.Message);
+                        Logger?.Warn("Channel artwork cleanup skipped one item: {0}", ex.Message);
                     }
                 }
 
-                Logger.Info("ClearWrongChannelArtwork: {0} library channels, {1} matched Xtream, cleared {2}, {3} already clean",
-                    totalLibraryChannels, cleared + noImages, cleared, noImages);
                 result.Success = true;
-                result.TotalLibraryChannels = totalLibraryChannels;
-                result.MatchedChannels = cleared + noImages;
-                result.ClearedChannels = cleared;
-                result.AlreadyCleanChannels = noImages;
-                result.Message = string.Format(CultureInfo.InvariantCulture,
-                    "Cleared {0} cached image(s) from {1} matched Xtream channel(s); {2} were already clean.",
-                    cleared, cleared + noImages, noImages);
+                result.Message = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Cleared cached artwork for {0} of {1} matched m3u-editor channels.",
+                    result.ClearedChannels,
+                    result.MatchedChannels);
             }
             catch (Exception ex)
             {
                 result.Message = ex.Message;
-                Logger.Warn("ClearWrongChannelArtwork: {0}", ex.Message);
+                Logger?.Warn("Channel artwork cleanup failed: {0}", ex.Message);
             }
+
             return result;
+        }
+
+        internal static bool IsOwnedChannel(
+            IEnumerable<ChannelInfo> cachedChannels,
+            string tunerChannelId,
+            string number,
+            string name)
+        {
+            return cachedChannels != null && cachedChannels.Any(channel =>
+                (!string.IsNullOrEmpty(tunerChannelId) &&
+                 string.Equals(channel.TunerChannelId, tunerChannelId, StringComparison.Ordinal)) ||
+                (!string.IsNullOrEmpty(number) && !string.IsNullOrEmpty(name) &&
+                 string.Equals(channel.Number, number, StringComparison.Ordinal) &&
+                 string.Equals(channel.Name, name, StringComparison.OrdinalIgnoreCase)));
         }
 
         /// <summary>
@@ -1317,227 +815,6 @@ namespace Emby.M3uEditor.Plugin.Service
             return false;
         }
 
-        private List<ChannelInfo> GetChannelsForArtworkCleanup()
-        {
-            var cachedChannels = _cachedChannels;
-            if (cachedChannels != null && cachedChannels.Count > 0)
-            {
-                return cachedChannels;
-            }
-
-            Logger.Info("ClearWrongChannelArtwork: no cached channels, attempting one-time reload for cleanup");
-
-            try
-            {
-                var m3uEditor = FindRegisteredTunerHost("ClearWrongChannelArtwork");
-                if (m3uEditor == null)
-                {
-                    return null;
-                }
-
-                return GetChannelsInternal(m3uEditor, CancellationToken.None)
-                    .ConfigureAwait(false)
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            catch (InvalidOperationException ex)
-            {
-                Logger.Warn("ClearWrongChannelArtwork: channel reload failed: {0}", ex.Message);
-            }
-            catch (ArgumentException ex)
-            {
-                Logger.Warn("ClearWrongChannelArtwork: channel reload failed: {0}", ex.Message);
-            }
-            catch (HttpRequestException ex)
-            {
-                Logger.Warn("ClearWrongChannelArtwork: channel reload failed: {0}", ex.Message);
-            }
-            catch (TaskCanceledException ex)
-            {
-                Logger.Warn("ClearWrongChannelArtwork: channel reload timed out: {0}", ex.Message);
-            }
-            catch (OperationCanceledException ex)
-            {
-                Logger.Warn("ClearWrongChannelArtwork: channel reload canceled: {0}", ex.Message);
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Fetches Gracenote programs from the first listing provider that returns data
-        /// for the given station ID. Returns null if no provider has programs.
-        /// </summary>
-        private async Task<List<ProgramInfo>> FetchGracenotePrograms(
-            string stationId, string tunerChannelId,
-            DateTimeOffset startDateUtc, DateTimeOffset endDateUtc,
-            CancellationToken cancellationToken)
-        {
-            ILiveTvManager liveTvManager;
-            IConfigurationManager configManager;
-            try
-            {
-                liveTvManager = _applicationHost.Resolve<ILiveTvManager>();
-                configManager = _applicationHost.Resolve<IConfigurationManager>();
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn("FetchGracenotePrograms: failed to resolve services: {0}", ex.Message);
-                return null;
-            }
-
-            LiveTvOptions liveTvOptions;
-            try
-            {
-                liveTvOptions = configManager.GetConfiguration("livetv") as LiveTvOptions;
-            }
-            catch (InvalidOperationException)
-            {
-                return null;
-            }
-            catch (ArgumentException)
-            {
-                return null;
-            }
-
-            if (liveTvOptions?.ListingProviders == null)
-                return null;
-
-            var providers = liveTvManager.ListingProviders;
-            if (providers == null || providers.Length == 0)
-                return null;
-
-            foreach (var listingsProvider in providers)
-            {
-                var info = liveTvOptions.ListingProviders
-                    .FirstOrDefault(p => string.Equals(p.Type, listingsProvider.Type, StringComparison.OrdinalIgnoreCase)
-                                         && !string.IsNullOrEmpty(p.Id));
-                if (info == null)
-                    continue;
-
-                try
-                {
-                    var programs = await listingsProvider.GetProgramsAsync(
-                        info, stationId, startDateUtc, endDateUtc, cancellationToken)
-                        .ConfigureAwait(false);
-
-                    if (programs != null && programs.Count > 0)
-                    {
-                        var result = new List<ProgramInfo>(programs.Count);
-                        foreach (var p in programs)
-                        {
-                            p.ChannelId = tunerChannelId;
-                            result.Add(p);
-                        }
-                        return result;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Debug("FetchGracenotePrograms: provider '{0}' returned no data for station {1}: {2}",
-                        info.Name ?? info.ListingsId, stationId, ex.Message);
-                }
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Ensures Dispatcharr stats and UUID mappings are loaded. Called lazily
-        /// on first playback if GetChannelsInternal hasn't run yet (e.g. after restart),
-        /// and from LiveTvService before generating M3U output so that tvg-id and
-        /// tvc-guide-stationid attributes are available even when Emby hasn't polled
-        /// the tuner for channels yet (e.g. immediately after a cache refresh).
-        /// Uses a flag rather than checking map counts so that a legitimately empty
-        /// stats map (all URL-based sources with no stats) doesn't cause a redundant
-        /// Dispatcharr API round-trip on every playback request.
-        /// </summary>
-        internal async Task EnsureStatsLoadedAsync(CancellationToken cancellationToken)
-        {
-            if (_dispatcharrDataLoaded)
-            {
-                return;
-            }
-
-            var config = Plugin.Instance.Configuration;
-            if (!config.EnableDispatcharr || string.IsNullOrEmpty(config.DispatcharrUrl))
-            {
-                return;
-            }
-
-            // Single-flight guard: when N concurrent playbacks hit a cold cache they
-            // would otherwise each fire a full Dispatcharr round-trip (profiles +
-            // channels + stats). Serialize through a SemaphoreSlim and re-check the
-            // loaded flag inside the critical section so only the first caller fetches.
-            await _ensureStatsLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (_dispatcharrDataLoaded)
-                {
-                    return;
-                }
-
-                Logger.Info("Dispatcharr data missing at playback time, fetching on-demand");
-                _dispatcharrClient.Configure(config.DispatcharrUser, config.DispatcharrPass);
-
-                // Profile filtering on-demand: re-compute the enabled channel set if profiles are selected.
-                HashSet<int> enabledChannelIds = null;
-                if (config.SelectedDispatcharrProfileIds != null && config.SelectedDispatcharrProfileIds.Length > 0)
-                {
-                    var profiles = await _dispatcharrClient.GetProfilesAsync(
-                        config.DispatcharrUrl, cancellationToken).ConfigureAwait(false);
-                    enabledChannelIds = new HashSet<int>();
-                    foreach (var profile in profiles
-                        .Where(p => Array.IndexOf(config.SelectedDispatcharrProfileIds, p.Id) >= 0))
-                    {
-                        foreach (var chId in profile.Channels)
-                            enabledChannelIds.Add(chId);
-                    }
-                }
-
-                var (uuidMap, statsMap, tvgIdMap, stationIdMap, allowedStreamIds, channelNumberMap) =
-                    await _dispatcharrClient.GetChannelDataAsync(
-                        config.DispatcharrUrl, cancellationToken, enabledChannelIds).ConfigureAwait(false);
-                if (statsMap.Count > 0)
-                {
-                    // Merge into existing map so backend-supplied stats (e.g. m3u-editor
-                    // payload) survive for channels Dispatcharr doesn't track. Dispatcharr
-                    // takes precedence on overlap because its profile/probe data is the
-                    // canonical source when both backends are wired up.
-                    var existing = _streamStats ?? new Dictionary<int, Client.Models.StreamStatsInfo>();
-                    var merged = new Dictionary<int, Client.Models.StreamStatsInfo>(existing);
-                    foreach (var kv in statsMap)
-                    {
-                        merged[kv.Key] = kv.Value;
-                    }
-                    _streamStats = merged;
-                    DispatcharrStreamStatsCount = statsMap.Count;
-                    BackendStreamStatsCount = merged.Count - statsMap.Count;
-                }
-                if (uuidMap.Count > 0) _channelUuidMap = uuidMap;
-                if (tvgIdMap.Count > 0) _tvgIdMap = tvgIdMap;
-                if (stationIdMap.Count > 0) _stationIdMap = stationIdMap;
-                if (channelNumberMap.Count > 0) _channelNumberMap = channelNumberMap;
-                _allowedStreamIds = allowedStreamIds;
-                _dispatcharrDataLoaded = true;
-                Logger.Info("Loaded {0} UUIDs and {1} stream stats from Dispatcharr on-demand",
-                    uuidMap.Count, statsMap.Count);
-            }
-            catch (OperationCanceledException)
-            {
-                // Caller cancelled; do not mark as failed so a later request can retry.
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn("On-demand Dispatcharr data fetch failed: {0}", ex.Message);
-            }
-            finally
-            {
-                _ensureStatsLock.Release();
-            }
-        }
-
         private bool TryResolveStreamId(ChannelInfo tunerChannel, out int streamId)
         {
             streamId = 0;
@@ -1545,53 +822,25 @@ namespace Emby.M3uEditor.Plugin.Service
 
             var id = tunerChannel.TunerChannelId ?? tunerChannel.Id;
 
-            // Check authoritative mapping first (handles station ID → stream ID translation)
-            if (_tunerChannelIdToStreamId.TryGetValue(id, out streamId))
-                return true;
-
-            // Fallback: parse directly (before channel list is loaded)
             return int.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out streamId);
         }
 
-        private (string Url, bool IsDispatcharr) BuildStreamUrl(PluginConfiguration config, int streamId)
+        internal static string BuildStreamUrl(PluginConfiguration config, int streamId)
         {
-            // When Dispatcharr is enabled and we have a UUID for this channel,
-            // use the proxy stream URL instead of the Xtream-style URL.
-            if (config.EnableDispatcharr && !string.IsNullOrEmpty(config.DispatcharrUrl))
-            {
-                if (_channelUuidMap.TryGetValue(streamId, out var uuid))
-                {
-                    var proxyUrl = string.Format(CultureInfo.InvariantCulture,
-                        "{0}/proxy/ts/stream/{1}",
-                        config.DispatcharrUrl.TrimEnd('/'), uuid);
-                    Logger.Debug("Stream {0}: using Dispatcharr proxy URL (uuid={1})", streamId, uuid);
-                    return (proxyUrl, true);
-                }
-
-                if (!config.DispatcharrFallbackToXtream)
-                {
-                    Logger.Warn("Stream {0}: no Dispatcharr UUID and fallback disabled, skipping", streamId);
-                    return (null, false);
-                }
-
-                Logger.Debug("Stream {0}: no Dispatcharr UUID, falling back to direct Xtream URL", streamId);
-            }
-
             var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase)
                 ? "ts" : "m3u8";
-            return (string.Format(CultureInfo.InvariantCulture,
+            return string.Format(CultureInfo.InvariantCulture,
                 "{0}/live/{1}/{2}/{3}.{4}",
-                config.BaseUrl, config.Username, config.Password, streamId, extension), false);
+                config.BaseUrl, config.Username, config.Password, streamId, extension);
         }
 
-        private MediaSourceInfo CreateMediaSourceInfo(
+        internal MediaSourceInfo CreateMediaSourceInfo(
             int streamId, string streamUrl, StreamStatsInfo stats,
-            bool disableProbing = false, bool forceAudioTranscode = false,
             string userAgent = null)
         {
             var sourceId = "xtream_live_" + streamId.ToString(CultureInfo.InvariantCulture);
 
-            // Audio-only channel: Dispatcharr stats are present but no video_codec exists.
+            // Audio-only channel: stats are present but no video_codec exists.
             // The normal hasStats gate (VideoCodec != null) would fall through to the dummy
             // H.264 fallback, which causes Emby to expect a video stream that isn't there.
             bool isAudioOnly = stats != null
@@ -1600,22 +849,8 @@ namespace Emby.M3uEditor.Plugin.Service
 
             bool hasStats = stats?.VideoCodec != null || isAudioOnly;
 
-            // Disable probing for Dispatcharr proxy URLs: the probe opens a short-lived HTTP
-            // connection that Dispatcharr interprets as a client, and when it closes after
-            // analysis (~0.1s) Dispatcharr tears down the channel. The real playback connection
-            // then hits the teardown and fails, causing a rapid retry storm.
-            bool suppressProbing = disableProbing || hasStats;
-
             var audioCodecLower = hasStats && !string.IsNullOrEmpty(stats?.AudioCodec)
                 ? stats.AudioCodec.ToLowerInvariant() : null;
-
-            // When ForceAudioTranscode is enabled, disable direct-stream so Emby transcodes
-            // audio (→ AAC on iOS/Apple TV). This fixes silent AC3 playback on Apple devices.
-            // If stats are available and confirm a non-AC3 codec, direct-stream is safe and
-            // kept enabled. Without stats we can't verify the codec, so we also force
-            // transcoding - the user has opted in and accepted that trade-off.
-            bool suppressDirectStream = forceAudioTranscode &&
-                (!hasStats || audioCodecLower == "ac3" || audioCodecLower == "eac3" || audioCodecLower == "mp2");
 
             var mediaSource = new MediaSourceInfo
             {
@@ -1623,13 +858,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 Path = streamUrl,
                 Protocol = MediaProtocol.Http,
                 Container = "mpegts",
-                SupportsProbing = !suppressProbing,
+                SupportsProbing = !hasStats,
                 IsRemote = true,
                 IsInfiniteStream = true,
                 SupportsDirectPlay = false,
-                SupportsDirectStream = !suppressDirectStream,
+                SupportsDirectStream = true,
                 SupportsTranscoding = true,
-                AnalyzeDurationMs = suppressProbing ? 0 : (int?)500,
+                AnalyzeDurationMs = hasStats ? 0 : 500,
                 RequiresOpening = true,
                 RequiresClosing = true,
                 WallClockStart = DateTime.UtcNow,
@@ -1695,8 +930,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     mediaStreams.Add(videoStream);
                 }
 
-                // Prefer the audio_channels field from stream_stats when present (Dispatcharr
-                // 0.19.0+ includes it as e.g. "5.1", "2.0", "stereo").  Fall back to
+                // Prefer audio_channels from stream_stats when present. Fall back to
                 // codec-based broadcast defaults when the field is absent.
                 int? audioChannels = null;
                 string channelLayout = null;
@@ -1760,11 +994,10 @@ namespace Emby.M3uEditor.Plugin.Service
 
                 if (isAudioOnly)
                 {
-                    Logger.Debug(
-                        "Stream {0}: audio-only - {1} {2}ch{3}",
+                    Logger?.Debug(
+                        "Stream {0}: audio-only - {1} {2}ch",
                         streamId, audioCodecLower ?? "unknown",
-                        audioChannels.HasValue ? audioChannels.Value.ToString(CultureInfo.InvariantCulture) : "?",
-                        suppressDirectStream ? " [force transcode]" : string.Empty);
+                        audioChannels.HasValue ? audioChannels.Value.ToString(CultureInfo.InvariantCulture) : "?");
                 }
                 else
                 {
@@ -1778,12 +1011,11 @@ namespace Emby.M3uEditor.Plugin.Service
                             int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out height);
                         }
                     }
-                    Logger.Debug(
-                        "Stream {0}: using stats - {1} {2}x{3} @{4}fps, audio {5} {6}ch{7}",
+                    Logger?.Debug(
+                        "Stream {0}: using stats - {1} {2}x{3} @{4}fps, audio {5} {6}ch",
                         streamId, stats.VideoCodec, width, height,
                         stats.SourceFps, audioCodecLower ?? "unknown",
-                        audioChannels.HasValue ? audioChannels.Value.ToString(CultureInfo.InvariantCulture) : "?",
-                        suppressDirectStream ? " [force transcode]" : string.Empty);
+                        audioChannels.HasValue ? audioChannels.Value.ToString(CultureInfo.InvariantCulture) : "?");
                 }
             }
             else
@@ -1812,7 +1044,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     },
                 };
                 mediaSource.DefaultAudioStreamIndex = 1;
-                Logger.Debug("Stream {0}: no stats available, will probe", streamId);
+                Logger?.Debug("Stream {0}: no stats available, using fallback metadata", streamId);
             }
 
             return mediaSource;
@@ -1846,13 +1078,13 @@ namespace Emby.M3uEditor.Plugin.Service
             return Diagnostics.IsEnabled;
         }
 
-        private static string MapVideoCodec(string dispatcharrCodec)
+        private static string MapVideoCodec(string codec)
         {
-            var upper = dispatcharrCodec.ToUpperInvariant();
+            var upper = codec.ToUpperInvariant();
             if (upper == "H264" || upper == "AVC") return "h264";
             if (upper == "HEVC" || upper == "H265") return "hevc";
             if (upper == "MPEG2VIDEO") return "mpeg2video";
-            return dispatcharrCodec.ToLowerInvariant();
+            return codec.ToLowerInvariant();
         }
     }
 }

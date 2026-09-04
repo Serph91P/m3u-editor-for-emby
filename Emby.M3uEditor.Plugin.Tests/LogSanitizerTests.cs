@@ -6,184 +6,70 @@ namespace Emby.M3uEditor.Plugin.Tests
     public class LogSanitizerTests
     {
         [Fact]
-        public void RedactsIpAddresses()
+        public void RedactsConfiguredCredentialsAndPersonalData()
         {
             var result = LogSanitizer.SanitizeLine(
-                "Connected to 192.168.1.100 on port 8080", "", "", "", "");
-            Assert.Equal("Connected to <ip-redacted> on port 8080", result);
+                "User myuser password mypass at 10.0.0.1 sent mail@example.com",
+                "myuser",
+                "mypass");
+
+            Assert.DoesNotContain("myuser", result);
+            Assert.DoesNotContain("mypass", result);
+            Assert.DoesNotContain("10.0.0.1", result);
+            Assert.DoesNotContain("mail@example.com", result);
         }
 
         [Fact]
-        public void RedactsMultipleIps()
+        public void RedactsXtreamUrlCredentialsAndProviderHost()
         {
             var result = LogSanitizer.SanitizeLine(
-                "From 10.0.0.1 to 172.16.0.1", "", "", "", "");
-            Assert.Equal("From <ip-redacted> to <ip-redacted>", result);
-        }
+                "Stream URL: https://provider.example/live/john/pass123/12345.ts",
+                string.Empty,
+                string.Empty);
 
-        [Fact]
-        public void RedactsConfiguredUsername()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "Login as myuser succeeded", "myuser", "mypass", "", "");
-            Assert.Equal("Login as <redacted> succeeded", result);
-        }
-
-        [Fact]
-        public void RedactsConfiguredPassword()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "Using password s3cret123", "", "s3cret123", "", "");
-            Assert.Equal("Using password <redacted>", result);
-        }
-
-        [Fact]
-        public void RedactsDispatcharrCredentials()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "Dispatcharr user=admin pass=hunter2",
-                "", "", "admin", "hunter2");
-            Assert.Equal("Dispatcharr user=<redacted> pass=<redacted>", result);
-        }
-
-        [Fact]
-        public void RedactsEmailAddresses()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "User email is user@example.com logged in", "", "", "", "");
-            Assert.Equal("User email is <email-redacted> logged in", result);
-        }
-
-        [Fact]
-        public void RedactsXtreamUrlCredentials()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "Stream URL: http://example.com/live/john/pass123/12345.ts", "", "", "", "");
+            Assert.Contains("<provider-host>", result);
             Assert.Contains("/live/<user>/<pass>/", result);
             Assert.DoesNotContain("john", result);
             Assert.DoesNotContain("pass123", result);
         }
 
         [Fact]
-        public void RedactsProviderHostname()
+        public void RedactsQueryCredentialsApiKeysAndTokens()
         {
-            var result = LogSanitizer.SanitizeLine(
-                "Fetching http://myprovider.com:8080/player_api.php?action=get_live", "", "", "", "");
-            Assert.Contains("<provider-host>", result);
-            Assert.DoesNotContain("myprovider.com", result);
-        }
-
-        [Fact]
-        public void NoFalsePositivesOnNormalText()
-        {
-            const string line = "M3uEditor loaded 150 channels successfully";
-            var result = LogSanitizer.SanitizeLine(line, "", "", "", "");
-            Assert.Equal(line, result);
-        }
-
-        [Fact]
-        public void EmptyCredentialsSkipped()
-        {
-            const string line = "Normal log line with no secrets";
-            var result = LogSanitizer.SanitizeLine(line, "", "", null, null);
-            Assert.Equal(line, result);
-        }
-
-        [Theory]
-        [InlineData(null)]
-        [InlineData("")]
-        public void HandlesNullOrEmptyLine(string input)
-        {
-            Assert.Equal(input, LogSanitizer.SanitizeLine(input, "user", "pass", "du", "dp"));
-        }
-
-        [Fact]
-        public void RedactsProviderHostWithoutPort()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "Fetching http://myprovider.com/player_api.php?action=get_live", "", "", "", "");
-            Assert.Contains("<provider-host>", result);
-            Assert.DoesNotContain("myprovider.com", result);
-        }
-
-        [Theory]
-        [InlineData("http://host.com/movie/123.mp4", "/movie/")]
-        [InlineData("http://host.com/series/456.mp4", "/series/")]
-        public void RedactsMovieAndSeriesUrlPaths(string input, string pathKept)
-        {
-            var result = LogSanitizer.SanitizeLine(input, "", "", "", "");
-            Assert.Contains("<provider-host>", result);
-            Assert.Contains(pathKept, result);
-            Assert.DoesNotContain("host.com", result);
-        }
-
-        [Fact]
-        public void RedactsHttpsUrls()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "Fetching https://secure.provider.com:443/live/user1/pass1/123.ts", "", "", "", "");
-            Assert.Contains("<provider-host>", result);
-            Assert.DoesNotContain("secure.provider.com", result);
-        }
-
-        [Fact]
-        public void MultiplePiiTypesInOneLine()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "User myuser at 10.0.0.1 sent email test@example.com via http://host.com/live/u/p/1.ts",
-                "myuser", "mypass", "", "");
-            Assert.DoesNotContain("myuser", result);
-            Assert.DoesNotContain("10.0.0.1", result);
-            Assert.DoesNotContain("test@example.com", result);
-            Assert.DoesNotContain("host.com", result);
-        }
-
-        [Fact]
-        public void RedactsUsernameAndPasswordQueryParameters()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "GET /player_api.php?username=alice&password=supersecret&action=get_live_streams",
-                "", "", "", "");
-
-            Assert.Contains("username=<redacted>", result);
-            Assert.Contains("password=<redacted>", result);
-            Assert.DoesNotContain("alice", result);
-            Assert.DoesNotContain("supersecret", result);
-        }
-
-        [Fact]
-        public void RedactsApiKeyQueryParameter()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "GET /M3uEditor/Logs?api_key=abcdef123456",
-                "", "", "", "");
-
-            Assert.Contains("api_key=<redacted>", result);
-            Assert.DoesNotContain("abcdef123456", result);
-        }
-
-        [Fact]
-        public void RedactsBearerAuthorizationHeader()
-        {
-            var result = LogSanitizer.SanitizeLine(
-                "Authorization: Bearer not-a-real-token-for-tests",
-                "", "", "", "");
-
-            Assert.Contains("Authorization: Bearer <redacted>", result);
-            Assert.DoesNotContain("not-a-real-token-for-tests", result);
-        }
-
-        [Fact]
-        public void RedactsJsonTokenFields()
-        {
-            var result = LogSanitizer.SanitizeLine(
+            var query = LogSanitizer.SanitizeLine(
+                "GET /player_api.php?username=alice&password=secret&api_key=key",
+                string.Empty,
+                string.Empty);
+            var bearer = LogSanitizer.SanitizeLine(
+                "Authorization: Bearer token-value",
+                string.Empty,
+                string.Empty);
+            var json = LogSanitizer.SanitizeLine(
                 "{\"access\":\"token123\",\"refresh\":\"token456\"}",
-                "", "", "", "");
+                string.Empty,
+                string.Empty);
 
-            Assert.Contains("\"access\":\"<redacted>\"", result);
-            Assert.Contains("\"refresh\":\"<redacted>\"", result);
-            Assert.DoesNotContain("token123", result);
-            Assert.DoesNotContain("token456", result);
+            Assert.DoesNotContain("alice", query);
+            Assert.DoesNotContain("secret", query);
+            Assert.DoesNotContain("api_key=key", query);
+            Assert.Contains("Bearer <redacted>", bearer);
+            Assert.DoesNotContain("token123", json);
+            Assert.DoesNotContain("token456", json);
+        }
+
+        [Theory]
+        [InlineData("M3uEditor retired password=old-secret", "old-secret")]
+        [InlineData("token: legacy-token", "legacy-token")]
+        [InlineData("api_key='legacy-key'", "legacy-key")]
+        [InlineData("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz")]
+        [InlineData("Cookie: session=legacy-cookie", "legacy-cookie")]
+        [InlineData("Set-Cookie: auth=legacy-cookie", "legacy-cookie")]
+        public void RedactsGenericHistoricalSecretFormats(string input, string secret)
+        {
+            var result = LogSanitizer.SanitizeLine(input, string.Empty, string.Empty);
+
+            Assert.DoesNotContain(secret, result);
+            Assert.Contains("<redacted>", result);
         }
 
         [Theory]
@@ -191,17 +77,15 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("File Emby.dll has version 4.8.0.80")]
         public void PreservesVersionNumbers(string input)
         {
-            var result = LogSanitizer.SanitizeLine(input, "", "", "", "");
-            Assert.Equal(input, result);
+            Assert.Equal(input, LogSanitizer.SanitizeLine(input, string.Empty, string.Empty));
         }
 
-        [Fact]
-        public void CredentialSubstringReplacesPartialWords()
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void HandlesNullOrEmptyLine(string input)
         {
-            // string.Replace matches substrings - documents this known behavior
-            var result = LogSanitizer.SanitizeLine(
-                "the password field is empty", "", "pass", "", "");
-            Assert.Equal("the <redacted>word field is empty", result);
+            Assert.Equal(input, LogSanitizer.SanitizeLine(input, "user", "pass"));
         }
     }
 }

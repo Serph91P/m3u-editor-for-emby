@@ -46,7 +46,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void DashboardResponse_RetainedLegacyMapping_DoesNotExposeOutputPath()
+        public void DashboardResponse_RetainedManagedMapping_DoesNotExposeOutputPath()
         {
             var legacyPath = Path.Join(
                 Path.GetTempPath(),
@@ -74,13 +74,16 @@ namespace Emby.M3uEditor.Plugin.Tests
                         Changed = 11,
                         Removed = 13,
                         OmittedVersions = 2,
+                        SourceGroups = Enumerable.Range(0, 18)
+                            .Select(index => "Group " + index.ToString("00"))
+                            .ToList(),
+                        SourceGroupsTruncated = false,
                         Error = "visible-status-error"
                     }
                 })
             };
             var response = new DashboardResult
             {
-                History = new List<SyncHistoryEntry>(),
                 LibraryStats = new LibraryStats(),
                 ManagedPublishing = M3uEditorApi.BuildManagedDashboardStatus(
                     config,
@@ -110,6 +113,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("\"Changed\":11", responseJson);
             Assert.Contains("\"Removed\":13", responseJson);
             Assert.Contains("\"OmittedVersions\":2", responseJson);
+            var dashboardMapping = Assert.Single(response.ManagedPublishing.Mappings);
+            Assert.Equal(16, dashboardMapping.SourceGroups.Count);
+            Assert.Equal("Group 00", dashboardMapping.SourceGroups[0]);
+            Assert.Equal("Group 15", dashboardMapping.SourceGroups[15]);
+            Assert.True(dashboardMapping.SourceGroupsTruncated);
         }
 
         [Fact]
@@ -140,9 +148,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void BuildManagedDashboardStatus_OversizedPage_IsCappedAtTwentyFiveMappings()
+        public void BuildManagedDashboardStatus_OversizedPage_IsCappedAtAllSupportedMappings()
         {
-            var mappings = Enumerable.Range(0, 40)
+            var mappings = Enumerable.Range(0, 120)
                 .Select(index => new ManagedMappingState { MappingUuid = index.ToString("00") })
                 .ToList();
             var config = new PluginConfiguration
@@ -156,8 +164,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                 1,
                 1000);
 
-            Assert.Equal(25, dashboard.PageSize);
-            Assert.Equal(25, dashboard.Mappings.Count);
+            Assert.Equal(100, dashboard.PageSize);
+            Assert.Equal(100, dashboard.Mappings.Count);
             Assert.True(dashboard.HasMore);
         }
 
@@ -181,6 +189,40 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(2, dashboard.Page);
             Assert.Equal(5, dashboard.Mappings.Count);
             Assert.False(dashboard.HasMore);
+        }
+
+        [Fact]
+        public void BuildManagedDashboardStatus_HostileGroupLabels_HasBoundedNonDuplicatedResponse()
+        {
+            var hostileGroups = Enumerable.Range(0, 16)
+                .Select(index => "Group " + index.ToString("00") + " " + new string('x', 4096))
+                .ToList();
+            var mappings = Enumerable.Range(0, 100)
+                .Select(index => new ManagedMappingState
+                {
+                    MappingUuid = index.ToString("00"),
+                    LibraryName = "Library " + index + new string('\u0800', 4096),
+                    SourceGroups = hostileGroups
+                })
+                .ToList();
+            var config = new PluginConfiguration
+            {
+                ManagedMappingsJson = JsonSerializer.Serialize(mappings)
+            };
+
+            var dashboard = M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 100);
+            var responseJson = JsonSerializer.Serialize(dashboard);
+
+            Assert.DoesNotContain("\"MappingsJson\"", responseJson);
+            Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(responseJson), 1, 512 * 1024);
+            Assert.All(dashboard.Mappings, mapping =>
+            {
+                Assert.True(mapping.LibraryNameTruncated);
+                Assert.InRange(mapping.LibraryName.Length, 1, 128);
+                Assert.True(mapping.SourceGroupsTruncated);
+                Assert.All(mapping.SourceGroups, group => Assert.InRange(group.Length, 1, 128));
+                Assert.InRange(mapping.SourceGroups.Sum(group => group.Length), 1, 512);
+            });
         }
 
         [Theory]

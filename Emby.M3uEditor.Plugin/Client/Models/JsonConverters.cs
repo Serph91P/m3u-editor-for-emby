@@ -61,7 +61,7 @@ namespace Emby.M3uEditor.Plugin.Client.Models
 
     /// <summary>
     /// Reads a JSON value that may be a string ("5.1", "stereo") or a bare number (2, 6)
-    /// and always surfaces it as a string. Dispatcharr versions differ in which they emit.
+    /// and always surfaces it as a string.
     /// </summary>
     internal sealed class StringOrNumberAsStringConverter : JsonConverter<string>
     {

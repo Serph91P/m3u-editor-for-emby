@@ -16,6 +16,7 @@ namespace Emby.M3uEditor.Plugin
 {
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
     {
+        private const string DashboardResourceRevision = "r3";
         private static volatile Plugin _instance;
         internal static readonly object ConfigurationTransactionGate = new object();
         private readonly IApplicationHost _applicationHost;
@@ -41,7 +42,7 @@ namespace Emby.M3uEditor.Plugin
         public override string Name => "m3u-editor for Emby";
 
         public override string Description =>
-            "Live TV, EPG, VOD, and managed library publishing for Xtream-compatible backends.";
+            "Managed movie and series publishing with direct m3u-editor Live TV and EPG.";
 
         public override Guid Id => Guid.Parse("b7e3c4a1-9f2d-4e8b-a5c6-d1f0e2b3c4a5");
 
@@ -121,6 +122,18 @@ namespace Emby.M3uEditor.Plugin
                 },
                 new PluginPageInfo
                 {
+                    Name = "m3ueditorconfigr2",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
+                    // Preserve the previous main-page URL as an upgrade alias. The
+                    // revised main URL bypasses Emby's public browser cache.
+                    Name = "m3ueditorconfig",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
                     Name = "m3u-editorforEmby",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
                 },
@@ -142,6 +155,16 @@ namespace Emby.M3uEditor.Plugin
                 },
                 new PluginPageInfo
                 {
+                    Name = "m3ueditorconfigjsr2",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
+                },
+                new PluginPageInfo
+                {
+                    Name = "m3ueditorconfigjs",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
+                },
+                new PluginPageInfo
+                {
                     Name = "xtreamconfigjs",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
                 },
@@ -149,23 +172,22 @@ namespace Emby.M3uEditor.Plugin
         }
 
         /// <summary>
-        /// Returns a stable page name for config.html. Must never change between versions -
-        /// if it did, the Emby SPA would navigate to a stale URL after a banner install and
-        /// show "error processing request" because the old page name no longer exists in the
-        /// new DLL. Emby appends ?v=&lt;ServerVersion&gt; for cache-busting.
+        /// Returns the current page name for config.html. Emby serves configuration
+        /// resources with public caching and keys its cache-buster to the server version,
+        /// not the plugin version. Bump the resource revision after incompatible dashboard
+        /// changes and retain the previous name as an alias in <see cref="GetPages"/>.
         /// </summary>
         private static string GetHtmlPageName()
         {
-            return "m3ueditorconfig";
+            return "m3ueditorconfig" + DashboardResourceRevision;
         }
 
         /// <summary>
-        /// Returns a stable JS page name. Emby appends ?v=&lt;ServerVersion&gt; automatically,
-        /// which provides sufficient cache-busting across plugin updates.
+        /// Returns the JavaScript resource name matching the current dashboard revision.
         /// </summary>
         private static string GetJsPageName()
         {
-            return "m3ueditorconfigjs";
+            return "m3ueditorconfigjs" + DashboardResourceRevision;
         }
     }
 }
