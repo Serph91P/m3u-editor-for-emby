@@ -523,8 +523,8 @@ function (BaseView, loading) {
             sessionStorage.setItem('m3u-editor-for-emby-cache-bust', '1');
             var appVersion = document.documentElement.getAttribute('data-appversion') || '';
             Promise.all([
-                fetch('configurationpage?name=m3ueditorconfig&v=' + appVersion, { cache: 'reload' }),
-                fetch('configurationpage?name=m3ueditorconfigjs&v=' + appVersion, { cache: 'reload' })
+                fetch('configurationpage?name=m3ueditorconfigr2&v=' + appVersion, { cache: 'reload' }),
+                fetch('configurationpage?name=m3ueditorconfigjsr2&v=' + appVersion, { cache: 'reload' })
             ]).then(function () { location.reload(); });
             return;
         }

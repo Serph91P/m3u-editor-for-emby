@@ -37,23 +37,34 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void UpgradeFromXtreamAssembly_PreservesConfigurationAndDashboardPageAliases()
+        public void UpgradeFromXtreamAssembly_PreservesAliasesAndRevisesCachedDashboardResources()
         {
             var plugin = (Plugin)RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
             plugin.SetAttributes(
                 "/plugins/Emby.M3uEditor.Plugin.dll",
                 "/plugins/data/m3u-editor-for-emby",
                 new Version(1, 4, 0, 0));
-            var pageNames = plugin.GetPages().Select(page => page.Name).ToArray();
+            var pages = plugin.GetPages().ToArray();
+            var pageNames = pages.Select(page => page.Name).ToArray();
+            var mainPage = Assert.Single(pages.Where(page => page.EnableInMainMenu));
 
             Assert.Equal("Emby.Xtr" + "eam.Plugin.xml", plugin.ConfigurationFileName);
+            Assert.Equal("m3ueditorconfigr2", mainPage.Name);
+            Assert.Contains("m3ueditorconfigjsr2", pageNames);
             Assert.Contains("m3ueditorconfig", pageNames);
             Assert.Contains("m3ueditorconfigjs", pageNames);
             Assert.Contains("m3u-editorforEmby", pageNames);
             Assert.Contains("xtr" + "eamconfig", pageNames);
             Assert.Contains("xtr" + "eamconfigjs", pageNames);
             Assert.Contains("Xtr" + "eamTuner", pageNames);
-            Assert.Equal(6, pageNames.Length);
+            Assert.Equal(8, pageNames.Length);
+
+            using (var stream = typeof(Plugin).Assembly.GetManifestResourceStream(
+                "Emby.M3uEditor.Plugin.Configuration.Web.config.html"))
+            using (var reader = new StreamReader(stream))
+            {
+                Assert.Contains("data-controller=\"__plugin/m3ueditorconfigjsr2\"", reader.ReadToEnd());
+            }
         }
 
         [Fact]
