@@ -49,31 +49,21 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ConfigurationSerializationContract_IsPreserved()
+        public void ActiveConfigurationSerializationContract_IsManagedAndLiveTvOnly()
         {
             var expected = new[]
             {
-                "AutoSyncDailyTime", "AutoSyncEnabled", "AutoSyncIntervalHours", "AutoSyncMode",
-                "BaseUrl", "CachedDispatcharrProfiles", "CachedLiveCategories", "CachedSeriesCategories",
-                "CachedVodCategories", "ChannelRemoveTerms", "CleanupOrphans", "ContentRemoveTerms",
-                "CustomEpgUrl", "DeferEpgToGuideData", "DetectedBackendName", "DetectedBackendType",
-                "DispatcharrFallbackToXtream", "DispatcharrPass", "DispatcharrUrl", "DispatcharrUser",
-                "EnableChannelNameCleaning", "EnableContentNameCleaning", "EnableDiagnosticsLogging",
-                "EnableDispatcharr", "EnableEpg", "EnableLiveTv", "EnableLiveTvDiagnostics",
-                "EnableNfoFiles", "EnableSeriesIdFolderNaming", "EnableSeriesMetadataLookup",
-                "EnableTmdbFallbackLookup", "EnableTmdbFolderNaming", "EpgCacheMinutes", "EpgDaysToFetch",
-                "EpgSource", "ForceAudioTranscode", "HttpUserAgent", "IncludeAdultChannels",
-                "LastBackendDetectionTicks", "LastChannelListHash", "LastInstalledVersion",
-                "LastMovieSyncTimestamp", "LastSeriesSyncTimestamp", "LiveTvOutputFormat", "M3UCacheMinutes",
+                "BaseUrl", "CachedLiveCategories", "ChannelRemoveTerms", "CustomEpgUrl",
+                "EnableChannelNameCleaning", "EnableDiagnosticsLogging", "EnableEpg", "EnableLiveTv",
+                "EnableLiveTvDiagnostics", "EpgCacheMinutes", "EpgDaysToFetch", "EpgSource",
+                "HttpUserAgent", "IncludeAdultChannels", "LastChannelListHash", "LastInstalledVersion",
+                "LiveTvOutputFormat", "M3UCacheMinutes",
                 "ManagedActiveGeneration", "ManagedApprovedOutputRoots", "ManagedCatalogRevision",
                 "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
                 "ManagedOmittedVersions", "ManagedPreviousGeneration", "ManagedPublishingApiVersion",
-                "ManagedPublishingEnabled", "MovieFolderMappings", "MovieFolderMode", "OrphanSafetyThreshold",
-                "Password", "SelectedDispatcharrProfileIds", "SelectedLiveCategoryIds",
-                "SelectedSeriesCategoryIds", "SelectedVodCategoryIds", "SeriesEpisodeHashesJson",
-                "SeriesFolderMappings", "SeriesFolderMode", "SmartSkipExisting", "StrmLibraryPath",
-                "StrmNamingVersion", "SyncHistoryJson", "SyncMovies", "SyncParallelism", "SyncSeries",
-                "TvdbFolderIdOverrides", "UseBetaChannel", "UseM3uLogoForAllChannelImages", "Username",
+                "ManagedPublishingEnabled", "ManagedPublishingIntegrationId", "ManagedSetupLastResult",
+                "ManagedSetupReady", "Password", "SelectedLiveCategoryIds", "UseBetaChannel",
+                "UseM3uLogoForAllChannelImages", "Username",
             };
 
             var actual = typeof(PluginConfiguration)
@@ -91,8 +81,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             var api = ReadText("Emby.M3uEditor.Plugin/Api/M3uEditorApi.cs");
 
             Assert.Contains("var currentDll = typeof(Plugin).Assembly.Location;", api);
+            Assert.Contains("var pluginsDir = Plugin.Instance.ApplicationPaths.PluginsPath;", api);
+            Assert.Contains("Path.DirectorySeparatorChar", api);
+            Assert.Contains("\"Emby.M3uEditor.Plugin.dll\";", api);
+            Assert.DoesNotContain("Path.Combine(pluginsDir", api);
             Assert.Contains("File.Move(tempPath, currentDll);", api);
-            Assert.Contains("Path.Combine(pluginsDir, \"Emby.M3uEditor.Plugin.dll\")", api);
         }
 
         [Fact]
@@ -108,8 +101,13 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             foreach (var relativePath in GetTrackedFiles())
             {
+                var trackedPath = ResolveTrackedPath(relativePath);
+                if (!File.Exists(trackedPath))
+                {
+                    continue;
+                }
                 Assert.DoesNotMatch(forbidden, relativePath);
-                var bytes = File.ReadAllBytes(Path.Combine(RepositoryRoot, relativePath));
+                var bytes = File.ReadAllBytes(trackedPath);
                 var content = Encoding.Latin1.GetString(bytes);
                 if (relativePath == "Emby.M3uEditor.Plugin/Plugin.cs")
                 {
@@ -125,6 +123,102 @@ namespace Emby.M3uEditor.Plugin.Tests
                     }
                 }
                 Assert.DoesNotMatch(forbidden, content);
+            }
+        }
+
+        [Fact]
+        public void ResolveTrackedPath_RootedPath_IsRejected()
+        {
+            var rootedPath = Path.GetFullPath(Path.Join(Path.GetTempPath(), "outside-repository.txt"));
+
+            Assert.Throws<InvalidDataException>(() => ResolveTrackedPath(rootedPath));
+        }
+
+        [Fact]
+        public void ResolveTrackedPath_ParentTraversal_IsRejected()
+        {
+            Assert.Throws<InvalidDataException>(() => ResolveTrackedPath(Path.Join("..", "outside-repository.txt")));
+        }
+
+        [Fact]
+        public void ResolveTrackedPath_SymbolicLink_IsRejected()
+        {
+            var root = Path.Join(Path.GetTempPath(), "hermes-verify-" + Guid.NewGuid().ToString("N"));
+            var outsidePath = Path.Join(Path.GetTempPath(), "hermes-verify-" + Guid.NewGuid().ToString("N") + ".txt");
+            Directory.CreateDirectory(root);
+            File.WriteAllText(outsidePath, "outside repository");
+
+            try
+            {
+                var linkPath = Path.Join(root, "escape-link.txt");
+                try
+                {
+                    File.CreateSymbolicLink(linkPath, outsidePath);
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    return;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return;
+                }
+
+                Assert.Throws<InvalidDataException>(() => ResolveTrackedPath(root, "escape-link.txt"));
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+                File.Delete(outsidePath);
+            }
+        }
+
+        private static string ResolveTrackedPath(string relativePath)
+        {
+            return ResolveTrackedPath(RepositoryRoot, relativePath);
+        }
+
+        private static string ResolveTrackedPath(string repositoryRoot, string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
+            {
+                throw new InvalidDataException("Tracked paths must be repository-relative.");
+            }
+
+            var canonicalRoot = Path.GetFullPath(repositoryRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var fullPath = Path.GetFullPath(Path.Join(canonicalRoot, relativePath));
+            var rootPrefix = canonicalRoot
+                + Path.DirectorySeparatorChar;
+            if (!fullPath.StartsWith(rootPrefix, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Tracked path escapes the repository root.");
+            }
+
+            EnsureNoReparsePoints(canonicalRoot, fullPath);
+            return fullPath;
+        }
+
+        private static void EnsureNoReparsePoints(string canonicalRoot, string fullPath)
+        {
+            var relativePath = fullPath.Substring(canonicalRoot.Length);
+            var currentPath = canonicalRoot;
+            var segments = relativePath.Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var segment in segments)
+            {
+                currentPath = Path.Join(currentPath, segment);
+                if (!File.Exists(currentPath) && !Directory.Exists(currentPath))
+                {
+                    return;
+                }
+
+                if ((File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidDataException("Tracked paths must not traverse symbolic links.");
+                }
             }
         }
 

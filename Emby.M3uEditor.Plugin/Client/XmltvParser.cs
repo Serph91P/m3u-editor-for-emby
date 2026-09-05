@@ -95,6 +95,7 @@ namespace Emby.M3uEditor.Plugin.Client
 
             // Read child elements at depth + 1; break when we return to the parent's end element
             var depth = reader.Depth;
+            var hasTypedPoster = false;
             while (reader.Read())
             {
                 if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth)
@@ -152,11 +153,54 @@ namespace Emby.M3uEditor.Plugin.Client
                     var src = reader.GetAttribute("src");
                     var sanitized = Util.UrlValidator.SanitizeHttpUrl(src);
                     if (sanitized != null)
-                        program.ImageUrl = sanitized;
+                    {
+                        var imageType = (reader.GetAttribute("type") ?? string.Empty).Trim();
+                        if (string.Equals(imageType, "poster", StringComparison.OrdinalIgnoreCase))
+                        {
+                            program.ImageUrl = sanitized;
+                            program.ImageWidth = ParsePositiveDimension(reader.GetAttribute("width"));
+                            program.ImageHeight = ParsePositiveDimension(reader.GetAttribute("height"));
+                            hasTypedPoster = true;
+                        }
+                        else if (string.Equals(imageType, "backdrop", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(imageType, "fanart", StringComparison.OrdinalIgnoreCase))
+                        {
+                            program.BackdropImageUrl = sanitized;
+                        }
+                        else if (string.Equals(imageType, "screenshot", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(imageType, "episode-still", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(imageType, "still", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(imageType, "thumb", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(imageType, "thumbnail", StringComparison.OrdinalIgnoreCase))
+                        {
+                            program.ThumbImageUrl = sanitized;
+                        }
+                        else if (string.Equals(imageType, "logo", StringComparison.OrdinalIgnoreCase))
+                        {
+                            program.LogoImageUrl = sanitized;
+                        }
+                        else if (!hasTypedPoster)
+                        {
+                            // Preserve the historical last-valid-icon fallback for feeds
+                            // without m3u-editor's explicit artwork roles.
+                            program.ImageUrl = sanitized;
+                            program.ImageWidth = ParsePositiveDimension(reader.GetAttribute("width"));
+                            program.ImageHeight = ParsePositiveDimension(reader.GetAttribute("height"));
+                        }
+                    }
                 }
             }
 
             return program;
+        }
+
+        private static int ParsePositiveDimension(string value)
+        {
+            int dimension;
+            return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out dimension)
+                && dimension > 0
+                ? dimension
+                : 0;
         }
 
         /// <summary>

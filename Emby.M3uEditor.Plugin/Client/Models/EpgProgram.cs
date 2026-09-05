@@ -46,6 +46,11 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonIgnore] public bool IsPremiere { get; set; }
         [JsonIgnore] public bool IsPlainText { get; set; }
         [JsonIgnore] public string ImageUrl { get; set; }
+        [JsonIgnore] public int ImageWidth { get; set; }
+        [JsonIgnore] public int ImageHeight { get; set; }
+        [JsonIgnore] public string BackdropImageUrl { get; set; }
+        [JsonIgnore] public string ThumbImageUrl { get; set; }
+        [JsonIgnore] public string LogoImageUrl { get; set; }
         [JsonIgnore] public List<string> Categories { get; set; }
         [JsonIgnore] public string SubTitle { get; set; }
     }

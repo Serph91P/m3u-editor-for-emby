@@ -16,6 +16,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             long stopTimestamp  = 1735693200L,   // 2025-01-01 01:00 UTC
             List<string> categories = null,
             string imageUrl = null,
+            string backdropImageUrl = null,
+            string thumbImageUrl = null,
+            string logoImageUrl = null,
+            int imageWidth = 0,
+            int imageHeight = 0,
             string subTitle = null,
             bool isLive = false,
             bool isNew = false,
@@ -30,6 +35,11 @@ namespace Emby.M3uEditor.Plugin.Tests
                 StopTimestamp  = stopTimestamp,
                 Categories = categories,
                 ImageUrl = imageUrl,
+                BackdropImageUrl = backdropImageUrl,
+                ThumbImageUrl = thumbImageUrl,
+                LogoImageUrl = logoImageUrl,
+                ImageWidth = imageWidth,
+                ImageHeight = imageHeight,
                 SubTitle = subTitle,
                 IsLive = isLive,
                 IsNew = isNew,
@@ -185,6 +195,39 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var info = Build(MakeProgram(imageUrl: "/relative/path.jpg"));
             Assert.Null(info.ImageUrl);
+        }
+
+        [Fact]
+        public void ArtworkRoles_AreForwardedToSeparateProgramInfoSlots()
+        {
+            var info = Build(MakeProgram(
+                imageUrl: "https://example.com/poster.jpg",
+                backdropImageUrl: "https://example.com/backdrop.jpg",
+                thumbImageUrl: "https://example.com/still.jpg",
+                logoImageUrl: "https://example.com/logo.png",
+                imageWidth: 500,
+                imageHeight: 750));
+
+            Assert.Equal("https://example.com/poster.jpg", info.ImageUrl);
+            Assert.Equal(500, info.ImageWidth);
+            Assert.Equal(750, info.ImageHeight);
+            Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
+            Assert.Equal("https://example.com/still.jpg", info.ThumbImageUrl);
+            Assert.Equal("https://example.com/logo.png", info.LogoImageUrl);
+        }
+
+        [Fact]
+        public void InvalidArtworkRoleUrls_AreNotForwarded()
+        {
+            var info = Build(MakeProgram(
+                imageUrl: "https://example.com/poster.jpg",
+                backdropImageUrl: "/relative-backdrop.jpg",
+                thumbImageUrl: "file:///tmp/still.jpg",
+                logoImageUrl: "javascript:alert(1)"));
+
+            Assert.Null(info.BackdropImageUrl);
+            Assert.Null(info.ThumbImageUrl);
+            Assert.Null(info.LogoImageUrl);
         }
 
         [Fact]

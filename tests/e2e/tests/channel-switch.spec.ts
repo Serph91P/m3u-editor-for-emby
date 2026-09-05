@@ -4,8 +4,7 @@
  * Measures three timings per channel:
  *
  *   infoTime    - click channel in guide → play/record dialog appears.
- *                 Catches: slow GetChannelStreamMediaSources, EnsureStatsLoadedAsync delay,
- *                 or repeated Dispatcharr API calls (BUG-007).
+ *                 Catches slow GetChannelStreamMediaSources or metadata loading delays.
  *
  *   streamTime  - click play → video element reaches HAVE_CURRENT_DATA (readyState >= 2).
  *                 Catches: probe storm / teardown issues (FFprobe, Range: bytes=0-1).
@@ -13,11 +12,6 @@
  * Thresholds (seconds):
  *   infoTime   < 3s   (dialog should appear quickly; > 3s suggests extra API round-trips)
  *   streamTime < 5s   (video data should arrive; > 5s suggests teardown / probe issue)
- *
- * Dispatcharr call count:
- *   After the first channel is fully playing, subsequent channel switches should
- *   not make more than 2 Dispatcharr API calls. More than that indicates BUG-007
- *   (repeated /api/channels/ fetches per session).
  *
  * Configuration:
  *   Set EMBY_CHANNELS in .env as a comma-separated list of channel names to test.
@@ -106,24 +100,14 @@ test.describe('channel switch performance', () => {
     // Capture the guide URL so returnToGuide can hard-navigate back to it.
     const guideUrl = page.url();
 
-    // Track Dispatcharr API call counts.
-    let totalDispatcharrCalls = 0;
-    const callsPerPhase: number[] = [];
-    page.on('request', req => {
-      if (req.url().includes('/api/channels/')) totalDispatcharrCalls++;
-    });
-
     const channelResults: {
       name: string;
       infoTime: number;
       streamTime: number;
-      dispatcharrCalls: number;
     }[] = [];
 
     for (let i = 0; i < channels.length; i++) {
       const channel = channels[i];
-      const callsBefore = totalDispatcharrCalls;
-
       // ── Info screen time ───────────────────────────────────────────────────
 
       // The guide uses virtual scrolling - off-screen channels are not rendered.
@@ -161,7 +145,7 @@ test.describe('channel switch performance', () => {
       await playBtn.click();
 
       // Race: wait for video to reach HAVE_CURRENT_DATA OR a "Playback Error" dialog.
-      // The error dialog (Got It button) indicates Dispatcharr has no compatible stream.
+      // The error dialog lets the test record a failed stream without waiting indefinitely.
       const videoOk = await Promise.race([
         page.waitForFunction(
           () => {
@@ -183,15 +167,9 @@ test.describe('channel switch performance', () => {
         if (visible) await gotIt.click();
       }
 
-      const callsThisPhase = totalDispatcharrCalls - callsBefore;
-      callsPerPhase.push(callsThisPhase);
-
-      channelResults.push({ name: channel, infoTime, streamTime, dispatcharrCalls: callsThisPhase });
+      channelResults.push({ name: channel, infoTime, streamTime });
       const streamLabel = isFinite(streamTime) ? streamTime.toFixed(2) + 's' : 'FAILED';
-      console.log(
-        `[${channel}] infoTime=${infoTime.toFixed(2)}s  streamTime=${streamLabel}  ` +
-        `dispatcharrCalls=${callsThisPhase}`,
-      );
+      console.log(`[${channel}] infoTime=${infoTime.toFixed(2)}s  streamTime=${streamLabel}`);
 
       // ── Return to guide for the next channel ───────────────────────────────
       if (i < channels.length - 1) {
@@ -218,15 +196,6 @@ test.describe('channel switch performance', () => {
       ).toBeLessThan(STREAM_TIME_THRESHOLD_S);
     }
 
-    // After the first channel warms up, subsequent channels should not spam
-    // the Dispatcharr API (BUG-007: repeated /api/channels/ calls per session).
-    for (let i = 1; i < callsPerPhase.length; i++) {
-      expect(
-        callsPerPhase[i],
-        `[${channels[i]}] should make ≤ 2 Dispatcharr API calls after warm-up (BUG-007 guard)`,
-      ).toBeLessThanOrEqual(2);
-    }
-
-    await saveResults({ channels: channelResults, totalDispatcharrCalls });
+    await saveResults({ channels: channelResults });
   });
 });

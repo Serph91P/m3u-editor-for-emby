@@ -1,7 +1,6 @@
 using System;
 using System.Net.Http;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
@@ -31,71 +30,21 @@ namespace Emby.M3uEditor.Plugin.Tests
             BaseUrl               = "http://fake-xtream",
             Username              = "user",
             Password              = "pass",
-            StrmLibraryPath       = TempDir.Path,
             ManagedApprovedOutputRoots = TempDir.Path,
-            SmartSkipExisting     = false,
-            CleanupOrphans        = false,
-            OrphanSafetyThreshold = 0.0,
-            StrmNamingVersion     = StrmSyncService.CurrentStrmNamingVersion,
-            SyncParallelism       = 1,
-            MovieFolderMode       = "single",
-            SeriesFolderMode      = "single",
-            EnableNfoFiles        = false,
-            EnableTmdbFolderNaming       = false,
-            EnableContentNameCleaning    = false,
+            ManagedPublishingIntegrationId = 7,
+            ManagedSetupReady       = true,
+            ManagedSetupLastResult  = "Ready",
         };
 
-        protected StrmSyncService MakeService() =>
-            new StrmSyncService(new NullLogger(), HttpClient);
+        protected StrmSyncService MakeService()
+        {
+            return new StrmSyncService(new NullLogger(), HttpClient);
+        }
 
-        protected StrmSyncService MakeService(HttpClient httpClient) =>
-            new StrmSyncService(new NullLogger(), httpClient);
-
-        // ----- JSON factory helpers -----
-
-        protected static string VodStreamsJson(params object[] streams) =>
-            JsonSerializer.Serialize(streams);
-
-        protected static object VodStream(int streamId = 1, string name = "Test Movie",
-            long added = 1000, string tmdbId = "", string ext = "mkv") =>
-            new
-            {
-                stream_id = streamId,
-                name,
-                added,
-                tmdb_id = tmdbId,
-                container_extension = ext,
-                category_id = (int?)null
-            };
-
-        protected static string SeriesListJson(params object[] series) =>
-            JsonSerializer.Serialize(series);
-
-        protected static object Series(int seriesId = 1, string name = "Test Show",
-            string lastModified = "2000", string tmdbId = "") =>
-            new
-            {
-                series_id = seriesId,
-                name,
-                last_modified = lastModified,
-                tmdb = tmdbId,
-                category_id = (int?)null
-            };
-
-        protected static string SeriesDetailJson(int seriesId = 1, int seasonNum = 1,
-            int episodeNum = 1, string title = "Episode Title", string ext = "mp4") =>
-            JsonSerializer.Serialize(new
-            {
-                info = new { series_id = seriesId, name = "Test Show", tmdb = "" },
-                seasons = new object[0],
-                episodes = new System.Collections.Generic.Dictionary<string, object[]>
-                {
-                    [seasonNum.ToString()] = new object[]
-                    {
-                        new { id = 101, episode_num = episodeNum, title, container_extension = ext, season = seasonNum }
-                    }
-                }
-            });
+        protected StrmSyncService MakeService(HttpClient httpClient)
+        {
+            return new StrmSyncService(new NullLogger(), httpClient);
+        }
 
         protected static readonly CancellationToken None = CancellationToken.None;
 

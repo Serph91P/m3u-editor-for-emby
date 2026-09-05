@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
 
@@ -66,6 +67,8 @@ namespace Emby.M3uEditor.Plugin.Service
         public int Changed { get; set; }
         public int Removed { get; set; }
         public int OmittedVersions { get; set; }
+        public List<string> SourceGroups { get; set; } = new List<string>();
+        public bool SourceGroupsTruncated { get; set; }
         public string Error { get; set; }
     }
 
@@ -97,6 +100,10 @@ namespace Emby.M3uEditor.Plugin.Service
     {
         private const string ManagedMetadataDirectoryName = ".m3u-editor-for-emby";
         private const int MaximumVisibleVersions = 8;
+        internal const int MaximumManagedDashboardLabelCharacters = 128;
+        internal const int MaximumManagedSourceGroups = 16;
+        internal const int MaximumManagedSourceGroupCharacters = 128;
+        internal const int MaximumManagedSourceGroupCharactersTotal = 512;
         internal const int MaximumGeneratedFileBytes = 1024 * 1024;
         internal const long MaximumGeneratedBytes = 8L * 1024L * 1024L;
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> ManagedRootLocks =
@@ -105,6 +112,106 @@ namespace Emby.M3uEditor.Plugin.Service
         internal Action<string> ManagedPhaseHook { get; set; }
         internal Action<string, string> ManagedFileMoveHook { get; set; }
         internal Func<PluginConfiguration> ManagedConfigurationProvider { get; set; }
+        internal Func<string> ManagedOwnerPathProvider { get; set; }
+
+        internal static List<string> BuildManagedSourceGroups(
+            IEnumerable<M3uEditorCatalogItem> items,
+            out bool truncated)
+        {
+            return NormalizeManagedSourceGroups(
+                items == null
+                    ? Enumerable.Empty<string>()
+                    : items.Where(item => item != null && item.Groups != null)
+                        .SelectMany(item => item.Groups),
+                out truncated);
+        }
+
+        internal static List<string> NormalizeManagedSourceGroups(
+            IEnumerable<string> groups,
+            out bool truncated)
+        {
+            var sourceGroups = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            truncated = false;
+
+            if (groups == null)
+            {
+                return sourceGroups;
+            }
+
+            var totalCharacters = 0;
+            foreach (var group in groups)
+            {
+                if (string.IsNullOrWhiteSpace(group))
+                {
+                    continue;
+                }
+
+                bool labelTruncated;
+                var label = NormalizeManagedDashboardLabel(group, out labelTruncated);
+                if (labelTruncated)
+                {
+                    truncated = true;
+                }
+
+                if (!seen.Add(label))
+                {
+                    continue;
+                }
+
+                if (sourceGroups.Count >= MaximumManagedSourceGroups ||
+                    totalCharacters >= MaximumManagedSourceGroupCharactersTotal)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                var remainingCharacters = MaximumManagedSourceGroupCharactersTotal - totalCharacters;
+                var boundedLabel = TruncateManagedSourceGroup(label, remainingCharacters);
+                if (boundedLabel.Length != label.Length)
+                {
+                    truncated = true;
+                }
+
+                if (boundedLabel.Length == 0)
+                {
+                    truncated = true;
+                    continue;
+                }
+
+                sourceGroups.Add(boundedLabel);
+                totalCharacters += boundedLabel.Length;
+            }
+
+            return sourceGroups;
+        }
+
+        internal static string NormalizeManagedDashboardLabel(string value, out bool truncated)
+        {
+            var normalized = (value ?? string.Empty).Trim();
+            var bounded = TruncateManagedSourceGroup(
+                normalized,
+                MaximumManagedDashboardLabelCharacters);
+            truncated = bounded.Length != normalized.Length;
+            return bounded;
+        }
+
+        private static string TruncateManagedSourceGroup(string value, int maximumLength)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= maximumLength)
+            {
+                return value;
+            }
+
+            var length = maximumLength;
+            if (length > 0 && length < value.Length &&
+                char.IsHighSurrogate(value[length - 1]) && char.IsLowSurrogate(value[length]))
+            {
+                length--;
+            }
+
+            return value.Substring(0, length);
+        }
 
         internal async Task<ManagedReconcileResult> ReconcileManagedAsync(
             PluginConfiguration config,
@@ -140,16 +247,51 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 result.Compatible = true;
-                config.ManagedPublishingEnabled = true;
+                config.ManagedPublishingEnabled = false;
                 config.ManagedPublishingApiVersion = capability.ApiVersion;
+                string canonicalRoot;
+                string setupError;
+                if (!TryGetCanonicalSetupRoot(config, true, out canonicalRoot, out setupError))
+                {
+                    config.ManagedPublishingEnabled = false;
+                    progress?.Report(100);
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        setupError);
+                }
+
+                var approvedOutputRoots = config.ManagedApprovedOutputRoots;
+                var writablePaths = new List<string> { canonicalRoot };
+
+                await client.RegisterPublisherAsync(
+                    config.BaseUrl,
+                    config.Username,
+                    config.Password,
+                    capability.RegisterPublisherAction,
+                    config.ManagedPublishingIntegrationId,
+                    writablePaths,
+                    cancellationToken).ConfigureAwait(false);
                 progress?.Report(10);
                 var catalog = await client.GetCatalogAsync(
                     config.BaseUrl,
                     config.Username,
                     config.Password,
                     cancellationToken).ConfigureAwait(false);
+                if (catalog.Mappings.Any(mapping =>
+                    mapping.IntegrationId != config.ManagedPublishingIntegrationId))
+                {
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed catalog mapping integration ID does not match the configured publisher.");
+                }
+
                 result.CatalogRevision = catalog.Revision;
                 result.TotalMappings = catalog.Mappings.Count;
+                var previousCatalogRevision = config.ManagedCatalogRevision;
                 config.ManagedCatalogRevision = catalog.Revision;
 
                 var states = new List<ManagedMappingState>();
@@ -161,25 +303,51 @@ namespace Emby.M3uEditor.Plugin.Service
                     string approvalError;
                     if (!ManagedOutputPolicy.IsApproved(
                         mapping.TargetLibrary.OutputPath,
-                        config.ManagedApprovedOutputRoots,
+                        approvedOutputRoots,
                         out approvalError))
                     {
                         published = Failed(mapping.Revision, approvalError);
-                    }
-                    else if (OverlapsEnabledLegacyRoot(config, mapping))
-                    {
-                        published = Failed(
-                            mapping.Revision,
-                            "Managed output overlaps an enabled legacy sync root. Disable the legacy writer first.");
                     }
                     else
                     {
                         published = await PublishManagedMappingAsync(
                             mapping,
                             cancellationToken,
-                            config.ManagedApprovedOutputRoots).ConfigureAwait(false);
+                            approvedOutputRoots,
+                            config).ConfigureAwait(false);
                     }
                     var activeGenerationChanged = published.Success && !published.Duplicate;
+
+                    string currentRoot;
+                    string currentApprovedRoots;
+                    if (!TryGetCurrentSetupRoot(
+                        config,
+                        mapping.IntegrationId,
+                        canonicalRoot,
+                        approvedOutputRoots,
+                        out currentRoot,
+                        out currentApprovedRoots,
+                        out setupError) ||
+                        !ManagedOutputPolicy.IsApproved(
+                            mapping.TargetLibrary.OutputPath,
+                            currentApprovedRoots,
+                            out setupError))
+                    {
+                        if (published.Success)
+                        {
+                            await RevertAfterCallbackFailure(
+                                mapping,
+                                published,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+
+                        config.ManagedCatalogRevision = previousCatalogRevision;
+                        return RecordManagedReconcileFailure(
+                            config,
+                            saveConfig,
+                            result,
+                            setupError);
+                    }
 
                     if (published.Success)
                     {
@@ -250,6 +418,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     result.AddedFiles += published.Added;
                     result.ChangedFiles += published.Changed;
                     result.RemovedFiles += published.Removed;
+                    bool sourceGroupsTruncated;
+                    var sourceGroups = BuildManagedSourceGroups(mapping.Items, out sourceGroupsTruncated);
                     states.Add(new ManagedMappingState
                     {
                         MappingUuid = mapping.MappingUuid,
@@ -275,6 +445,8 @@ namespace Emby.M3uEditor.Plugin.Service
                         Changed = published.Changed,
                         Removed = published.Removed,
                         OmittedVersions = published.OmittedVersions,
+                        SourceGroups = sourceGroups,
+                        SourceGroupsTruncated = sourceGroupsTruncated,
                         Error = published.Error
                     });
                     progress?.Report(10 + (catalog.Mappings.Count == 0
@@ -286,10 +458,30 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     if (refresh == null)
                     {
-                        throw new InvalidOperationException("Managed library refresh is unavailable.");
+                        return RecordManagedReconcileFailure(
+                            config,
+                            saveConfig,
+                            result,
+                            "Managed reconcile failed.");
                     }
 
-                    refresh();
+                    try
+                    {
+                        refresh();
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex) when (
+                        !(ex is OperationCanceledException) || !cancellationToken.IsCancellationRequested)
+                    {
+                        return RecordManagedReconcileFailure(
+                            config,
+                            saveConfig,
+                            result,
+                            "Managed reconcile failed.");
+                    }
                 }
 
                 config.ManagedMappingsJson = JsonSerializer.Serialize(states, JsonOptions);
@@ -305,6 +497,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     result.RemovedFiles,
                     result.OmittedVersions);
                 config.ManagedLastError = result.Success ? string.Empty : result.Error ?? "Managed reconcile failed.";
+                config.ManagedPublishingEnabled = result.Success;
                 if (result.Success)
                 {
                     config.ManagedLastSuccessTicks = DateTime.UtcNow.Ticks;
@@ -326,9 +519,18 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, "Managed backend request timed out.");
             }
+            catch (ObjectDisposedException)
+            {
+                return RecordManagedReconcileFailure(config, saveConfig, result, "Managed reconcile failed.");
+            }
             catch (InvalidOperationException ex)
             {
                 return RecordManagedReconcileFailure(config, saveConfig, result, ex.Message);
+            }
+            catch (Exception ex) when (
+                !(ex is OperationCanceledException) || !cancellationToken.IsCancellationRequested)
+            {
+                return RecordManagedReconcileFailure(config, saveConfig, result, "Managed reconcile failed.");
             }
         }
 
@@ -366,6 +568,101 @@ namespace Emby.M3uEditor.Plugin.Service
                 ? Plugin.InstanceOrNull?.Configuration
                 : ManagedConfigurationProvider();
             return current == null ? null : current.ManagedApprovedOutputRoots;
+        }
+
+        private bool TryGetCanonicalSetupRoot(
+            PluginConfiguration config,
+            bool allowLegacyMigration,
+            out string root,
+            out string error)
+        {
+            root = null;
+            error = "Managed publishing setup is not ready.";
+            if (config == null || config.ManagedPublishingIntegrationId < 1)
+            {
+                error = "Managed publishing integration ID must be a positive integer.";
+                return false;
+            }
+
+            if (!config.ManagedSetupReady && !allowLegacyMigration)
+            {
+                return false;
+            }
+
+            if (!config.ManagedSetupReady && !string.IsNullOrEmpty(config.ManagedSetupLastResult))
+            {
+                return false;
+            }
+
+            var roots = ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots);
+            if (roots.Count == 0)
+            {
+                error = "Managed publishing requires one canonical approved root.";
+                return false;
+            }
+
+            if (roots.Count == 1)
+            {
+                root = roots[0];
+            }
+            else
+            {
+                string candidate;
+                var ownerPath = ManagedOwnerPathProvider == null
+                    ? Plugin.InstanceOrNull?.DataFolderPath
+                    : ManagedOwnerPathProvider();
+                if (!ManagedSetupService.TryGetCandidateRoot(ownerPath, out candidate) ||
+                    !roots.Any(value => string.Equals(value, candidate, PathComparison)))
+                {
+                    error = "Managed publishing requires one companion-owned canonical root.";
+                    return false;
+                }
+
+                root = candidate;
+            }
+
+            if (!ManagedOutputPolicy.IsLocallyWritableRoot(root))
+            {
+                root = null;
+                error = "The canonical managed output root is not locally writable.";
+                return false;
+            }
+
+            if (!config.ManagedSetupReady)
+            {
+                config.ManagedSetupReady = true;
+                config.ManagedSetupLastResult = "Migrated legacy managed setup";
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        private bool TryGetCurrentSetupRoot(
+            PluginConfiguration fallback,
+            int expectedIntegrationId,
+            string expectedRoot,
+            string expectedApprovedRoots,
+            out string currentRoot,
+            out string currentApprovedRoots,
+            out string error)
+        {
+            var current = ManagedConfigurationProvider == null
+                ? fallback
+                : ManagedConfigurationProvider();
+            currentApprovedRoots = current == null ? null : current.ManagedApprovedOutputRoots;
+            if (!TryGetCanonicalSetupRoot(current, false, out currentRoot, out error) ||
+                current.ManagedPublishingIntegrationId != expectedIntegrationId ||
+                !string.Equals(currentRoot, expectedRoot, PathComparison) ||
+                !string.Equals(currentApprovedRoots, expectedApprovedRoots, PathComparison))
+            {
+                currentRoot = null;
+                currentApprovedRoots = null;
+                error = "Managed publishing setup is no longer current.";
+                return false;
+            }
+
+            return true;
         }
 
         private static async Task ReportManagedFailure(
@@ -412,86 +709,10 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             result.Success = false;
             result.Error = error;
+            config.ManagedPublishingEnabled = false;
             config.ManagedLastError = error;
             saveConfig?.Invoke();
             return result;
-        }
-
-        private static bool OverlapsEnabledLegacyRoot(
-            PluginConfiguration config,
-            M3uEditorMapping mapping)
-        {
-            var legacyEnabled = string.Equals(mapping.TargetLibrary.CollectionType, "movies", StringComparison.Ordinal)
-                ? config.SyncMovies
-                : config.SyncSeries;
-            if (!legacyEnabled || string.IsNullOrWhiteSpace(config.StrmLibraryPath))
-            {
-                return false;
-            }
-
-            var legacyRoot = Path.GetFullPath(config.StrmLibraryPath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var managedRoot = Path.GetFullPath(mapping.TargetLibrary.OutputPath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return IsSameOrChildPath(legacyRoot, managedRoot) || IsSameOrChildPath(managedRoot, legacyRoot);
-        }
-
-        private static bool IsSameOrChildPath(string parent, string candidate)
-        {
-            return string.Equals(parent, candidate, StringComparison.OrdinalIgnoreCase) ||
-                   candidate.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-        }
-
-        internal static bool HasManagedOwnershipConflict(PluginConfiguration config, string collectionType)
-        {
-            if (config == null || string.IsNullOrWhiteSpace(config.StrmLibraryPath))
-            {
-                return false;
-            }
-
-            var legacyRoot = Path.GetFullPath(config.StrmLibraryPath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (Directory.Exists(Path.Combine(legacyRoot, ManagedMetadataDirectoryName)))
-            {
-                return true;
-            }
-
-            if (string.IsNullOrWhiteSpace(config.ManagedMappingsJson))
-            {
-                return false;
-            }
-
-            List<ManagedMappingState> mappings;
-            try
-            {
-                mappings = JsonSerializer.Deserialize<List<ManagedMappingState>>(config.ManagedMappingsJson, JsonOptions);
-            }
-            catch (JsonException)
-            {
-                return true;
-            }
-
-            foreach (var mapping in mappings ?? new List<ManagedMappingState>())
-            {
-                if (!string.Equals(mapping.CollectionType, collectionType, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (string.IsNullOrWhiteSpace(mapping.OutputPath))
-                {
-                    return true;
-                }
-
-                var managedRoot = Path.GetFullPath(mapping.OutputPath)
-                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                if (IsSameOrChildPath(legacyRoot, managedRoot) || IsSameOrChildPath(managedRoot, legacyRoot))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         private void RemoveOnlyManagedGeneration(
@@ -529,7 +750,8 @@ namespace Emby.M3uEditor.Plugin.Service
         internal async Task<ManagedPublishResult> PublishManagedMappingAsync(
             M3uEditorMapping mapping,
             CancellationToken cancellationToken,
-            string approvedOutputRoots = null)
+            string approvedOutputRoots = null,
+            PluginConfiguration setupConfig = null)
         {
             string approvalError;
             if (approvedOutputRoots != null && !ManagedOutputPolicy.IsApproved(
@@ -558,7 +780,12 @@ namespace Emby.M3uEditor.Plugin.Service
 
             try
             {
-                return PublishManagedMapping(mapping, root, cancellationToken);
+                return PublishManagedMapping(
+                    mapping,
+                    root,
+                    cancellationToken,
+                    approvedOutputRoots,
+                    setupConfig);
             }
             finally
             {
@@ -770,7 +997,9 @@ namespace Emby.M3uEditor.Plugin.Service
         private ManagedPublishResult PublishManagedMapping(
             M3uEditorMapping mapping,
             string root,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string approvedOutputRoots,
+            PluginConfiguration setupConfig)
         {
             var result = new ManagedPublishResult { Revision = mapping.Revision };
             string stagingRoot = null;
@@ -834,6 +1063,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 Directory.CreateDirectory(stagingRoot);
                 WriteAndValidateStaging(stagingRoot, plan, cancellationToken);
                 InvokeManagedPhase("after-stage");
+                EnsureCurrentSetupApproval(mapping, root, approvedOutputRoots, setupConfig);
 
                 previousFilesRoot = Path.Combine(metadataRoot, "previous-files");
                 if (Directory.Exists(previousFilesRoot))
@@ -893,6 +1123,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     }).ToList()
                 };
                 InvokeManagedPhase("before-manifest");
+                EnsureCurrentSetupApproval(mapping, root, approvedOutputRoots, setupConfig);
                 WriteManifestAtomic(activeManifestPath, newManifest);
                 Directory.Delete(stagingRoot, true);
                 stagingRoot = null;
@@ -1592,6 +1823,46 @@ namespace Emby.M3uEditor.Plugin.Service
             result.Revision = revision;
             result.Error = error;
             return result;
+        }
+
+        private void EnsureCurrentSetupApproval(
+            M3uEditorMapping mapping,
+            string outputRoot,
+            string approvedOutputRoots,
+            PluginConfiguration setupConfig)
+        {
+            if (setupConfig == null)
+            {
+                return;
+            }
+
+            string expectedRoot;
+            string currentRoot;
+            string currentApprovedRoots;
+            string error;
+            if (!TryGetCanonicalSetupRoot(setupConfig, false, out expectedRoot, out error) ||
+                !TryGetCurrentSetupRoot(
+                    setupConfig,
+                    mapping.IntegrationId,
+                    expectedRoot,
+                    approvedOutputRoots,
+                    out currentRoot,
+                    out currentApprovedRoots,
+                    out error) ||
+                !ManagedOutputPolicy.IsApproved(outputRoot, currentApprovedRoots, out error))
+            {
+                throw new InvalidOperationException(error);
+            }
+        }
+
+        private static StringComparison PathComparison
+        {
+            get
+            {
+                return Path.DirectorySeparatorChar == '\\'
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal;
+            }
         }
 
         private void InvokeManagedPhase(string phase)

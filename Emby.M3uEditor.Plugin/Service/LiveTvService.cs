@@ -26,6 +26,9 @@ namespace Emby.M3uEditor.Plugin.Service
         };
 
         private readonly ILogger _logger;
+        private readonly Func<int, HttpClient> _httpClientFactory;
+        private readonly Func<PluginConfiguration> _configurationProvider;
+        private readonly Action _saveConfiguration;
         private readonly SemaphoreSlim _m3uLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _epgLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _xmltvLock = new SemaphoreSlim(1, 1);
@@ -51,8 +54,39 @@ namespace Emby.M3uEditor.Plugin.Service
         private bool _disposed;
 
         public LiveTvService(ILogger logger)
+            : this(
+                logger,
+                timeout => Plugin.CreateHttpClient(timeout),
+                () => Plugin.Instance.Configuration,
+                () => Plugin.Instance.SaveConfiguration())
+        {
+        }
+
+        internal LiveTvService(ILogger logger, Func<int, HttpClient> httpClientFactory)
+            : this(
+                logger,
+                httpClientFactory,
+                () => Plugin.Instance.Configuration,
+                () => Plugin.Instance.SaveConfiguration())
+        {
+        }
+
+        internal LiveTvService(
+            ILogger logger,
+            Func<int, HttpClient> httpClientFactory,
+            Func<PluginConfiguration> configurationProvider,
+            Action saveConfiguration)
         {
             _logger = logger;
+            _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+            _configurationProvider = configurationProvider ?? throw new ArgumentNullException(nameof(configurationProvider));
+            _saveConfiguration = saveConfiguration ?? throw new ArgumentNullException(nameof(saveConfiguration));
+        }
+
+        private PluginConfiguration GetConfiguration()
+        {
+            return _configurationProvider()
+                ?? throw new InvalidOperationException("Plugin configuration is unavailable.");
         }
 
         /// <summary>Exposed for unit testing only: indicates whether the last XMLTV fetch failed.</summary>
@@ -81,7 +115,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<string> GetM3UPlaylistAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
 
             await _m3uLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -93,10 +127,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 _logger.Info("Generating M3U playlist");
-                // Ensure Dispatcharr maps are loaded so tvg-id and tvc-guide-stationid
-                // attributes are available even if Emby hasn't polled the tuner yet.
-                if (M3uEditorTunerHost.Instance != null)
-                    await M3uEditorTunerHost.Instance.EnsureStatsLoadedAsync(cancellationToken).ConfigureAwait(false);
                 var channelsTask = GetFilteredChannelsAsync(cancellationToken);
                 var categoriesTask = GetLiveCategoriesAsync(cancellationToken);
                 Dictionary<int, string> categoryMap;
@@ -115,15 +145,10 @@ namespace Emby.M3uEditor.Plugin.Service
                 var channels = channelsTask.Result;
                 if (IsLiveTvDiagnosticsEnabled())
                 {
-                    _logger.Info("[livetv-diag] m3u-build channels={0} categories={1} tvgMap={2} stationMap={3}",
-                        channels.Count,
-                        categoryMap.Count,
-                        M3uEditorTunerHost.Instance?.TvgIdMap?.Count ?? 0,
-                        M3uEditorTunerHost.Instance?.StationIdMap?.Count ?? 0);
+                    _logger.Info("[livetv-diag] m3u-build channels={0} categories={1}",
+                        channels.Count, categoryMap.Count);
                 }
-                var m3u = GenerateM3U(channels, config, categoryMap,
-                    M3uEditorTunerHost.Instance?.TvgIdMap,
-                    M3uEditorTunerHost.Instance?.StationIdMap);
+                var m3u = GenerateM3U(channels, config, categoryMap);
 
                 _cachedM3U = m3u;
                 _m3uCacheTime = DateTime.UtcNow;
@@ -141,7 +166,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<string> GetXmltvEpgAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
 
             await _epgLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -181,13 +206,13 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<List<Category>> GetLiveCategoriesAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var url = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}/player_api.php?username={1}&password={2}&action=get_live_categories",
                 config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty));
 
-            using (var httpClient = Plugin.CreateHttpClient())
+            using (var httpClient = _httpClientFactory(10))
             {
                 var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
                 var categories = STJ.JsonSerializer.Deserialize<List<Category>>(json, JsonOptions)
@@ -227,7 +252,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var diagnostics = IsLiveTvDiagnosticsEnabled();
             if (diagnostics)
             {
@@ -292,7 +317,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         PerChannelEpgCacheCount);
                 }
                 config.LastChannelListHash = newHash;
-                Plugin.Instance.SaveConfiguration();
+                _saveConfiguration();
 
                 // Wipe M3U, EPG XML, and bulk XMLTV caches so the next request rebuilds
                 // them against the fresh channel list. Note: we do NOT take _m3uLock /
@@ -323,13 +348,8 @@ namespace Emby.M3uEditor.Plugin.Service
                         _logger.Debug("Pruned {0} stale entries from per-channel EPG cache", pruned);
                 }
 
-                // Drop the tuner host channel cache so Emby's next ChannelScan picks
-                // up the fresh channel set immediately rather than after the 5-minute
-                // tuner cache expires. We deliberately do NOT touch _streamStats /
-                // _tvgIdMap / _stationIdMap here - those are Dispatcharr-side maps
-                // and clearing them would temporarily break EPG mapping; the next
-                // GetChannelsInternal pass will refresh them via EnsureStatsLoadedAsync
-                // and dispatcharrFetch().
+                // Drop the tuner channel cache so Emby's next channel scan picks up
+                // the fresh channel set immediately rather than after its cache TTL.
                 M3uEditorTunerHost.Instance?.OnChannelListChanged();
             }
             else
@@ -384,13 +404,13 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private async Task<List<LiveStreamInfo>> FetchAllChannelsAsync(CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var url = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}/player_api.php?username={1}&password={2}&action=get_live_streams",
                 config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty));
 
-            using (var httpClient = Plugin.CreateHttpClient(30))
+            using (var httpClient = _httpClientFactory(30))
             {
                 var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
                 var channels = STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
@@ -408,9 +428,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private static string GenerateM3U(
             List<LiveStreamInfo> channels,
             PluginConfiguration config,
-            Dictionary<int, string> categoryNames,
-            IReadOnlyDictionary<int, string> tvgIdMap = null,
-            IReadOnlyDictionary<int, string> stationIdMap = null)
+            Dictionary<int, string> categoryNames)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#EXTM3U");
@@ -423,18 +441,9 @@ namespace Emby.M3uEditor.Plugin.Service
                     config.ChannelRemoveTerms,
                     config.EnableChannelNameCleaning);
 
-                // Priority for tvg-id:
-                //  1. Dispatcharr tvg_id override
-                //  2. Xtream epg_channel_id
-                //  3. numeric stream ID
-                string epgId;
-                if (tvgIdMap != null && tvgIdMap.TryGetValue(channel.StreamId, out var dispatcharrTvgId)
-                    && !string.IsNullOrEmpty(dispatcharrTvgId))
-                    epgId = dispatcharrTvgId;
-                else
-                    epgId = !string.IsNullOrEmpty(channel.EpgChannelId)
-                        ? channel.EpgChannelId
-                        : channel.StreamId.ToString(CultureInfo.InvariantCulture);
+                var epgId = !string.IsNullOrEmpty(channel.EpgChannelId)
+                    ? channel.EpgChannelId
+                    : channel.StreamId.ToString(CultureInfo.InvariantCulture);
 
                 extinf.Clear();
                 extinf.Append("#EXTINF:-1");
@@ -452,12 +461,6 @@ namespace Emby.M3uEditor.Plugin.Service
                     && !string.IsNullOrEmpty(groupTitle))
                 {
                     extinf.AppendFormat(CultureInfo.InvariantCulture, " group-title=\"{0}\"", EscapeAttribute(groupTitle));
-                }
-
-                if (stationIdMap != null && stationIdMap.TryGetValue(channel.StreamId, out var stationId)
-                    && !string.IsNullOrEmpty(stationId))
-                {
-                    extinf.AppendFormat(CultureInfo.InvariantCulture, " tvc-guide-stationid=\"{0}\"", EscapeAttribute(stationId));
                 }
 
                 extinf.AppendFormat(CultureInfo.InvariantCulture, ",{0}", cleanName);
@@ -657,7 +660,7 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         internal async Task<List<EpgProgram>> FetchEpgForChannelCachedAsync(int streamId, CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var cacheTtl = TimeSpan.FromMinutes(config.EpgCacheMinutes);
 
             // 1. Check per-channel cache (fastest path)
@@ -702,11 +705,11 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
             }
 
-            // 4. Fall back to per-channel JSON (get_simple_data_table) - Xtream server only.
+            // 4. Fall back to per-channel JSON (get_simple_data_table) - m3u-editor Xtream output only.
             //    Custom URL mode does not fall back: if the user's URL failed, return empty so
             //    GetProgramsInternal shows a dummy placeholder rather than silently using a
             //    different source.
-            if (Plugin.Instance.Configuration.EpgSource == EpgSourceMode.CustomUrl)
+            if (GetConfiguration().EpgSource == EpgSourceMode.CustomUrl)
             {
                 _logger.Debug("FetchEpgForChannelCachedAsync: custom URL failed, returning empty for stream {0}", streamId);
                 return new List<EpgProgram>();
@@ -769,7 +772,7 @@ namespace Emby.M3uEditor.Plugin.Service
             await _xmltvLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                var config = Plugin.Instance.Configuration;
+                var config = GetConfiguration();
                 var cacheTtl = TimeSpan.FromMinutes(config.EpgCacheMinutes);
 
                 // Already fresh?
@@ -812,7 +815,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     var filterEndUnix = now.AddDays(config.EpgDaysToFetch).ToUnixTimeSeconds();
 
                     Dictionary<string, List<EpgProgram>> xmltvData;
-                    using (var httpClient = Plugin.CreateHttpClient(180))
+                    using (var httpClient = _httpClientFactory(180))
                     {
                         using (var stream = await httpClient.GetStreamAsync(url).ConfigureAwait(false))
                         {
@@ -848,22 +851,26 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private async Task<EpgListings> FetchEpgForChannelAsync(int streamId, CancellationToken cancellationToken)
         {
-            var config = Plugin.Instance.Configuration;
+            var config = GetConfiguration();
             var url = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}/player_api.php?username={1}&password={2}&action=get_simple_data_table&stream_id={3}",
                 config.BaseUrl, config.Username, config.Password, streamId);
 
-            using (var httpClient = Plugin.CreateHttpClient())
+            using (var httpClient = _httpClientFactory(10))
             {
                 var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
                 return STJ.JsonSerializer.Deserialize<EpgListings>(json, JsonOptions);
             }
         }
 
-        private static bool IsLiveTvDiagnosticsEnabled()
+        private bool IsLiveTvDiagnosticsEnabled()
         {
-            return Diagnostics.IsEnabled;
+            var config = GetConfiguration();
+#pragma warning disable 0618
+            var legacyLiveTvDiagnostics = config.EnableLiveTvDiagnostics;
+#pragma warning restore 0618
+            return config.EnableDiagnosticsLogging || legacyLiveTvDiagnostics;
         }
 
         private void LogLiveTvChannelDiagnostics(
@@ -878,11 +885,8 @@ namespace Emby.M3uEditor.Plugin.Service
             var withCategory = channels?.Count(c => c.CategoryId.HasValue) ?? 0;
             var withStats = channels?.Count(c => c.StreamStats != null) ?? 0;
             var adult = channels?.Count(c => c.IsAdultChannel) ?? 0;
-            var tunerHost = M3uEditorTunerHost.Instance;
-            var tvgIds = tunerHost?.TvgIdMap?.Count ?? 0;
-            var stationIds = tunerHost?.StationIdMap?.Count ?? 0;
 
-            _logger.Info("[livetv-diag] channel-summary phase={0} total={1} epgIds={2} icons={3} validIcons={4} categories={5} stats={6} adult={7} dispatcharrTvgIds={8} gracenoteStationIds={9}",
+            _logger.Info("[livetv-diag] channel-summary phase={0} total={1} epgIds={2} icons={3} validIcons={4} categories={5} stats={6} adult={7}",
                 phase,
                 total,
                 withEpgId,
@@ -890,9 +894,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 withValidIcon,
                 withCategory,
                 withStats,
-                adult,
-                tvgIds,
-                stationIds);
+                adult);
 
             if (channels == null || channels.Count == 0)
             {
@@ -906,12 +908,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     config.ChannelRemoveTerms,
                     config.EnableChannelNameCleaning);
                 var sanitizedIcon = Util.UrlValidator.SanitizeHttpUrl(channel.StreamIcon);
-                var hasDispatcharrTvgId = tunerHost?.TvgIdMap != null
-                    && tunerHost.TvgIdMap.ContainsKey(channel.StreamId);
-                var hasStationId = tunerHost?.StationIdMap != null
-                    && tunerHost.StationIdMap.ContainsKey(channel.StreamId);
 
-                _logger.Info("[livetv-diag] channel-sample phase={0} stream={1} num={2} name='{3}' cleanName='{4}' epgId='{5}' categoryId={6} icon={7} validIcon={8} stats={9} dispatcharrTvgId={10} gracenoteStationId={11}",
+                _logger.Info("[livetv-diag] channel-sample phase={0} stream={1} num={2} name='{3}' cleanName='{4}' epgId='{5}' categoryId={6} icon={7} validIcon={8} stats={9}",
                     phase,
                     channel.StreamId,
                     channel.DisplayChannelNumber,
@@ -921,9 +919,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     channel.CategoryId.HasValue ? channel.CategoryId.Value.ToString(CultureInfo.InvariantCulture) : string.Empty,
                     !string.IsNullOrEmpty(channel.StreamIcon),
                     sanitizedIcon != null,
-                    channel.StreamStats != null,
-                    hasDispatcharrTvgId,
-                    hasStationId);
+                    channel.StreamStats != null);
             }
         }
 

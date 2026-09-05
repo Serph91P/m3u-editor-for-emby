@@ -4,13 +4,19 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
+using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
+using MediaBrowser.Model.Dto;
 using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
@@ -86,6 +92,344 @@ namespace Emby.M3uEditor.Plugin.Tests
 
                 Assert.NotNull(capability);
                 Assert.Equal(1, capability.ApiVersion);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_AuthenticatedM3uEditorWithoutPublishingAdvertisement_Succeeds()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":1},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "https://editor.example",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.True(result.Success);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_PublicHttpOrigin_FailsBeforeRequest()
+        {
+            var handler = new FakeHttpHandler();
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "http://198.51.100.10",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.False(result.Success);
+                Assert.Empty(handler.ReceivedUrls);
+                Assert.DoesNotContain("credential", result.Message);
+            }
+        }
+
+        [Fact]
+        public async Task LiveTvStream_SameOriginRedirect_FollowsAndCopiesPayload()
+        {
+            const string payload = "redirected-live-stream";
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var baseUrl = "http://127.0.0.1:" + port + "/";
+            var serverTask = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    TcpClient connection;
+                    try
+                    {
+                        connection = await listener.AcceptTcpClientAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        return;
+                    }
+
+                    using (connection)
+                    using (var stream = connection.GetStream())
+                    using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
+                    {
+                        var requestLine = await reader.ReadLineAsync();
+                        await ReadRequestHeadersAsync(reader);
+
+                        var response = requestLine.Contains("/live-stream")
+                            ? Encoding.ASCII.GetBytes(
+                                "HTTP/1.1 302 Found\r\nLocation: " + baseUrl +
+                                "redirected-stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            : Encoding.ASCII.GetBytes(
+                                "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: " +
+                                payload.Length + "\r\nConnection: close\r\n\r\n" + payload);
+                        await stream.WriteAsync(response, 0, response.Length);
+                    }
+                }
+            });
+
+            try
+            {
+                var instanceField = typeof(Plugin).GetField(
+                    "_instance",
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                var previousInstance = Plugin.InstanceOrNull;
+                var testInstance = (Plugin)RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
+                for (var type = typeof(Plugin); type != null; type = type.BaseType)
+                {
+                    foreach (var field in type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+                    {
+                        if (field.FieldType == typeof(object) && field.GetValue(testInstance) == null)
+                            field.SetValue(testInstance, new object());
+                        if (field.FieldType == typeof(PluginConfiguration) && field.GetValue(testInstance) == null)
+                            field.SetValue(testInstance, new PluginConfiguration());
+                    }
+                }
+                instanceField.SetValue(null, testInstance);
+                try
+                {
+                    var mediaSource = new MediaSourceInfo
+                    {
+                        Id = "live-stream",
+                        Path = baseUrl + "live-stream"
+                    };
+                    using (var liveStream = new M3uEditorLiveStream(
+                        mediaSource,
+                        "tuner",
+                        Plugin.CreateHttpClient(userAgentOverride: "redirect-regression-test")))
+                    using (var output = new MemoryStream())
+                    {
+                        await liveStream.CopyToAsync(output, null, null, CancellationToken.None);
+
+                        Assert.Equal(payload, Encoding.ASCII.GetString(output.ToArray()));
+                    }
+                }
+                finally
+                {
+                    instanceField.SetValue(null, previousInstance);
+                }
+            }
+            finally
+            {
+                listener.Stop();
+                await serverTask;
+            }
+        }
+
+        [Fact]
+        public async Task DiscoverCapabilityAsync_SameOriginRedirect_DoesNotRequestRedirectTarget()
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var baseUrl = "http://127.0.0.1:" + port + "/";
+            var redirectedRequests = 0;
+            var serverTask = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    TcpClient connection;
+                    try
+                    {
+                        connection = await listener.AcceptTcpClientAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        return;
+                    }
+
+                    using (connection)
+                    using (var stream = connection.GetStream())
+                    using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
+                    {
+                        var requestLine = await reader.ReadLineAsync();
+                        await ReadRequestHeadersAsync(reader);
+
+                        byte[] response;
+                        if (requestLine.Contains("/player_api.php"))
+                        {
+                            response = Encoding.ASCII.GetBytes(
+                                "HTTP/1.1 302 Found\r\nLocation: " + baseUrl +
+                                "redirect-target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        }
+                        else
+                        {
+                            Interlocked.Increment(ref redirectedRequests);
+                            var body = Encoding.UTF8.GetBytes(CapabilityJson);
+                            response = Encoding.UTF8.GetBytes(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                                body.Length + "\r\nConnection: close\r\n\r\n" + CapabilityJson);
+                        }
+
+                        await stream.WriteAsync(response, 0, response.Length);
+                    }
+                }
+            });
+
+            try
+            {
+                var service = new StrmSyncService(null);
+                var result = await service.ReconcileManagedAsync(
+                    new PluginConfiguration
+                    {
+                        BaseUrl = baseUrl,
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    null,
+                    null,
+                    CancellationToken.None,
+                    null);
+
+                Assert.False(result.Compatible);
+                Assert.Equal(0, Volatile.Read(ref redirectedRequests));
+            }
+            finally
+            {
+                listener.Stop();
+                await serverTask;
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_ConfiguredProxy_IsBypassedForCredentialBearingRequest()
+        {
+            using var proxyListener = new TcpListener(IPAddress.Loopback, 0);
+            using var targetListener = new TcpListener(IPAddress.Loopback, 0);
+            proxyListener.Start();
+            targetListener.Start();
+            var proxyPort = ((IPEndPoint)proxyListener.LocalEndpoint).Port;
+            var targetPort = ((IPEndPoint)targetListener.LocalEndpoint).Port;
+            var proxyRequests = 0;
+            var credentialBearingProxyRequests = 0;
+            var targetRequests = 0;
+            var responseBody = Encoding.UTF8.GetBytes(CapabilityJson);
+            var responseHeaders = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                responseBody.Length + "\r\nConnection: close\r\n\r\n");
+
+            Func<TcpListener, Action<string>, Task> serve = async (listener, recordRequest) =>
+            {
+                while (true)
+                {
+                    TcpClient connection;
+                    try
+                    {
+                        connection = await listener.AcceptTcpClientAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        return;
+                    }
+
+                    using (connection)
+                    using (var stream = connection.GetStream())
+                    using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
+                    {
+                        var requestLine = await reader.ReadLineAsync();
+                        await ReadRequestHeadersAsync(reader);
+
+                        recordRequest(requestLine ?? string.Empty);
+                        await stream.WriteAsync(responseHeaders, 0, responseHeaders.Length);
+                        await stream.WriteAsync(responseBody, 0, responseBody.Length);
+                    }
+                }
+            };
+            var proxyTask = Task.Run(() => serve(proxyListener, requestLine =>
+            {
+                Interlocked.Increment(ref proxyRequests);
+                if (requestLine.Contains("username=") && requestLine.Contains("&password="))
+                    Interlocked.Increment(ref credentialBearingProxyRequests);
+            }));
+            var targetTask = Task.Run(() => serve(targetListener, requestLine =>
+                Interlocked.Increment(ref targetRequests)));
+            var previousProxy = HttpClient.DefaultProxy;
+
+            try
+            {
+                HttpClient.DefaultProxy = new WebProxy("http://127.0.0.1:" + proxyPort, false);
+                var service = new StrmSyncService(null);
+                var result = await service.ReconcileManagedAsync(
+                    new PluginConfiguration
+                    {
+                        BaseUrl = "http://127.0.0.1:" + targetPort + "/",
+                        Username = "managed-account",
+                        Password = "managed-credential"
+                    },
+                    null,
+                    null,
+                    CancellationToken.None,
+                    null);
+
+                Assert.True(result.Compatible);
+                Assert.Equal(0, Volatile.Read(ref credentialBearingProxyRequests));
+                Assert.Equal(0, Volatile.Read(ref proxyRequests));
+                Assert.Equal(1, Volatile.Read(ref targetRequests));
+            }
+            finally
+            {
+                HttpClient.DefaultProxy = previousProxy;
+                proxyListener.Stop();
+                targetListener.Stop();
+                await Task.WhenAll(proxyTask, targetTask);
+            }
+        }
+
+        [Fact]
+        public async Task RegisterPublisherAsync_ExactContract_PostsLocalPathsWithoutCredentialsInBody()
+        {
+            var handler = new RequestCaptureHandler("{}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                await client.RegisterPublisherAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    "m3u_editor_register_publisher",
+                    7,
+                    new[] { "/media/Movies & Shows", "/media/TV" },
+                    CancellationToken.None);
+
+                Assert.Equal(HttpMethod.Post, handler.Method);
+                Assert.Contains("action=m3u_editor_register_publisher", handler.Url);
+                Assert.Contains("api_version=1", handler.Body);
+                Assert.Contains("integration_id=7", handler.Body);
+                Assert.Contains("writable_paths%5B0%5D=%2Fmedia%2FMovies+%26+Shows", handler.Body);
+                Assert.Contains("writable_paths%5B1%5D=%2Fmedia%2FTV", handler.Body);
+                Assert.DoesNotContain("account", handler.Body);
+                Assert.DoesNotContain("credential", handler.Body);
+                Assert.DoesNotContain("username", handler.Body);
+                Assert.DoesNotContain("password", handler.Body);
             }
         }
 
@@ -272,7 +616,6 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
-        [InlineData("http://editor.example")]
         [InlineData("https://editor.example?next=https://other.example")]
         [InlineData("https://editor.example/#fragment")]
         [InlineData("https://account@editor.example")]
@@ -285,8 +628,193 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
                     baseUrl, "account", "credential", CancellationToken.None));
 
-                Assert.Contains("HTTPS", error.Message);
+                Assert.Contains("base URL", error.Message);
                 Assert.Empty(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("http://localhost:8080")]
+        [InlineData("http://127.0.0.1:8080")]
+        [InlineData("http://10.20.30.40:8080")]
+        [InlineData("http://172.20.0.2:8080")]
+        [InlineData("http://192.168.1.20:8080")]
+        [InlineData("http://169.254.20.30:8080")]
+        [InlineData("http://[::1]:8080")]
+        [InlineData("http://[fd12:3456::1]:8080")]
+        [InlineData("http://[fe80::1]:8080")]
+        [InlineData("http://m3u-editor:8080")]
+        public async Task ManagedRequests_TrustedHttpOrigin_IsAccepted(string baseUrl)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php?username=", CapabilityJson);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Parse("172.20.0.2") }));
+
+                var capability = await client.DiscoverCapabilityAsync(
+                    baseUrl, "account", "credential", CancellationToken.None);
+
+                Assert.NotNull(capability);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("http://8.8.8.8:8080")]
+        [InlineData("http://93.184.216.34:8080")]
+        [InlineData("http://editor.example:8080")]
+        public async Task ManagedRequests_PublicHttpOrigin_FailsBeforeSendingCredentials(string baseUrl)
+        {
+            var handler = new FakeHttpHandler();
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    baseUrl, "account", "credential", CancellationToken.None));
+
+                Assert.Contains("base URL", error.Message);
+                Assert.DoesNotContain(baseUrl, error.ToString());
+                Assert.DoesNotContain("account", error.ToString());
+                Assert.DoesNotContain("credential", error.ToString());
+                Assert.Empty(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_DnsHostWithPublicAddress_FailsBeforeSendingCredentials()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php?username=", CapabilityJson);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }));
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None));
+
+                Assert.Contains("base URL", error.Message);
+                Assert.DoesNotContain("account", error.ToString());
+                Assert.DoesNotContain("credential", error.ToString());
+                Assert.Empty(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_DnsHostWithMixedAddresses_FailsBeforeSendingCredentials()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php?username=", CapabilityJson);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[]
+                    {
+                        IPAddress.Parse("172.20.0.2"),
+                        IPAddress.Parse("93.184.216.34")
+                    }));
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None));
+
+                Assert.Contains("base URL", error.Message);
+                Assert.Empty(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_DnsHostRebinding_CannotChangeValidatedConnectionAddress()
+        {
+            var handler = new ConnectionCaptureHandler(CapabilityJson);
+            var resolutions = 0;
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[]
+                    {
+                        IPAddress.Parse(Interlocked.Increment(ref resolutions) == 1
+                            ? "172.20.0.2"
+                            : "93.184.216.34")
+                    }));
+
+                var capability = await client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None);
+
+                Assert.NotNull(capability);
+                Assert.Equal(1, resolutions);
+                Assert.Equal("172.20.0.2", handler.RequestUri.Host);
+                Assert.Equal(8080, handler.RequestUri.Port);
+                Assert.Equal("m3u-editor:8080", handler.Host);
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_DnsHostWithAllPrivateAddresses_IsAccepted()
+        {
+            var handler = new ConnectionCaptureHandler(CapabilityJson);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[]
+                    {
+                        IPAddress.Parse("10.20.30.40"),
+                        IPAddress.Parse("fd12:3456::1")
+                    }));
+
+                var capability = await client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None);
+
+                Assert.NotNull(capability);
+                Assert.Equal("10.20.30.40", handler.RequestUri.Host);
+                Assert.Equal("m3u-editor:8080", handler.Host);
+            }
+        }
+
+        [Theory]
+        [InlineData("https://editor.example:8443", "http://editor.example:8443/player_api.php")]
+        [InlineData("http://m3u-editor:8080", "http://other-service:8080/player_api.php")]
+        [InlineData("http://m3u-editor:8080", "http://m3u-editor:8081/player_api.php")]
+        public async Task ManagedRequests_ResponseOriginChanged_FailsClosed(
+            string baseUrl,
+            string responseUrl)
+        {
+            using (var httpClient = new HttpClient(new ResponseOriginHandler(responseUrl, CapabilityJson)))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Parse("172.20.0.2") }));
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DiscoverCapabilityAsync(
+                    baseUrl, "account", "credential", CancellationToken.None));
+
+                Assert.Contains("origin changed", error.Message);
+                Assert.DoesNotContain(baseUrl, error.ToString());
+                Assert.DoesNotContain(responseUrl, error.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_ExactTrustedHttpResponseOrigin_IsAccepted()
+        {
+            using (var httpClient = new HttpClient(new ResponseOriginHandler(
+                "http://172.20.0.2:8080/player_api.php", CapabilityJson)))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Parse("172.20.0.2") }));
+
+                var capability = await client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None);
+
+                Assert.NotNull(capability);
             }
         }
 
@@ -425,6 +953,17 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Validate_NonManagedTargetLibrary_FailsClosed()
+        {
+            var catalog = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            catalog.Mappings[0].TargetLibrary.Managed = false;
+
+            var error = Assert.Throws<InvalidOperationException>(() => M3uEditorCatalogValidator.Validate(catalog));
+
+            Assert.Contains("target library", error.Message);
+        }
+
+        [Fact]
         public void SafeFilename_EnforcesLengthLimit()
         {
             Assert.True(M3uEditorCatalogValidator.IsSafeFilename(new string('a', 240)));
@@ -455,7 +994,7 @@ namespace Emby.M3uEditor.Plugin.Tests
   ""m3u_editor"": {
     ""library_publishing"": {
       ""api_version"": 1,
-      ""actions"": { ""catalog"": ""m3u_editor_catalog"", ""sync_result"": ""m3u_editor_sync_result"" },
+      ""actions"": { ""register_publisher"": ""m3u_editor_register_publisher"", ""catalog"": ""m3u_editor_catalog"", ""sync_result"": ""m3u_editor_sync_result"" },
       ""snapshot_mode"": ""full"",
       ""features"": [""library_mappings"", ""variants"", ""provider_failover"", ""local_nfo"", ""revision_metadata""]
     }
@@ -551,6 +1090,111 @@ namespace Emby.M3uEditor.Plugin.Tests
                 {
                     Content = _content
                 });
+            }
+        }
+
+        private sealed class RequestCaptureHandler : HttpMessageHandler
+        {
+            private readonly string _responseBody;
+
+            public RequestCaptureHandler(string responseBody)
+            {
+                _responseBody = responseBody;
+            }
+
+            public HttpMethod Method { get; private set; }
+            public string Url { get; private set; }
+            public string Body { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                Method = request.Method;
+                Url = request.RequestUri.ToString();
+                Body = request.Content == null
+                    ? string.Empty
+                    : request.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                return Task.FromResult(CreateResponse());
+            }
+
+            private HttpResponseMessage CreateResponse()
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(_responseBody)
+                };
+            }
+        }
+
+        private sealed class ResponseOriginHandler : HttpMessageHandler
+        {
+            private readonly Uri _responseUri;
+            private readonly string _responseBody;
+
+            public ResponseOriginHandler(string responseUrl, string responseBody)
+            {
+                _responseUri = new Uri(responseUrl);
+                _responseBody = responseBody;
+            }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                request.RequestUri = _responseUri;
+                return Task.FromResult(CreateResponse(request));
+            }
+
+            private HttpResponseMessage CreateResponse(HttpRequestMessage request)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = request,
+                    Content = new StringContent(_responseBody)
+                };
+            }
+        }
+
+        private sealed class ConnectionCaptureHandler : HttpMessageHandler
+        {
+            private readonly string _responseBody;
+
+            public ConnectionCaptureHandler(string responseBody)
+            {
+                _responseBody = responseBody;
+            }
+
+            public Uri RequestUri { get; private set; }
+            public string Host { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                RequestUri = request.RequestUri;
+                Host = request.Headers.Host;
+                return Task.FromResult(CreateResponse());
+            }
+
+            private HttpResponseMessage CreateResponse()
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(_responseBody)
+                };
+            }
+        }
+
+        private static async Task ReadRequestHeadersAsync(StreamReader reader)
+        {
+            while (true)
+            {
+                var line = await reader.ReadLineAsync();
+                if (string.IsNullOrEmpty(line))
+                {
+                    return;
+                }
             }
         }
 

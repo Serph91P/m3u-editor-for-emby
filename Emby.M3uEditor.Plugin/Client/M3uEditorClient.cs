@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -27,10 +29,20 @@ namespace Emby.M3uEditor.Plugin.Client
         };
 
         private readonly HttpClient _httpClient;
+        private readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolveHostAddressesAsync;
 
         public M3uEditorClient(HttpClient httpClient)
+            : this(httpClient, ResolveHostAddressesAsync)
+        {
+        }
+
+        internal M3uEditorClient(
+            HttpClient httpClient,
+            Func<string, CancellationToken, Task<IPAddress[]>> resolveHostAddressesAsync)
         {
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _resolveHostAddressesAsync = resolveHostAddressesAsync ??
+                throw new ArgumentNullException(nameof(resolveHostAddressesAsync));
         }
 
         public async Task<M3uEditorPublishingCapability> DiscoverCapabilityAsync(
@@ -39,7 +51,73 @@ namespace Emby.M3uEditor.Plugin.Client
             string password,
             CancellationToken cancellationToken)
         {
-            var requestUrl = BuildBaseUrl(baseUrl, username, password);
+            var body = await GetPanelResponseAsync(baseUrl, username, password, cancellationToken)
+                .ConfigureAwait(false);
+            if (body == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                using (var document = JsonDocument.Parse(body))
+                {
+                    M3uEditorPublishingCapability capability;
+                    return M3uEditorPublishingCapabilityParser.TryGetPublishingCapability(document.RootElement, out capability)
+                        ? capability
+                        : null;
+                }
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        public async Task<bool> TestConnectionAsync(
+            string baseUrl,
+            string username,
+            string password,
+            CancellationToken cancellationToken)
+        {
+            var body = await GetPanelResponseAsync(baseUrl, username, password, cancellationToken)
+                .ConfigureAwait(false);
+            if (body == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                using (var document = JsonDocument.Parse(body))
+                {
+                    JsonElement userInfo;
+                    JsonElement auth;
+                    if (!document.RootElement.TryGetProperty("user_info", out userInfo) ||
+                        userInfo.ValueKind != JsonValueKind.Object ||
+                        !userInfo.TryGetProperty("auth", out auth))
+                    {
+                        return false;
+                    }
+
+                    return (auth.ValueKind == JsonValueKind.Number && auth.TryGetInt32(out var value) && value == 1) ||
+                        (auth.ValueKind == JsonValueKind.String && string.Equals(auth.GetString(), "1", StringComparison.Ordinal));
+                }
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        private async Task<string> GetPanelResponseAsync(
+            string baseUrl,
+            string username,
+            string password,
+            CancellationToken cancellationToken)
+        {
+            var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+            var requestUrl = BuildBaseUrl(endpoint.RequestBaseUrl, username, password);
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(15));
@@ -47,7 +125,7 @@ namespace Emby.M3uEditor.Plugin.Client
                 {
                     try
                     {
-                        using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
+                        using (var request = CreateRequest(HttpMethod.Get, requestUrl, endpoint.HostHeader))
                         using (var response = await _httpClient.SendAsync(
                             request,
                             HttpCompletionOption.ResponseHeadersRead,
@@ -64,21 +142,7 @@ namespace Emby.M3uEditor.Plugin.Client
                             }
 
                             EnsureConfinedResponse(response, requestUrl);
-                            var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
-                            try
-                            {
-                                using (var document = JsonDocument.Parse(body))
-                                {
-                                    M3uEditorPublishingCapability capability;
-                                    return BackendDetector.TryGetPublishingCapability(document.RootElement, out capability)
-                                        ? capability
-                                        : null;
-                                }
-                            }
-                            catch (JsonException)
-                            {
-                                return null;
-                            }
+                            return await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
                         }
                     }
                     catch (HttpRequestException) when (attempt == 0)
@@ -86,7 +150,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     }
                     catch (HttpRequestException)
                     {
-                        throw new InvalidOperationException("Managed capability request failed.");
+                        throw new InvalidOperationException("m3u-editor connection request failed.");
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -94,7 +158,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     }
                     catch (TaskCanceledException)
                     {
-                        throw new InvalidOperationException("Managed capability request timed out.");
+                        throw new InvalidOperationException("m3u-editor connection request timed out.");
                     }
                 }
             }
@@ -108,8 +172,9 @@ namespace Emby.M3uEditor.Plugin.Client
             string password,
             CancellationToken cancellationToken)
         {
+            var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
             var requestUrl = BuildActionUrl(
-                baseUrl,
+                endpoint.RequestBaseUrl,
                 username,
                 password,
                 "m3u_editor_catalog",
@@ -122,7 +187,7 @@ namespace Emby.M3uEditor.Plugin.Client
                 {
                     try
                     {
-                        using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
+                        using (var request = CreateRequest(HttpMethod.Get, requestUrl, endpoint.HostHeader))
                         using (var response = await _httpClient.SendAsync(
                             request,
                             HttpCompletionOption.ResponseHeadersRead,
@@ -193,6 +258,93 @@ namespace Emby.M3uEditor.Plugin.Client
             throw new InvalidOperationException("Managed catalog request failed.");
         }
 
+        public async Task RegisterPublisherAsync(
+            string baseUrl,
+            string username,
+            string password,
+            string registerPublisherAction,
+            int integrationId,
+            IEnumerable<string> writablePaths,
+            CancellationToken cancellationToken)
+        {
+            var paths = writablePaths == null
+                ? new List<string>()
+                : new List<string>(writablePaths);
+            if (!string.Equals(
+                    registerPublisherAction,
+                    "m3u_editor_register_publisher",
+                    StringComparison.Ordinal) ||
+                integrationId < 1 ||
+                paths.Count < 1 ||
+                paths.Count > 50 ||
+                paths.Exists(string.IsNullOrWhiteSpace))
+            {
+                throw new InvalidOperationException("Managed publisher registration is invalid.");
+            }
+
+            var fields = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("api_version", "1"),
+                new KeyValuePair<string, string>(
+                    "integration_id",
+                    integrationId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            };
+            for (var index = 0; index < paths.Count; index++)
+            {
+                fields.Add(new KeyValuePair<string, string>(
+                    "writable_paths[" + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]",
+                    paths[index]));
+            }
+
+            var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+            var requestUrl = BuildActionUrl(
+                endpoint.RequestBaseUrl,
+                username,
+                password,
+                registerPublisherAction,
+                string.Empty);
+            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            using (var content = new FormUrlEncodedContent(fields))
+            using (var request = CreateRequest(HttpMethod.Post, requestUrl, endpoint.HostHeader))
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                request.Content = content;
+                HttpResponseMessage response;
+                try
+                {
+                    response = await _httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeout.Token).ConfigureAwait(false);
+                }
+                catch (HttpRequestException)
+                {
+                    throw new InvalidOperationException("Managed publisher registration request failed.");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (TaskCanceledException)
+                {
+                    throw new InvalidOperationException("Managed publisher registration request timed out.");
+                }
+
+                using (response)
+                {
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        throw new InvalidOperationException(
+                            "Managed publisher registration request failed with HTTP " +
+                            (int)response.StatusCode + ".");
+                    }
+
+                    EnsureConfinedResponse(response, requestUrl);
+                    await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
+                }
+            }
+        }
+
         private static bool IsRetryableCatalogConflict(string body)
         {
             try
@@ -239,12 +391,6 @@ namespace Emby.M3uEditor.Plugin.Client
                 throw new InvalidOperationException("Managed sync result identity is invalid.");
             }
 
-            var requestUrl = BuildActionUrl(
-                baseUrl,
-                username,
-                password,
-                "m3u_editor_sync_result",
-                string.Empty);
             var fields = new Dictionary<string, string>
             {
                 ["api_version"] = "1",
@@ -256,9 +402,16 @@ namespace Emby.M3uEditor.Plugin.Client
                 ["error"] = RedactCallbackText(error, username, password)
             };
 
+            var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+            var requestUrl = BuildActionUrl(
+                endpoint.RequestBaseUrl,
+                username,
+                password,
+                "m3u_editor_sync_result",
+                string.Empty);
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             using (var content = new FormUrlEncodedContent(fields))
-            using (var request = new HttpRequestMessage(HttpMethod.Post, requestUrl))
+            using (var request = CreateRequest(HttpMethod.Post, requestUrl, endpoint.HostHeader))
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(15));
                 request.Content = content;
@@ -334,17 +487,87 @@ namespace Emby.M3uEditor.Plugin.Client
             string action,
             string suffix)
         {
-            var validatedBaseUrl = ValidateBaseUrl(baseUrl);
-            return validatedBaseUrl + "/player_api.php?username=" + Uri.EscapeDataString(username ?? string.Empty) +
+            return baseUrl + "/player_api.php?username=" + Uri.EscapeDataString(username ?? string.Empty) +
                    "&password=" + Uri.EscapeDataString(password ?? string.Empty) +
                    "&action=" + Uri.EscapeDataString(action) + suffix;
         }
 
         private static string BuildBaseUrl(string baseUrl, string username, string password)
         {
-            var validatedBaseUrl = ValidateBaseUrl(baseUrl);
-            return validatedBaseUrl + "/player_api.php?username=" + Uri.EscapeDataString(username ?? string.Empty) +
+            return baseUrl + "/player_api.php?username=" + Uri.EscapeDataString(username ?? string.Empty) +
                    "&password=" + Uri.EscapeDataString(password ?? string.Empty);
+        }
+
+        private async Task<ManagedEndpoint> ResolveEndpointAsync(
+            string baseUrl,
+            CancellationToken cancellationToken)
+        {
+            var validatedBaseUrl = ValidateBaseUrl(baseUrl);
+            var uri = new Uri(validatedBaseUrl, UriKind.Absolute);
+            IPAddress literalAddress;
+            if (uri.Scheme == Uri.UriSchemeHttps || IPAddress.TryParse(uri.Host, out literalAddress))
+            {
+                return new ManagedEndpoint(validatedBaseUrl, null);
+            }
+
+            IPAddress[] addresses;
+            try
+            {
+                addresses = await _resolveHostAddressesAsync(uri.Host, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (SocketException)
+            {
+                throw CreateInvalidBaseUrlException();
+            }
+            catch (ArgumentException)
+            {
+                throw CreateInvalidBaseUrlException();
+            }
+
+            if (addresses == null || addresses.Length == 0)
+            {
+                throw CreateInvalidBaseUrlException();
+            }
+
+            for (var index = 0; index < addresses.Length; index++)
+            {
+                if (addresses[index] == null || !IsTrustedHttpAddress(addresses[index]))
+                {
+                    throw CreateInvalidBaseUrlException();
+                }
+            }
+
+            var transportUri = new UriBuilder(uri)
+            {
+                Host = addresses[0].ToString()
+            }.Uri;
+            return new ManagedEndpoint(
+                transportUri.GetLeftPart(UriPartial.Authority),
+                uri.Authority);
+        }
+
+        private static HttpRequestMessage CreateRequest(HttpMethod method, string requestUrl, string hostHeader)
+        {
+            var request = new HttpRequestMessage(method, requestUrl);
+            if (!string.IsNullOrEmpty(hostHeader))
+            {
+                request.Headers.Host = hostHeader;
+            }
+
+            return request;
+        }
+
+        private static Task<IPAddress[]> ResolveHostAddressesAsync(
+            string host,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Dns.GetHostAddressesAsync(host);
         }
 
         private static string ValidateBaseUrl(string baseUrl)
@@ -352,14 +575,66 @@ namespace Emby.M3uEditor.Plugin.Client
             Uri uri;
             if (string.IsNullOrWhiteSpace(baseUrl) ||
                 !Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out uri) ||
-                uri.Scheme != Uri.UriSchemeHttps ||
-                !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
-                !string.IsNullOrEmpty(uri.Fragment))
+                (uri.Scheme != Uri.UriSchemeHttps &&
+                 (uri.Scheme != Uri.UriSchemeHttp || !IsTrustedHttpHost(uri.Host))) ||
+                 !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
+                 !string.IsNullOrEmpty(uri.Fragment) || uri.AbsolutePath != "/")
             {
-                throw new InvalidOperationException("The managed backend base URL must be a confined HTTPS origin.");
+                throw CreateInvalidBaseUrlException();
             }
 
             return baseUrl.Trim().TrimEnd('/');
+        }
+
+        private static bool IsTrustedHttpHost(string host)
+        {
+            IPAddress address;
+            if (IPAddress.TryParse(host, out address))
+            {
+                return IsTrustedHttpAddress(address);
+            }
+
+            return host.IndexOf('.') < 0 &&
+                   Uri.CheckHostName(host) == UriHostNameType.Dns;
+        }
+
+        private static bool IsTrustedHttpAddress(IPAddress address)
+        {
+            if (IPAddress.IsLoopback(address))
+            {
+                return true;
+            }
+
+            var bytes = address.GetAddressBytes();
+            if (address.AddressFamily == AddressFamily.InterNetwork)
+            {
+                if (bytes[0] == 10)
+                {
+                    return true;
+                }
+
+                if (bytes[0] == 172)
+                {
+                    return bytes[1] >= 16 && bytes[1] <= 31;
+                }
+
+                if (bytes[0] == 192)
+                {
+                    return bytes[1] == 168;
+                }
+
+                return bytes[0] == 169 && bytes[1] == 254;
+            }
+
+            return address.AddressFamily == AddressFamily.InterNetworkV6 &&
+                   ((bytes[0] & 0xfe) == 0xfc ||
+                    (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80));
+        }
+
+        private static InvalidOperationException CreateInvalidBaseUrlException()
+        {
+            return new InvalidOperationException(
+                "The managed backend base URL is not an allowed explicit origin.");
         }
 
         private static void EnsureConfinedResponse(HttpResponseMessage response, string requestUrl)
@@ -373,9 +648,9 @@ namespace Emby.M3uEditor.Plugin.Client
             var actual = response.RequestMessage == null ? null : response.RequestMessage.RequestUri;
             Uri requested;
             if (actual != null && Uri.TryCreate(requestUrl, UriKind.Absolute, out requested) &&
-                (!string.Equals(actual.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
-                 !string.Equals(actual.Host, requested.Host, StringComparison.OrdinalIgnoreCase) ||
-                 actual.Port != requested.Port))
+                (!string.Equals(actual.Scheme, requested.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                  !string.Equals(actual.Host, requested.Host, StringComparison.OrdinalIgnoreCase) ||
+                  actual.Port != requested.Port))
             {
                 throw new InvalidOperationException("Managed backend response origin changed.");
             }
@@ -440,6 +715,18 @@ namespace Emby.M3uEditor.Plugin.Client
             redacted = SecretPattern.Replace(redacted, "$1=[redacted]");
             redacted = ControlPattern.Replace(redacted, " ").Trim();
             return redacted.Length <= 2000 ? redacted : redacted.Substring(0, 2000);
+        }
+
+        private sealed class ManagedEndpoint
+        {
+            public ManagedEndpoint(string requestBaseUrl, string hostHeader)
+            {
+                RequestBaseUrl = requestBaseUrl;
+                HostHeader = hostHeader;
+            }
+
+            public string RequestBaseUrl { get; }
+            public string HostHeader { get; }
         }
     }
 }
