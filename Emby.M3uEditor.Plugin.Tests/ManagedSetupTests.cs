@@ -10,9 +10,13 @@ using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Api;
 using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
+using MediaBrowser.Common;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Services;
+using MediaBrowser.Model.Serialization;
 using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
@@ -697,8 +701,12 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             public Action UpdateConfigurationAttempted { get; set; }
 
-            private TestPlugin()
-                : base(null, null, null, null)
+            private TestPlugin(
+                IApplicationPaths applicationPaths,
+                IXmlSerializer xmlSerializer,
+                ILogManager logManager,
+                IApplicationHost applicationHost)
+                : base(applicationPaths, xmlSerializer, logManager, applicationHost)
             {
             }
 
