@@ -21,6 +21,7 @@ using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class ManagedSetupTests : IDisposable
     {
         private readonly TempDirectory _owner = new TempDirectory();

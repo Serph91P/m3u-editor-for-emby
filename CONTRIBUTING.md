@@ -59,6 +59,16 @@ localStorage.removeItem('guide-tagids');
 
 ## Development Workflow
 
+### Stable and beta releases
+
+After a stable promotion from `develop` to `main`, merge `main` back into
+`develop` before accepting further beta-release work. This keeps the beta
+numeric core ahead of the stable updater version. The release pipeline refuses
+a beta whose core is not strictly greater than the latest stable `main` tag;
+the failure message directs the required back-sync. There is deliberately no
+automation that opens or merges this back-sync PR: it remains a reviewed branch
+operation.
+
 Keep unrelated changes on separate short-lived branches. Do not carry an
 uncommitted change into unrelated work; commit a work-in-progress snapshot or
 stash it first.

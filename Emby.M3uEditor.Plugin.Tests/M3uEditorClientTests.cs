@@ -21,6 +21,7 @@ using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class M3uEditorClientTests
     {
         [Fact]
@@ -96,6 +97,69 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task TestConnectionAsync_ReturnsBoolAndDiscardsMetadata()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":1,\"max_connections\":\"9\",\"active_cons\":4},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var result = await client.TestConnectionAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    CancellationToken.None);
+
+                Assert.True(result);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_ReturnsFalseWithoutMetadataWhenUnauthorized()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":0,\"max_connections\":\"7\"},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var result = await client.TestConnectionAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    CancellationToken.None);
+
+                Assert.False(result);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_WithAuthStringAcceptsAuthentication()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":\"1\",\"max_connections\":\"9\"},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var result = await client.TestConnectionAsync(
+                    "https://editor.example",
+                    "account",
+                    "credential",
+                    CancellationToken.None);
+
+                Assert.True(result);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
         public async Task TestConnectionAsync_AuthenticatedM3uEditorWithoutPublishingAdvertisement_Succeeds()
         {
             var handler = new FakeHttpHandler();
@@ -116,6 +180,155 @@ namespace Emby.M3uEditor.Plugin.Tests
                     CancellationToken.None);
 
                 Assert.True(result.Success);
+                Assert.Null(result.MaxConnections);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_WithActiveSessionLimit_ReturnsMetadataWithoutChangingSuccessState()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":1,\"active_cons\":8,\"max_connections\":\"7\"},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "https://editor.example",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.True(result.Success);
+                Assert.Equal(7, result.MaxConnections);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_WithNumericActiveSessionLimit_ReturnsMetadata()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":1,\"max_connections\":11},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "https://editor.example",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.True(result.Success);
+                Assert.Equal(11, result.MaxConnections);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("{\"user_info\":{\"auth\":0,\"max_connections\":5},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"max_connections\":\"12\"},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":[]}")]
+        [InlineData("[]")]
+        public async Task TestConnectionAsync_UnauthorizedOrNonObjectResponse_FailsWithoutMetadata(string payload)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php?username=", payload);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "https://editor.example",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.False(result.Success);
+                Assert.Null(result.MaxConnections);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("{\"user_info\":{\"auth\":1},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"active_cons\":8},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":0},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":-1},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":1.0},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":1e3},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":2147483648},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":\"-1\"},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":\" 7\"},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":\"+7\"},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":\"\u0667\"},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":\"1e3\"},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":\"100000000000000000000\"},\"server_info\":{}}")]
+        [InlineData("{\"user_info\":{\"auth\":1,\"max_connections\":[]},\"server_info\":{}}")]
+        public async Task TestConnectionAsync_AuthenticatedUnknownOrInvalidMetadata_RemainsSuccessfulWithNull(string payload)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php?username=", payload);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "https://editor.example",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.True(result.Success);
+                Assert.Null(result.MaxConnections);
+                Assert.Single(handler.ReceivedUrls);
+            }
+        }
+
+        [Theory]
+        [InlineData("1", 1)]
+        [InlineData("2147483647", 2147483647)]
+        [InlineData("\"007\"", 7)]
+        [InlineData("\"2147483647\"", 2147483647)]
+        public async Task TestConnectionAsync_StrictPositiveInt32Metadata_IsReturned(string jsonValue, int expected)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith(
+                "player_api.php?username=",
+                "{\"user_info\":{\"auth\":1,\"max_connections\":" + jsonValue + "},\"server_info\":{}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var result = await M3uEditorApi.TestConnectionAsync(
+                    new TestXtreamConnection
+                    {
+                        Url = "https://editor.example",
+                        Username = "account",
+                        Password = "credential"
+                    },
+                    new PluginConfiguration(),
+                    httpClient,
+                    CancellationToken.None);
+
+                Assert.True(result.Success);
+                Assert.Equal(expected, result.MaxConnections);
                 Assert.Single(handler.ReceivedUrls);
             }
         }

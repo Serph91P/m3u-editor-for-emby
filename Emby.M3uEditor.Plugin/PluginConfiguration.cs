@@ -30,6 +30,7 @@ namespace Emby.M3uEditor.Plugin
         // Live TV
         public bool EnableLiveTv { get; set; } = true;
         public string LiveTvOutputFormat { get; set; } = "ts";
+        public int LiveTvTunerCount { get; set; } = 0;
         [Obsolete("Use EnableDiagnosticsLogging instead")]
         public bool EnableLiveTvDiagnostics { get; set; }
 

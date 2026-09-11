@@ -5,6 +5,7 @@ function (BaseView, loading) {
     var pluginId = 'b7e3c4a1-9f2d-4e8b-a5c6-d1f0e2b3c4a5';
     var managedActionPollId = null;
     var managedPage = 1;
+    var maxInt32 = 2147483647;
 
     function View(view, params) {
         BaseView.apply(this, arguments);
@@ -25,6 +26,9 @@ function (BaseView, loading) {
         });
         view.querySelector('.btnTestConnection').addEventListener('click', function () {
             testConnection(self);
+        });
+        view.querySelector('.btnImportXtreamLimit').addEventListener('click', function () {
+            importLiveTvLimitFromConnection(self);
         });
         view.querySelector('.btnCheckProbeCoverage').addEventListener('click', function () {
             checkProbeDataCoverage(view);
@@ -156,6 +160,9 @@ function (BaseView, loading) {
             view.querySelector('.txtEpgCacheMinutes').value = config.EpgCacheMinutes || 30;
             view.querySelector('.txtEpgDaysToFetch').value = config.EpgDaysToFetch || 2;
             view.querySelector('.txtM3UCacheMinutes').value = config.M3UCacheMinutes || 15;
+            view.querySelector('.txtLiveTvTunerCount').value = config.LiveTvTunerCount > 0
+                ? String(config.LiveTvTunerCount)
+                : '';
 
             var terms = config.ChannelRemoveTerms || '';
             view.querySelector('.txtChannelRemoveTerms').value = terms.split(',').map(function (term) {
@@ -185,6 +192,15 @@ function (BaseView, loading) {
         loading.show();
         ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             var view = instance.view;
+            var tunerValidationElement = view.querySelector('.livetvTunerCountValidation');
+            var configuredCount = parseLiveTvTunerCount(view.querySelector('.txtLiveTvTunerCount').value);
+            if (configuredCount === null) {
+                setPillResult(tunerValidationElement,
+                    false,
+                    'Live TV tuner count must be blank or a positive whole number (1 to ' + maxInt32 + ').');
+                loading.hide();
+                return;
+            }
 
             config.BaseUrl = view.querySelector('.txtBaseUrl').value.replace(/\/+$/, '');
             config.Username = view.querySelector('.txtUsername').value;
@@ -209,6 +225,9 @@ function (BaseView, loading) {
             config.M3UCacheMinutes = parseInt(view.querySelector('.txtM3UCacheMinutes').value, 10) || 15;
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
             config.UseBetaChannel = view.querySelector('.chkUseBetaChannel').checked;
+            config.LiveTvTunerCount = configuredCount;
+
+            if (tunerValidationElement) tunerValidationElement.innerHTML = '';
 
             ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
@@ -320,12 +339,10 @@ function (BaseView, loading) {
     function testConnection(instance) {
         var view = instance.view;
         var resultElement = view.querySelector('.connectionTestResult');
-        var url = view.querySelector('.txtBaseUrl').value.replace(/\/+$/, '');
-        var username = view.querySelector('.txtUsername').value;
-        var password = view.querySelector('.txtPassword').value;
+        var payload = buildTestConnectionPayload(view);
 
         resultElement.innerHTML = '<span style="opacity:0.5;">Testing connection...</span>';
-        if (!url || !username || !password) {
+        if (!payload) {
             setPillResult(resultElement, false, 'Please enter server URL, username, and password.');
             return;
         }
@@ -335,10 +352,10 @@ function (BaseView, loading) {
             url: ApiClient.getUrl('M3uEditor/TestConnection'),
             contentType: 'application/json',
             data: JSON.stringify({
-                Url: url,
-                Username: username,
-                Password: password,
-                UserAgent: view.querySelector('.txtHttpUserAgent').value
+                Url: payload.Url,
+                Username: payload.Username,
+                Password: payload.Password,
+                UserAgent: payload.UserAgent
             }),
             dataType: 'json'
         }).then(function (result) {
@@ -346,6 +363,38 @@ function (BaseView, loading) {
             if (result.Success) saveConfig(instance);
         }).catch(function () {
             setPillResult(resultElement, false, 'Test request failed. Check server logs.');
+        });
+    }
+
+    function importLiveTvLimitFromConnection(instance) {
+        var view = instance.view;
+        var resultElement = view.querySelector('.livetvLimitImportResult');
+        var payload = buildTestConnectionPayload(view);
+
+        if (!payload) {
+            setPillResult(resultElement, false, 'Please enter server URL, username, and password first.');
+            return;
+        }
+
+        resultElement.innerHTML = '<span style="opacity:0.5;">Importing tuner limit...</span>';
+        ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('M3uEditor/TestConnection'),
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+            dataType: 'json'
+        }).then(function (result) {
+            var parsed = parsePositiveInt32(result && result.MaxConnections);
+            if (!result || !result.Success || parsed === null) {
+                setPillResult(resultElement, false,
+                    'Could not import tuner limit from this Xtream server response.');
+                return;
+            }
+
+            view.querySelector('.txtLiveTvTunerCount').value = String(parsed);
+            setPillResult(resultElement, true, 'Imported max tuner count from Xtream.');
+        }).catch(function () {
+            setPillResult(resultElement, false, 'Could not import tuner limit from this Xtream server response.');
         });
     }
 
@@ -530,8 +579,8 @@ function (BaseView, loading) {
             sessionStorage.setItem('m3u-editor-for-emby-cache-bust', '1');
             var appVersion = document.documentElement.getAttribute('data-appversion') || '';
             Promise.all([
-                fetch('configurationpage?name=m3ueditorconfigr3&v=' + appVersion, { cache: 'reload' }),
-                fetch('configurationpage?name=m3ueditorconfigjsr3&v=' + appVersion, { cache: 'reload' })
+                fetch('configurationpage?name=m3ueditorconfigr4&v=' + appVersion, { cache: 'reload' }),
+                fetch('configurationpage?name=m3ueditorconfigjsr4&v=' + appVersion, { cache: 'reload' })
             ]).then(function () { location.reload(); });
             return;
         }
@@ -873,6 +922,38 @@ function (BaseView, loading) {
         var div = document.createElement('div');
         div.appendChild(document.createTextNode(value == null ? '' : String(value)));
         return div.innerHTML;
+    }
+
+    function parseLiveTvTunerCount(rawValue) {
+        var trimmed = String(rawValue || '').trim();
+        if (!trimmed) return 0;
+        if (!/^[0-9]+$/.test(trimmed)) return null;
+
+        var parsed = Number(trimmed);
+        if (!isFinite(parsed) || parsed < 1 || parsed > maxInt32) return null;
+
+        return parsed;
+    }
+
+    function parsePositiveInt32(rawValue) {
+        if (typeof rawValue !== 'number' || !isFinite(rawValue) ||
+            Math.floor(rawValue) !== rawValue || rawValue < 1 || rawValue > maxInt32) return null;
+        return rawValue;
+    }
+
+    function buildTestConnectionPayload(view) {
+        var url = (view.querySelector('.txtBaseUrl').value || '').replace(/\/+$/, '').trim();
+        var username = view.querySelector('.txtUsername').value;
+        var password = view.querySelector('.txtPassword').value;
+
+        if (!url || !username || !password) return null;
+
+        return {
+            Url: url,
+            Username: username,
+            Password: password,
+            UserAgent: view.querySelector('.txtHttpUserAgent').value
+        };
     }
 
     return View;

@@ -37,18 +37,37 @@ jobs:
 
       - name: Bootstrap gh-pages branch if missing
         run: |
+          mkdir -p pages
           if [ ! -d pages/.git ]; then
-            mkdir -p pages
-            cd pages
-            git init -b gh-pages
-            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-            echo "# m3u-editor-for-emby plugin repository manifests" > README.md
-            git add README.md
-            git -c user.email="github-actions[bot]@users.noreply.github.com" \
-                -c user.name="github-actions[bot]" \
-                commit -m "chore: bootstrap gh-pages"
-            git push -u origin gh-pages
+            git -C pages init
+            git -C pages remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           fi
+
+          remote_branch_status=0
+          git -C pages ls-remote --exit-code --heads origin refs/heads/gh-pages > /dev/null 2>&1 || remote_branch_status=$?
+
+          case "$remote_branch_status" in
+            0)
+              if [ "$(git -C pages branch --show-current)" != "gh-pages" ]; then
+                echo "gh-pages exists remotely but was not checked out."
+                exit 1
+              fi
+              ;;
+            2)
+              git -C pages checkout --orphan gh-pages
+              git -C pages read-tree --empty
+              echo "# m3u-editor-for-emby plugin repository manifests" > pages/README.md
+              git -C pages add README.md
+              git -C pages -c user.email="github-actions[bot]@users.noreply.github.com" \
+                  -c user.name="github-actions[bot]" \
+                  commit -m "chore: bootstrap gh-pages"
+              git -C pages push -u origin gh-pages
+              ;;
+            *)
+              echo "Unable to determine whether gh-pages exists remotely (git ls-remote exit $remote_branch_status)."
+              exit 1
+              ;;
+          esac
 
       - name: Setup Python
         uses: actions/setup-python@v6

@@ -13,6 +13,7 @@ using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class M3uEditorLiveStreamConsumerTests
     {
         [Fact]

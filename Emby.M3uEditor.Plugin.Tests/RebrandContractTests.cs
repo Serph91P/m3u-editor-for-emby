@@ -57,7 +57,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "EnableChannelNameCleaning", "EnableDiagnosticsLogging", "EnableEpg", "EnableLiveTv",
                 "EnableLiveTvDiagnostics", "EpgCacheMinutes", "EpgDaysToFetch", "EpgSource",
                 "HttpUserAgent", "IncludeAdultChannels", "LastChannelListHash", "LastInstalledVersion",
-                "LiveTvOutputFormat", "M3UCacheMinutes",
+                "LiveTvOutputFormat", "LiveTvTunerCount", "M3UCacheMinutes",
                 "ManagedActiveGeneration", "ManagedApprovedOutputRoots", "ManagedCatalogRevision",
                 "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
                 "ManagedOmittedVersions", "ManagedPreviousGeneration", "ManagedPublishingApiVersion",
