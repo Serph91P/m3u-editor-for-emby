@@ -481,11 +481,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             LiveTvOptions options)
         {
             var configManagerProxy = DispatchProxy.Create<IConfigurationManager, TestConfigurationManager>();
-            var configManager = (TestConfigurationManager)(object)configManagerProxy;
+            var configManager = (TestConfigurationManager)configManagerProxy;
             configManager.LiveTvOptions = options;
 
             var hostProxy = DispatchProxy.Create<IApplicationHost, TestApplicationHost>();
-            var host = (TestApplicationHost)(object)hostProxy;
+            var host = (TestApplicationHost)hostProxy;
             host.ConfigurationManager = configManagerProxy;
 
             return (hostProxy, configManager);
@@ -536,14 +536,12 @@ namespace Emby.M3uEditor.Plugin.Tests
                 }
 
                 if (string.Equals(targetMethod.Name, "SaveConfiguration", StringComparison.Ordinal) &&
-                    args.Length == 2)
+                    args.Length == 2 &&
+                    string.Equals((string)args[0], "livetv", StringComparison.Ordinal) &&
+                    args[1] is LiveTvOptions updated)
                 {
-                    if (string.Equals((string)args[0], "livetv", StringComparison.Ordinal) &&
-                        args[1] is LiveTvOptions updated)
-                    {
-                        ++SaveConfigurationCalls;
-                        LiveTvOptions = updated;
-                    }
+                    ++SaveConfigurationCalls;
+                    LiveTvOptions = updated;
                 }
 
                 if (targetMethod.ReturnType == typeof(void))
@@ -576,15 +574,15 @@ namespace Emby.M3uEditor.Plugin.Tests
                 _previousPlugin = global::Emby.M3uEditor.Plugin.Plugin.InstanceOrNull;
 
                 _applicationPaths = DispatchProxy.Create<IApplicationPaths, TestApplicationPaths>();
-                ((TestApplicationPaths)(object)_applicationPaths).RootPath = _directory.Path;
+                ((TestApplicationPaths)_applicationPaths).RootPath = _directory.Path;
 
                 _xmlSerializer = DispatchProxy.Create<MediaBrowser.Model.Serialization.IXmlSerializer, TestXmlSerializer>();
-                XmlSerializer = (TestXmlSerializer)(object)_xmlSerializer;
+                XmlSerializer = (TestXmlSerializer)_xmlSerializer;
                 XmlSerializer.ConfigurationToLoad = configuration;
 
                 var logger = DispatchProxy.Create<ILogger, TestLogger>();
                 _logManager = DispatchProxy.Create<ILogManager, TestLogManager>();
-                ((TestLogManager)(object)_logManager).Logger = logger;
+                ((TestLogManager)_logManager).Logger = logger;
 
                 var tunerEnvironment = CreateEnvironment(liveTvOptions);
                 _applicationHost = tunerEnvironment.host;
