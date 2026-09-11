@@ -16,11 +16,12 @@ namespace Emby.M3uEditor.Plugin
 {
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
     {
-        private const string DashboardResourceRevision = "r3";
+        private const string DashboardResourceRevision = "r4";
         private static volatile Plugin _instance;
         internal static readonly object ConfigurationTransactionGate = new object();
         private readonly IApplicationHost _applicationHost;
         private readonly IApplicationPaths _applicationPaths;
+        private readonly ILogger _reconcileLogger;
         private LiveTvService _liveTvService;
         private StrmSyncService _strmSyncService;
 
@@ -30,13 +31,15 @@ namespace Emby.M3uEditor.Plugin
             _instance = this;
             _applicationHost = applicationHost;
             _applicationPaths = applicationPaths;
+            _reconcileLogger = logManager.GetLogger("M3uEditor.Reconcile");
             _liveTvService = new LiveTvService(logManager.GetLogger("M3uEditor.LiveTv"));
             _strmSyncService = new StrmSyncService(logManager.GetLogger("M3uEditor.StrmSync"));
             _strmSyncService.ManagedOwnerPathProvider = () => DataFolderPath;
             M3uEditorTunerHost.ReconcileConfiguredTunerHost(
                 applicationHost,
                 Configuration.EnableLiveTv,
-                logManager.GetLogger("M3uEditor.Reconcile"));
+                Configuration.LiveTvTunerCount,
+                _reconcileLogger);
         }
 
         public override string Name => "m3u-editor for Emby";
@@ -57,9 +60,23 @@ namespace Emby.M3uEditor.Plugin
 
         public override void UpdateConfiguration(BasePluginConfiguration configuration)
         {
+            if (configuration is PluginConfiguration requestedConfig && requestedConfig.LiveTvTunerCount < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(requestedConfig.LiveTvTunerCount));
+            }
+
             lock (ConfigurationTransactionGate)
             {
                 base.UpdateConfiguration(configuration);
+
+                if (Configuration is PluginConfiguration pluginConfig)
+                {
+                    M3uEditorTunerHost.ReconcileConfiguredTunerHost(
+                        _applicationHost,
+                        pluginConfig.EnableLiveTv,
+                        pluginConfig.LiveTvTunerCount,
+                        _reconcileLogger);
+                }
             }
         }
 
@@ -122,6 +139,11 @@ namespace Emby.M3uEditor.Plugin
                 },
                 new PluginPageInfo
                 {
+                    Name = "m3ueditorconfigr3",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
                     Name = "m3ueditorconfigr2",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
                 },
@@ -151,6 +173,11 @@ namespace Emby.M3uEditor.Plugin
                 new PluginPageInfo
                 {
                     Name = GetJsPageName(),
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
+                },
+                new PluginPageInfo
+                {
+                    Name = "m3ueditorconfigjsr3",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
                 },
                 new PluginPageInfo

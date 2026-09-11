@@ -49,7 +49,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             var mainPage = Assert.Single(pages.Where(page => page.EnableInMainMenu));
 
             Assert.Equal("Emby.Xtr" + "eam.Plugin.xml", plugin.ConfigurationFileName);
-            Assert.Equal("m3ueditorconfigr3", mainPage.Name);
+            Assert.Equal("m3ueditorconfigr4", mainPage.Name);
+            Assert.Contains("m3ueditorconfigjsr4", pageNames);
+            Assert.Contains("m3ueditorconfigr3", pageNames);
             Assert.Contains("m3ueditorconfigjsr3", pageNames);
             Assert.Contains("m3ueditorconfigr2", pageNames);
             Assert.Contains("m3ueditorconfigjsr2", pageNames);
@@ -59,13 +61,13 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("xtr" + "eamconfig", pageNames);
             Assert.Contains("xtr" + "eamconfigjs", pageNames);
             Assert.Contains("Xtr" + "eamTuner", pageNames);
-            Assert.Equal(10, pageNames.Length);
+            Assert.Equal(12, pageNames.Length);
 
             using (var stream = typeof(Plugin).Assembly.GetManifestResourceStream(
                 "Emby.M3uEditor.Plugin.Configuration.Web.config.html"))
             using (var reader = new StreamReader(stream))
             {
-                Assert.Contains("data-controller=\"__plugin/m3ueditorconfigjsr3\"", reader.ReadToEnd());
+                Assert.Contains("data-controller=\"__plugin/m3ueditorconfigjsr4\"", reader.ReadToEnd());
             }
         }
 

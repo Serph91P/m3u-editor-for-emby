@@ -97,6 +97,7 @@ namespace Emby.M3uEditor.Plugin.Api
     public class TestConnectionResult
     {
         public bool Success { get; set; }
+        public int? MaxConnections { get; set; }
         public string Message { get; set; }
     }
 
@@ -685,12 +686,12 @@ namespace Emby.M3uEditor.Plugin.Api
 
             try
             {
-                var authenticated = await new M3uEditorClient(httpClient).TestConnectionAsync(
+                var connectionResult = await new M3uEditorClient(httpClient).TestConnectionWithMetadataAsync(
                     baseUrl,
                     username,
                     password,
                     cancellationToken).ConfigureAwait(false);
-                if (!authenticated)
+                if (!connectionResult.Success)
                 {
                     return new TestConnectionResult
                     {
@@ -701,6 +702,7 @@ namespace Emby.M3uEditor.Plugin.Api
                 return new TestConnectionResult
                 {
                     Success = true,
+                    MaxConnections = connectionResult.MaxConnections,
                     Message = "Connection to the m3u-editor Xtream-compatible interface succeeded."
                 };
             }

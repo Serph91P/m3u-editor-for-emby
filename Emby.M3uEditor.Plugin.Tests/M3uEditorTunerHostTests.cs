@@ -1,24 +1,57 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Emby.M3uEditor.Plugin.Client.Models;
 using Emby.M3uEditor.Plugin.Service;
+using Emby.M3uEditor.Plugin.Tests.Fakes;
+using MediaBrowser.Common;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.LiveTv;
+using MediaBrowser.Model.Logging;
 using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class M3uEditorTunerHostTests
     {
         private static M3uEditorTunerHost MakeBareHost()
         {
             return (M3uEditorTunerHost)RuntimeHelpers.GetUninitializedObject(
                 typeof(M3uEditorTunerHost));
+        }
+
+        [Fact]
+        public void PluginConfiguration_DefaultLiveTvTunerCountIsZeroSentinel()
+        {
+            Assert.Equal(0, new PluginConfiguration().LiveTvTunerCount);
+        }
+
+        [Theory]
+        [InlineData("\"5\"")]
+        [InlineData("1.5")]
+        [InlineData("1e3")]
+        [InlineData("2147483648")]
+        [InlineData("null")]
+        public void PluginConfiguration_JsonContractRejectsNonInt32TunerCount(string jsonValue)
+        {
+            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<PluginConfiguration>(
+                "{\"LiveTvTunerCount\":" + jsonValue + "}"));
+        }
+
+        [Fact]
+        public void PluginConfiguration_JsonContractAcceptsPositiveInt32TunerCount()
+        {
+            var configuration = JsonSerializer.Deserialize<PluginConfiguration>(
+                "{\"LiveTvTunerCount\":2147483647}");
+
+            Assert.Equal(int.MaxValue, configuration.LiveTvTunerCount);
         }
 
         [Fact]
@@ -34,6 +67,65 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(M3uEditorTunerHost.StableTunerId, tuner.Id);
             Assert.Equal(1, tuner.TunerCount);
             Assert.False(M3uEditorTunerHost.ReconcileTunerHosts(options, true));
+        }
+
+        [Fact]
+        public void ReconcileTunerHosts_SentinelKeepsExistingPositiveTunerCount()
+        {
+            var options = new LiveTvOptions
+            {
+                TunerHosts = new[]
+                {
+                    new TunerHostInfo
+                    {
+                        Type = M3uEditorTunerHost.TunerType,
+                        Id = M3uEditorTunerHost.StableTunerId,
+                        TunerCount = 2,
+                    }
+                }
+            };
+
+            var changed = M3uEditorTunerHost.ReconcileTunerHosts(options, true, 0);
+
+            Assert.False(changed);
+            Assert.Equal(2, options.TunerHosts[0].TunerCount);
+        }
+
+        [Fact]
+        public void ReconcileTunerHosts_PositiveOverrideAppliesOnlyToPluginTuner()
+        {
+            var unrelated = new TunerHostInfo { Type = "native-tuner", Id = "native", TunerCount = 7 };
+            var plugin = new TunerHostInfo { Type = M3uEditorTunerHost.TunerType, Id = "plugin", TunerCount = 2 };
+            var options = new LiveTvOptions { TunerHosts = new[] { unrelated, plugin } };
+
+            var changed = M3uEditorTunerHost.ReconcileTunerHosts(options, true, 4);
+
+            Assert.True(changed);
+            Assert.Equal(7, options.TunerHosts[0].TunerCount);
+            Assert.Equal(4, options.TunerHosts[1].TunerCount);
+            Assert.Equal(2, options.TunerHosts.Length);
+        }
+
+        [Fact]
+        public void ReconcileTunerHosts_ResolvesMissingCountToOneWithoutManualOverride()
+        {
+            var options = new LiveTvOptions
+            {
+                TunerHosts = new[]
+                {
+                    new TunerHostInfo
+                    {
+                        Type = M3uEditorTunerHost.TunerType,
+                        Id = M3uEditorTunerHost.StableTunerId,
+                        TunerCount = 0,
+                    }
+                }
+            };
+
+            var changed = M3uEditorTunerHost.ReconcileTunerHosts(options, true, 0);
+
+            Assert.True(changed);
+            Assert.Equal(1, options.TunerHosts[0].TunerCount);
         }
 
         [Fact]
@@ -64,6 +156,160 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(M3uEditorTunerHost.ReconcileTunerHosts(options, false));
             Assert.Single(options.TunerHosts);
             Assert.Same(unrelated, options.TunerHosts[0]);
+        }
+
+        [Fact]
+        public void ReconcileConfiguredTunerHost_AppliesOverrideAndAvoidsRedundantLiveTvSave()
+        {
+            var startupOptions = new LiveTvOptions();
+            var startupEnvironment = CreateEnvironment(startupOptions);
+
+            M3uEditorTunerHost.ReconcileConfiguredTunerHost(
+                startupEnvironment.host,
+                true,
+                3,
+                null);
+
+            Assert.Equal(1, startupEnvironment.configManager.SaveConfigurationCalls);
+            Assert.Single(startupEnvironment.configManager.LiveTvOptions.TunerHosts);
+            Assert.Equal(3, startupEnvironment.configManager.LiveTvOptions.TunerHosts[0].TunerCount);
+
+            var saveOptions = new LiveTvOptions
+            {
+                TunerHosts = new[]
+                {
+                    new TunerHostInfo
+                    {
+                        Type = M3uEditorTunerHost.TunerType,
+                        Id = M3uEditorTunerHost.StableTunerId,
+                        TunerCount = 2,
+                    },
+                    new TunerHostInfo { Type = "native", Id = "native", TunerCount = 9 }
+                }
+            };
+
+            var saveEnvironment = CreateEnvironment(saveOptions);
+
+            M3uEditorTunerHost.ReconcileConfiguredTunerHost(
+                saveEnvironment.host,
+                true,
+                0,
+                null);
+
+            Assert.Equal(0, saveEnvironment.configManager.SaveConfigurationCalls);
+            Assert.Equal(2, saveEnvironment.configManager.LiveTvOptions.TunerHosts.Length);
+            Assert.Equal(9, saveEnvironment.configManager.LiveTvOptions.TunerHosts[1].TunerCount);
+
+            M3uEditorTunerHost.ReconcileConfiguredTunerHost(
+                saveEnvironment.host,
+                true,
+                0,
+                null);
+
+            Assert.Equal(0, saveEnvironment.configManager.SaveConfigurationCalls);
+            Assert.Equal(2, saveEnvironment.configManager.LiveTvOptions.TunerHosts.Length);
+        }
+
+        [Fact]
+        public void PluginConstructor_AppliesPersistedTunerOverrideAtStartupWithoutChangingOtherTuners()
+        {
+            var pluginTuner = new TunerHostInfo
+            {
+                Type = M3uEditorTunerHost.TunerType,
+                Id = M3uEditorTunerHost.StableTunerId,
+                TunerCount = 2,
+            };
+            var sourceOne = new TunerHostInfo { Type = "hdhomerun", Id = "source-one", TunerCount = 6 };
+            var sourceTwo = new TunerHostInfo { Type = "m3u", Id = "source-two", TunerCount = 11 };
+            var liveTvOptions = new LiveTvOptions
+            {
+                TunerHosts = new[] { sourceOne, pluginTuner, sourceTwo },
+            };
+
+            using (var environment = new PluginTestEnvironment(
+                new PluginConfiguration { EnableLiveTv = true, LiveTvTunerCount = 4 },
+                liveTvOptions))
+            {
+                var plugin = environment.CreatePlugin();
+
+                Assert.Equal(4, plugin.Configuration.LiveTvTunerCount);
+                Assert.Equal(1, environment.ConfigurationManager.SaveConfigurationCalls);
+                Assert.Collection(
+                    environment.ConfigurationManager.LiveTvOptions.TunerHosts,
+                    tuner => Assert.Same(sourceOne, tuner),
+                    tuner => Assert.Same(pluginTuner, tuner),
+                    tuner => Assert.Same(sourceTwo, tuner));
+                Assert.Equal(6, sourceOne.TunerCount);
+                Assert.Equal(4, pluginTuner.TunerCount);
+                Assert.Equal(11, sourceTwo.TunerCount);
+            }
+        }
+
+        [Fact]
+        public void UpdateConfiguration_PersistsThenImmediatelyReconcilesOnlyPluginTuner()
+        {
+            var pluginTuner = new TunerHostInfo
+            {
+                Type = M3uEditorTunerHost.TunerType,
+                Id = M3uEditorTunerHost.StableTunerId,
+                TunerCount = 2,
+            };
+            var unrelated = new TunerHostInfo { Type = "native", Id = "source", TunerCount = 9 };
+            using (var environment = new PluginTestEnvironment(
+                new PluginConfiguration { EnableLiveTv = true, LiveTvTunerCount = 0 },
+                new LiveTvOptions { TunerHosts = new[] { unrelated, pluginTuner } }))
+            {
+                var plugin = environment.CreatePlugin();
+                environment.ResetCounts();
+                var replacement = new PluginConfiguration
+                {
+                    BaseUrl = "https://updated.example",
+                    EnableLiveTv = true,
+                    LiveTvTunerCount = 5,
+                };
+
+                plugin.UpdateConfiguration(replacement);
+
+                Assert.Same(replacement, plugin.Configuration);
+                Assert.Same(replacement, environment.Plugin.LastSavedConfiguration);
+                Assert.Equal(1, environment.Plugin.SaveConfigurationCalls);
+                Assert.Equal(1, environment.ConfigurationManager.SaveConfigurationCalls);
+                Assert.Same(unrelated, environment.ConfigurationManager.LiveTvOptions.TunerHosts[0]);
+                Assert.Equal(9, unrelated.TunerCount);
+                Assert.Equal(5, pluginTuner.TunerCount);
+
+                plugin.UpdateConfiguration(replacement);
+
+                Assert.Equal(2, environment.Plugin.SaveConfigurationCalls);
+                Assert.Equal(1, environment.ConfigurationManager.SaveConfigurationCalls);
+            }
+        }
+
+        [Fact]
+        public void UpdateConfiguration_WithNegativeLiveTvTunerCount_ThrowsBeforePersistenceOrReconciliation()
+        {
+            var original = new PluginConfiguration { EnableLiveTv = true, LiveTvTunerCount = 0 };
+            var pluginTuner = new TunerHostInfo
+            {
+                Type = M3uEditorTunerHost.TunerType,
+                Id = M3uEditorTunerHost.StableTunerId,
+                TunerCount = 2,
+            };
+            using (var environment = new PluginTestEnvironment(
+                original,
+                new LiveTvOptions { TunerHosts = new[] { pluginTuner } }))
+            {
+                var plugin = environment.CreatePlugin();
+                environment.ResetCounts();
+
+                Assert.Throws<ArgumentOutOfRangeException>(() =>
+                    plugin.UpdateConfiguration(new PluginConfiguration { LiveTvTunerCount = -1 }));
+
+                Assert.Same(original, plugin.Configuration);
+                Assert.Equal(0, environment.Plugin.SaveConfigurationCalls);
+                Assert.Equal(0, environment.ConfigurationManager.SaveConfigurationCalls);
+                Assert.Equal(2, pluginTuner.TunerCount);
+            }
         }
 
         [Fact]
@@ -229,6 +475,265 @@ namespace Emby.M3uEditor.Plugin.Tests
         private sealed class ChannelItemWithImages
         {
             public string[] ImageInfos { get; set; }
+        }
+
+        private static (IApplicationHost host, TestConfigurationManager configManager) CreateEnvironment(
+            LiveTvOptions options)
+        {
+            var configManagerProxy = DispatchProxy.Create<IConfigurationManager, TestConfigurationManager>();
+            var configManager = (TestConfigurationManager)(object)configManagerProxy;
+            configManager.LiveTvOptions = options;
+
+            var hostProxy = DispatchProxy.Create<IApplicationHost, TestApplicationHost>();
+            var host = (TestApplicationHost)(object)hostProxy;
+            host.ConfigurationManager = configManagerProxy;
+
+            return (hostProxy, configManager);
+        }
+
+        private class TestApplicationHost : DispatchProxy
+        {
+            public IConfigurationManager ConfigurationManager { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod.Name, "Resolve", StringComparison.Ordinal) &&
+                    targetMethod.IsGenericMethod &&
+                    targetMethod.GetGenericArguments().Length == 1 &&
+                    targetMethod.GetGenericArguments()[0] == typeof(IConfigurationManager))
+                {
+                    return ConfigurationManager;
+                }
+
+                if (targetMethod.ReturnType == typeof(void))
+                {
+                    return null;
+                }
+
+                return targetMethod.ReturnType.IsValueType
+                    ? Activator.CreateInstance(targetMethod.ReturnType)
+                    : null;
+            }
+        }
+
+        private class TestConfigurationManager : DispatchProxy
+        {
+            public int SaveConfigurationCalls { get; private set; }
+            public LiveTvOptions LiveTvOptions { get; set; }
+
+            public void Reset()
+            {
+                SaveConfigurationCalls = 0;
+            }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod.Name, "GetConfiguration", StringComparison.Ordinal) &&
+                    args.Length == 1 &&
+                    string.Equals((string)args[0], "livetv", StringComparison.Ordinal))
+                {
+                    return LiveTvOptions;
+                }
+
+                if (string.Equals(targetMethod.Name, "SaveConfiguration", StringComparison.Ordinal) &&
+                    args.Length == 2)
+                {
+                    if (string.Equals((string)args[0], "livetv", StringComparison.Ordinal) &&
+                        args[1] is LiveTvOptions updated)
+                    {
+                        ++SaveConfigurationCalls;
+                        LiveTvOptions = updated;
+                    }
+                }
+
+                if (targetMethod.ReturnType == typeof(void))
+                {
+                    return null;
+                }
+
+                return targetMethod.ReturnType.IsValueType
+                    ? Activator.CreateInstance(targetMethod.ReturnType)
+                    : null;
+            }
+        }
+
+        private sealed class PluginTestEnvironment : IDisposable
+        {
+            private readonly TempDirectory _directory;
+            private readonly Plugin _previousPlugin;
+            private readonly IApplicationPaths _applicationPaths;
+            private readonly MediaBrowser.Model.Serialization.IXmlSerializer _xmlSerializer;
+            private readonly ILogManager _logManager;
+            private readonly IApplicationHost _applicationHost;
+
+            public PluginTestEnvironment(PluginConfiguration configuration, LiveTvOptions liveTvOptions)
+            {
+                _directory = new TempDirectory();
+                File.WriteAllText(
+                    Path.Join(_directory.Path, "Emby.Xtr" + "eam.Plugin.xml"),
+                    "test configuration marker");
+
+                _previousPlugin = global::Emby.M3uEditor.Plugin.Plugin.InstanceOrNull;
+
+                _applicationPaths = DispatchProxy.Create<IApplicationPaths, TestApplicationPaths>();
+                ((TestApplicationPaths)(object)_applicationPaths).RootPath = _directory.Path;
+
+                _xmlSerializer = DispatchProxy.Create<MediaBrowser.Model.Serialization.IXmlSerializer, TestXmlSerializer>();
+                XmlSerializer = (TestXmlSerializer)(object)_xmlSerializer;
+                XmlSerializer.ConfigurationToLoad = configuration;
+
+                var logger = DispatchProxy.Create<ILogger, TestLogger>();
+                _logManager = DispatchProxy.Create<ILogManager, TestLogManager>();
+                ((TestLogManager)(object)_logManager).Logger = logger;
+
+                var tunerEnvironment = CreateEnvironment(liveTvOptions);
+                _applicationHost = tunerEnvironment.host;
+                ConfigurationManager = tunerEnvironment.configManager;
+            }
+
+            public TestConfigurationManager ConfigurationManager { get; }
+
+            public TestXmlSerializer XmlSerializer { get; }
+
+            public PersistingTestPlugin Plugin { get; private set; }
+
+            public Plugin CreatePlugin()
+            {
+                Plugin = new PersistingTestPlugin(
+                    _applicationPaths,
+                    _xmlSerializer,
+                    _logManager,
+                    _applicationHost);
+                return Plugin;
+            }
+
+            public void ResetCounts()
+            {
+                ConfigurationManager.Reset();
+                XmlSerializer.Reset();
+                Plugin?.Reset();
+            }
+
+            public void Dispose()
+            {
+                var instanceField = typeof(Plugin).GetField(
+                    "_instance",
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                instanceField.SetValue(null, _previousPlugin);
+                _directory.Dispose();
+            }
+        }
+
+        private sealed class PersistingTestPlugin : Plugin
+        {
+            public PersistingTestPlugin(
+                IApplicationPaths applicationPaths,
+                MediaBrowser.Model.Serialization.IXmlSerializer xmlSerializer,
+                ILogManager logManager,
+                IApplicationHost applicationHost)
+                : base(applicationPaths, xmlSerializer, logManager, applicationHost)
+            {
+            }
+
+            public int SaveConfigurationCalls { get; private set; }
+
+            public PluginConfiguration LastSavedConfiguration { get; private set; }
+
+            public override void SaveConfiguration()
+            {
+                ++SaveConfigurationCalls;
+                LastSavedConfiguration = Configuration;
+            }
+
+            public void Reset()
+            {
+                SaveConfigurationCalls = 0;
+                LastSavedConfiguration = null;
+            }
+        }
+
+        private class TestApplicationPaths : DispatchProxy
+        {
+            public string RootPath { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.ReturnType == typeof(string))
+                {
+                    return RootPath;
+                }
+
+                return targetMethod.ReturnType == typeof(void)
+                    ? null
+                    : (targetMethod.ReturnType.IsValueType
+                        ? Activator.CreateInstance(targetMethod.ReturnType)
+                        : null);
+            }
+        }
+
+        private class TestXmlSerializer : DispatchProxy
+        {
+            public PluginConfiguration ConfigurationToLoad { get; set; }
+            public int SerializeToFileCalls { get; private set; }
+            public object LastSerializedConfiguration { get; private set; }
+
+            public void Reset()
+            {
+                SerializeToFileCalls = 0;
+                LastSerializedConfiguration = null;
+            }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod.Name, "DeserializeFromFile", StringComparison.Ordinal))
+                {
+                    return ConfigurationToLoad;
+                }
+
+                if (string.Equals(targetMethod.Name, "SerializeToFile", StringComparison.Ordinal))
+                {
+                    ++SerializeToFileCalls;
+                    LastSerializedConfiguration = args[0];
+                    return null;
+                }
+
+                return targetMethod.ReturnType == typeof(void)
+                    ? null
+                    : (targetMethod.ReturnType.IsValueType
+                        ? Activator.CreateInstance(targetMethod.ReturnType)
+                        : null);
+            }
+        }
+
+        private class TestLogManager : DispatchProxy
+        {
+            public ILogger Logger { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod.Name, "GetLogger", StringComparison.Ordinal))
+                {
+                    return Logger;
+                }
+
+                return targetMethod.ReturnType == typeof(void)
+                    ? null
+                    : (targetMethod.ReturnType.IsValueType
+                        ? Activator.CreateInstance(targetMethod.ReturnType)
+                        : null);
+            }
+        }
+
+        private class TestLogger : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return targetMethod.ReturnType == typeof(void)
+                    ? null
+                    : (targetMethod.ReturnType.IsValueType
+                        ? Activator.CreateInstance(targetMethod.ReturnType)
+                        : null);
+            }
         }
     }
 }
