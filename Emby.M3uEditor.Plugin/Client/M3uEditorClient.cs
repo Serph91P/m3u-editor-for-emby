@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -80,34 +81,108 @@ namespace Emby.M3uEditor.Plugin.Client
             string password,
             CancellationToken cancellationToken)
         {
+            return (await TestConnectionWithMetadataAsync(baseUrl, username, password, cancellationToken)
+                .ConfigureAwait(false)).Success;
+        }
+
+        public async Task<M3uEditorConnectionResult> TestConnectionWithMetadataAsync(
+            string baseUrl,
+            string username,
+            string password,
+            CancellationToken cancellationToken)
+        {
             var body = await GetPanelResponseAsync(baseUrl, username, password, cancellationToken)
                 .ConfigureAwait(false);
             if (body == null)
             {
-                return false;
+                return new M3uEditorConnectionResult();
             }
 
             try
             {
                 using (var document = JsonDocument.Parse(body))
                 {
-                    JsonElement userInfo;
-                    JsonElement auth;
-                    if (!document.RootElement.TryGetProperty("user_info", out userInfo) ||
-                        userInfo.ValueKind != JsonValueKind.Object ||
-                        !userInfo.TryGetProperty("auth", out auth))
+                    if (document.RootElement.ValueKind != JsonValueKind.Object)
                     {
-                        return false;
+                        return new M3uEditorConnectionResult();
                     }
 
-                    return (auth.ValueKind == JsonValueKind.Number && auth.TryGetInt32(out var value) && value == 1) ||
+                    JsonElement userInfo;
+                    if (!document.RootElement.TryGetProperty("user_info", out userInfo) ||
+                        userInfo.ValueKind != JsonValueKind.Object)
+                    {
+                        return new M3uEditorConnectionResult();
+                    }
+
+                    JsonElement auth;
+                    if (!userInfo.TryGetProperty("auth", out auth))
+                    {
+                        return new M3uEditorConnectionResult();
+                    }
+
+                    var authenticated =
+                        (auth.ValueKind == JsonValueKind.Number && auth.TryGetInt32(out var authValue) && authValue == 1) ||
                         (auth.ValueKind == JsonValueKind.String && string.Equals(auth.GetString(), "1", StringComparison.Ordinal));
+
+                    if (!authenticated)
+                    {
+                        return new M3uEditorConnectionResult();
+                    }
+
+                    return new M3uEditorConnectionResult
+                    {
+                        Success = true,
+                        MaxConnections = ParsePositiveInt32MaxConnections(userInfo)
+                    };
                 }
             }
             catch (JsonException)
             {
-                return false;
+                return new M3uEditorConnectionResult();
             }
+        }
+
+        private static int? ParsePositiveInt32MaxConnections(JsonElement userInfo)
+        {
+            if (!userInfo.TryGetProperty("max_connections", out var maxConnectionsElement))
+            {
+                return null;
+            }
+
+            if (maxConnectionsElement.ValueKind == JsonValueKind.Number)
+            {
+                return ParsePositiveInt32Text(maxConnectionsElement.GetRawText());
+            }
+
+            if (maxConnectionsElement.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            return ParsePositiveInt32Text(maxConnectionsElement.GetString());
+        }
+
+        private static int? ParsePositiveInt32Text(string valueText)
+        {
+            if (string.IsNullOrEmpty(valueText))
+            {
+                return null;
+            }
+
+            foreach (var c in valueText)
+            {
+                if (c < '0' || c > '9')
+                {
+                    return null;
+                }
+            }
+
+            if (!int.TryParse(valueText, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return null;
+            }
+
+            return parsed > 0 ? (int?)parsed : null;
         }
 
         private async Task<string> GetPanelResponseAsync(
@@ -728,5 +803,11 @@ namespace Emby.M3uEditor.Plugin.Client
             public string RequestBaseUrl { get; }
             public string HostHeader { get; }
         }
+    }
+
+    public sealed class M3uEditorConnectionResult
+    {
+        public bool Success { get; set; }
+        public int? MaxConnections { get; set; }
     }
 }

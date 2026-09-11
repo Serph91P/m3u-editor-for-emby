@@ -94,12 +94,18 @@ namespace Emby.M3uEditor.Plugin.Service
 
         internal static bool ReconcileTunerHosts(LiveTvOptions options, bool enabled)
         {
+            return ReconcileTunerHosts(options, enabled, 0);
+        }
+
+        internal static bool ReconcileTunerHosts(LiveTvOptions options, bool enabled, int liveTvTunerCount)
+        {
             if (options == null)
             {
                 return false;
             }
 
             var original = options.TunerHosts ?? new TunerHostInfo[0];
+            var configuredLimit = liveTvTunerCount > 0 ? liveTvTunerCount : 0;
             var pluginTuners = original.Where(tuner => tuner != null &&
                 (string.Equals(tuner.Type, TunerType, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(tuner.Id, StableTunerId, StringComparison.OrdinalIgnoreCase))).ToList();
@@ -142,9 +148,12 @@ namespace Emby.M3uEditor.Plugin.Service
                     changed = true;
                 }
 
-                if (tuner.TunerCount < 1)
+                var resolvedTunerCount = configuredLimit > 0
+                    ? configuredLimit
+                    : (tuner.TunerCount > 0 ? tuner.TunerCount : 1);
+                if (tuner.TunerCount != resolvedTunerCount)
                 {
-                    tuner.TunerCount = 1;
+                    tuner.TunerCount = resolvedTunerCount;
                     changed = true;
                 }
 
@@ -158,7 +167,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     Id = StableTunerId,
                     Type = TunerType,
-                    TunerCount = 1
+                    TunerCount = configuredLimit > 0 ? configuredLimit : 1
                 });
                 changed = true;
             }
@@ -175,13 +184,14 @@ namespace Emby.M3uEditor.Plugin.Service
         internal static void ReconcileConfiguredTunerHost(
             IApplicationHost applicationHost,
             bool enabled,
+            int liveTvTunerCount,
             ILogger logger)
         {
             try
             {
                 var configManager = applicationHost.Resolve<IConfigurationManager>();
                 var liveTvOptions = configManager.GetConfiguration("livetv") as LiveTvOptions;
-                if (liveTvOptions != null && ReconcileTunerHosts(liveTvOptions, enabled))
+                if (liveTvOptions != null && ReconcileTunerHosts(liveTvOptions, enabled, liveTvTunerCount))
                 {
                     configManager.SaveConfiguration("livetv", liveTvOptions);
                     logger?.Info("Reconciled the stable m3u-editor tuner configuration.");
