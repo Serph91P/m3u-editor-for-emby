@@ -20,6 +20,7 @@
     ["@semantic-release/release-notes-generator", {
       "preset": "conventionalcommits"
     }],
+    ["./scripts/release/verify-beta-version-floor.mjs"],
     ["@semantic-release/exec", {
       "prepareCmd": "bash scripts/release/inject-version.sh ${nextRelease.version} && bash scripts/release/build-artifacts.sh ${nextRelease.version}"
     }],
