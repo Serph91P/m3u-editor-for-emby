@@ -29,7 +29,7 @@ jobs:
       - name: Setup Node.js for release safeguards
         uses: actions/setup-node@v6
         with:
-          node-version: 'lts/*'
+          node-version: '22.23.2'
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -111,3 +111,40 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
+
+  release:
+    name: Release
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    needs: [build-and-test, codeql]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the branch still points at this CI commit
+        run: |
+          git fetch origin "${GITHUB_REF_NAME}"
+          test "$(git rev-parse "origin/${GITHUB_REF_NAME}")" = "${GITHUB_SHA}"
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.2'
+          cache: npm
+      - name: Install and audit npm dependencies
+        run: |
+          npm ci
+          npm audit --audit-level=high
+      - name: Make release scripts executable
+        run: chmod +x scripts/release/*.sh
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release

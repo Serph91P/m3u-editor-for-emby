@@ -56,7 +56,6 @@ Thumbs.db
 
 # Release tooling
 node_modules/
-package-lock.json
 artifacts/
 .hermes/
 streamtv.xml
