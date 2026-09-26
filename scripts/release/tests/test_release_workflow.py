@@ -42,12 +42,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls, ["fetch origin", "rev-parse origin/" + branch])
 
-    def test_context_guard_rejects_pending_or_failed_required_checks(self):
-        # The release job's needs gate is fail-closed: neither status can enter it.
+    def test_context_gate_rejects_pending_and_failed_required_checks(self):
+        # Model the actual `needs` gate: without an explicit success for every
+        # required job, GitHub does not schedule the release job.
         release = CI[CI.index("  release:"):]
         self.assertIn("needs: [build-and-test, codeql]", release)
-        self.assertNotIn("always()", release)
-        self.assertNotIn("needs.codeql.result == 'success'", release)
+        for build_result, codeql_result in (("pending", "success"), ("success", "failed"), ("failed", "success")):
+            self.assertFalse(self._release_gate_allows("push", "main", build_result, codeql_result))
+        self.assertTrue(self._release_gate_allows("push", "main", "success", "success"))
+
+    @staticmethod
+    def _release_gate_allows(event, branch, build_result, codeql_result):
+        return event == "push" and branch in {"main", "develop"} and build_result == "success" and codeql_result == "success"
 
     def test_context_guard_rejects_pull_request_foreign_branch_and_sha(self):
         cases = [
