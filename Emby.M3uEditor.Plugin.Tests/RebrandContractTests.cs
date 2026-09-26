@@ -59,7 +59,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "HttpUserAgent", "IncludeAdultChannels", "LastChannelListHash", "LastInstalledVersion",
                 "LiveTvOutputFormat", "LiveTvTunerCount", "M3UCacheMinutes",
                 "ManagedActiveGeneration", "ManagedApprovedOutputRoots", "ManagedCatalogRevision",
-                "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
+                "ManagedDirectoryOwnershipJson", "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
                 "ManagedOmittedVersions", "ManagedPreviousGeneration", "ManagedPublishingApiVersion",
                 "ManagedPublishingEnabled", "ManagedPublishingIntegrationId", "ManagedSetupLastResult",
                 "ManagedSetupReady", "Password", "SelectedLiveCategoryIds", "UseBetaChannel",

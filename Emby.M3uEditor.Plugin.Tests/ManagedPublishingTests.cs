@@ -31,6 +31,100 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task PublishManagedMappingAsync_MissingOwnedMappingLeaf_IsProvisionedOnFirstReconcile()
+        {
+            using (var owner = new TempDirectory())
+            {
+                var config = new PluginConfiguration();
+                Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
+                var libraries = new ManagedLibraryProvisioningService(owner.Path);
+                var operation = Guid.NewGuid().ToString("D");
+                var prepared = libraries.Prepare(config, 71, operation, "Movies", "movies", () => { });
+                Assert.True(prepared.Success, prepared.Message);
+                Assert.True(libraries.Commit(config, 71, operation, () => { }).Success);
+                var mapping = MovieMapping(1);
+                mapping.IntegrationId = 71;
+                mapping.TargetLibrary.OutputPath = JoinUnderRoot(prepared.PreparedPath, "movies-a1b2c3d4");
+                var service = MakeService();
+                service.ManagedOwnerPathProvider = () => owner.Path;
+
+                var result = await service.PublishManagedMappingAsync(
+                    mapping,
+                    None,
+                    config.ManagedApprovedOutputRoots,
+                    config,
+                    () => { });
+
+                Assert.True(result.Success, result.Error);
+                Assert.True(Directory.Exists(mapping.TargetLibrary.OutputPath));
+                Assert.Contains(mapping.MappingUuid, config.ManagedDirectoryOwnershipJson);
+                Assert.True(File.Exists(JoinUnderRoot(
+                    mapping.TargetLibrary.OutputPath,
+                    ".m3u-editor-for-emby/active.json")));
+            }
+        }
+
+        [Fact]
+        public async Task PublishManagedMappingAsync_MissingLeafBelowUnownedLibrary_FailsWithoutCreating()
+        {
+            using (var owner = new TempDirectory())
+            {
+                var config = new PluginConfiguration();
+                Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
+                var foreignLibrary = JoinUnderRoot(config.ManagedApprovedOutputRoots, "foreign-library");
+                Directory.CreateDirectory(foreignLibrary);
+                var mapping = MovieMapping(1);
+                mapping.IntegrationId = 71;
+                mapping.TargetLibrary.OutputPath = JoinUnderRoot(foreignLibrary, "mapping-leaf");
+                var service = MakeService();
+                service.ManagedOwnerPathProvider = () => owner.Path;
+
+                var result = await service.PublishManagedMappingAsync(
+                    mapping,
+                    None,
+                    config.ManagedApprovedOutputRoots,
+                    config,
+                    () => { });
+
+                Assert.False(result.Success);
+                Assert.Contains("owned committed library", result.Error, StringComparison.OrdinalIgnoreCase);
+                Assert.False(Directory.Exists(mapping.TargetLibrary.OutputPath));
+            }
+        }
+
+        [Fact]
+        public async Task PublishManagedMappingAsync_MappingClaimSaveFailure_RollsBackLeafAndOwnership()
+        {
+            using (var owner = new TempDirectory())
+            {
+                var config = new PluginConfiguration();
+                Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
+                var libraries = new ManagedLibraryProvisioningService(owner.Path);
+                var operation = Guid.NewGuid().ToString("D");
+                var prepared = libraries.Prepare(config, 71, operation, "Movies", "movies", () => { });
+                Assert.True(libraries.Commit(config, 71, operation, () => { }).Success);
+                var ownership = config.ManagedDirectoryOwnershipJson;
+                var mapping = MovieMapping(1);
+                mapping.IntegrationId = 71;
+                mapping.TargetLibrary.OutputPath = JoinUnderRoot(prepared.PreparedPath, "mapping-leaf");
+                var service = MakeService();
+                service.ManagedOwnerPathProvider = () => owner.Path;
+
+                var result = await service.PublishManagedMappingAsync(
+                    mapping,
+                    None,
+                    config.ManagedApprovedOutputRoots,
+                    config,
+                    () => throw new IOException("private mount"));
+
+                Assert.False(result.Success);
+                Assert.DoesNotContain("private", result.Error);
+                Assert.False(Directory.Exists(mapping.TargetLibrary.OutputPath));
+                Assert.Equal(ownership, config.ManagedDirectoryOwnershipJson);
+            }
+        }
+
+        [Fact]
         public async Task PublishManagedMappingAsync_MovieVariants_WritesEightVersionsOneNfoAndManifest()
         {
             var mapping = MovieMapping(10);
@@ -1426,6 +1520,12 @@ namespace Emby.M3uEditor.Plugin.Tests
                     throw new IOException("Injected per-file move failure for " + relativePath + ".");
                 }
             };
+        }
+
+        private static string JoinUnderRoot(string root, string relativePath)
+        {
+            Assert.True(ManagedOutputPolicy.TryJoinUnderRoot(root, relativePath, out var path));
+            return path;
         }
 
         private static Dictionary<string, byte[]> SnapshotFiles(string root)
