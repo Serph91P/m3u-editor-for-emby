@@ -6,6 +6,11 @@ set -euo pipefail
 : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
 : "${GITHUB_REF:?GITHUB_REF is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
+: "${RELEASE_BUILD_RESULT:?RELEASE_BUILD_RESULT is required}"
+: "${RELEASE_CODEQL_RESULT:?RELEASE_CODEQL_RESULT is required}"
+
+test "$RELEASE_BUILD_RESULT" = success
+test "$RELEASE_CODEQL_RESULT" = success
 
 test "$GITHUB_EVENT_NAME" = push
 test "$GITHUB_REPOSITORY" = Serph91P/m3u-editor-for-emby

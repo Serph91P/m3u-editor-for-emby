@@ -149,6 +149,9 @@ jobs:
       - name: Make release scripts executable
         run: chmod +x scripts/release/*.sh
       - name: Verify release origin and CI commit
+        env:
+          RELEASE_BUILD_RESULT: ${{ needs.build-and-test.result }}
+          RELEASE_CODEQL_RESULT: ${{ needs.codeql.result }}
         run: scripts/release/verify-release-context.sh
       - name: Release
         env:

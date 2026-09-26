@@ -43,17 +43,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(calls, ["fetch origin", "rev-parse origin/" + branch])
 
     def test_context_gate_rejects_pending_and_failed_required_checks(self):
-        # Model the actual `needs` gate: without an explicit success for every
-        # required job, GitHub does not schedule the release job.
-        release = CI[CI.index("  release:"):]
-        self.assertIn("needs: [build-and-test, codeql]", release)
-        for build_result, codeql_result in (("pending", "success"), ("success", "failed"), ("failed", "success")):
-            self.assertFalse(self._release_gate_allows("push", "main", build_result, codeql_result))
-        self.assertTrue(self._release_gate_allows("push", "main", "success", "success"))
-
-    @staticmethod
-    def _release_gate_allows(event, branch, build_result, codeql_result):
-        return event == "push" and branch in {"main", "develop"} and build_result == "success" and codeql_result == "success"
+        for build_result, codeql_result in (("pending", "success"), ("success", "pending"),
+                                             ("failed", "success"), ("success", "failed")):
+            result, calls = self._run_guard(branch="main", remote_sha="abc", sha="abc",
+                                            build_result=build_result, codeql_result=codeql_result)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(calls, [])
+        result, calls = self._run_guard(branch="develop", remote_sha="abc", sha="abc",
+                                        build_result="success", codeql_result="success")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ["fetch origin", "rev-parse origin/develop"])
 
     def test_context_guard_rejects_pull_request_foreign_branch_and_sha(self):
         cases = [
@@ -71,7 +70,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, ["fetch origin", "rev-parse origin/main"])
 
-    def _run_guard(self, branch, remote_sha, sha, event="push", repo="Serph91P/m3u-editor-for-emby"):
+    def _run_guard(self, branch, remote_sha, sha, event="push", repo="Serph91P/m3u-editor-for-emby",
+                   build_result="success", codeql_result="success"):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "calls"
             git = Path(directory) / "git"
@@ -79,6 +79,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             git.chmod(0o755)
             env = os.environ.copy()
             env.update({"PATH": f"{directory}:{env['PATH']}", "GIT_CALL_LOG": str(log), "GIT_REMOTE_SHA": remote_sha,
+                        "RELEASE_BUILD_RESULT": build_result, "RELEASE_CODEQL_RESULT": codeql_result,
                         "GITHUB_EVENT_NAME": event, "GITHUB_REPOSITORY": repo, "GITHUB_REF_NAME": branch,
                         "GITHUB_REF": f"refs/heads/{branch}", "GITHUB_SHA": sha})
             result = subprocess.run([str(GUARD)], env=env, text=True, capture_output=True)
