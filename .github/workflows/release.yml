@@ -1,7 +1,0 @@
-name: Release
-
-# Publishing is intentionally part of the CI push workflow so it cannot bypass
-# the build-and-test and CodeQL jobs on the same commit.
-on: {}
-
-jobs: {}
