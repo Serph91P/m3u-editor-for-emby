@@ -1,8 +1,8 @@
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[3]
 CI = (ROOT / ".github/workflows/ci.yml").read_text()
@@ -11,19 +11,17 @@ GUARD = ROOT / "scripts/release/verify-release-context.sh"
 
 class ReleaseWorkflowTests(unittest.TestCase):
     def test_release_is_same_run_job_after_build_and_codeql(self):
-        self.assertIn("release:", CI)
-        self.assertIn("needs: [build-and-test, codeql]", CI)
-        self.assertIn("github.event_name == 'push'", CI)
-        self.assertIn("github.ref == 'refs/heads/main'", CI)
-        self.assertIn("github.ref == 'refs/heads/develop'", CI)
-        self.assertIn("contents: write", CI)
-        self.assertNotIn("workflow_run:", CI)
-        self.assertNotIn("workflow_run:", CI)
-        self.assertIn("uses: actions/setup-dotnet@v5", CI[CI.index("  release:"):])
-
-    def test_release_fails_closed_on_head_race(self):
         release = CI[CI.index("  release:"):]
-        self.assertIn("verify-release-context.sh", release)
+        self.assertIn("needs: [build-and-test, codeql]", release)
+        self.assertIn("github.event_name == 'push'", release)
+        self.assertIn("github.ref == 'refs/heads/main'", release)
+        self.assertIn("github.ref == 'refs/heads/develop'", release)
+        self.assertIn("contents: write", release)
+        self.assertIn("uses: actions/setup-dotnet@v5", release)
+        self.assertNotIn("workflow_run:", CI)
+
+    def test_release_guard_precedes_publish_and_no_concurrent_release(self):
+        release = CI[CI.index("  release:"):]
         self.assertLess(release.index("verify-release-context.sh"), release.index("npx semantic-release"))
         self.assertIn("cancel-in-progress: false", CI)
 
@@ -32,26 +30,54 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("npm ci", CI)
         self.assertIn("npm audit --audit-level=high", CI)
         self.assertNotIn("npm ci || npm install", CI)
-        package = (ROOT / "package.json").read_text()
-        self.assertIn('"node": ">=22.14.0 <23"', package)
+        self.assertIn('"node": ">=22.14.0 <23"', (ROOT / "package.json").read_text())
 
     def test_release_is_not_dispatchable_or_pr_triggered(self):
         self.assertNotIn("workflow_dispatch", CI)
         self.assertNotIn("pull_request", CI.split("  release:", 1)[1])
 
-    def test_context_guard_accepts_exact_origin_push(self):
-        self.assertEqual(self._run_guard({"GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "Serph91P/m3u-editor-for-emby", "GITHUB_REF_NAME": "main", "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": "abc", "RELEASE_REMOTE_SHA": "abc"}).returncode, 0)
+    def test_context_guard_accepts_exact_origin_push_for_main_and_develop(self):
+        for branch in ("main", "develop"):
+            result, calls = self._run_guard(branch=branch, remote_sha="abc", sha="abc")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls, ["fetch origin", "rev-parse origin/" + branch])
 
-    def test_context_guard_rejects_foreign_repo_pull_request_branch_and_stale_sha(self):
-        base = {"GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "Serph91P/m3u-editor-for-emby", "GITHUB_REF_NAME": "main", "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": "abc", "RELEASE_REMOTE_SHA": "abc"}
-        for key, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_REPOSITORY", "other/repo"), ("GITHUB_REF_NAME", "feature/x"), ("RELEASE_REMOTE_SHA", "def")):
-            env = {**base, key: value}
-            self.assertNotEqual(self._run_guard(env).returncode, 0, key)
+    def test_context_guard_rejects_pending_or_failed_required_checks(self):
+        # The release job's needs gate is fail-closed: neither status can enter it.
+        release = CI[CI.index("  release:"):]
+        self.assertIn("needs: [build-and-test, codeql]", release)
+        self.assertNotIn("always()", release)
+        self.assertNotIn("needs.codeql.result == 'success'", release)
 
-    def _run_guard(self, values):
-        env = os.environ.copy()
-        env.update(values)
-        return subprocess.run([str(GUARD)], env=env, text=True, capture_output=True)
+    def test_context_guard_rejects_pull_request_foreign_branch_and_sha(self):
+        cases = [
+            {"event": "pull_request", "repo": "Serph91P/m3u-editor-for-emby", "branch": "main", "sha": "abc", "remote_sha": "abc"},
+            {"event": "push", "repo": "other/repo", "branch": "main", "sha": "abc", "remote_sha": "abc"},
+            {"event": "push", "repo": "Serph91P/m3u-editor-for-emby", "branch": "feature/x", "sha": "abc", "remote_sha": "abc"},
+            {"event": "push", "repo": "Serph91P/m3u-editor-for-emby", "branch": "main", "sha": "abc", "remote_sha": "def"},
+        ]
+        for case in cases:
+            result, _ = self._run_guard(**case)
+            self.assertNotEqual(result.returncode, 0, case)
+
+    def test_live_ref_update_between_install_and_publish_fails_closed(self):
+        result, calls = self._run_guard(branch="main", remote_sha="updated", sha="installed")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, ["fetch origin", "rev-parse origin/main"])
+
+    def _run_guard(self, branch, remote_sha, sha, event="push", repo="Serph91P/m3u-editor-for-emby"):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "calls"
+            git = Path(directory) / "git"
+            git.write_text("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$GIT_CALL_LOG\"\nif [ \"$1\" = rev-parse ]; then printf '%s\\n' \"$GIT_REMOTE_SHA\"; fi\n")
+            git.chmod(0o755)
+            env = os.environ.copy()
+            env.update({"PATH": f"{directory}:{env['PATH']}", "GIT_CALL_LOG": str(log), "GIT_REMOTE_SHA": remote_sha,
+                        "GITHUB_EVENT_NAME": event, "GITHUB_REPOSITORY": repo, "GITHUB_REF_NAME": branch,
+                        "GITHUB_REF": f"refs/heads/{branch}", "GITHUB_SHA": sha})
+            result = subprocess.run([str(GUARD)], env=env, text=True, capture_output=True)
+            calls = log.read_text().splitlines() if log.exists() else []
+            return result, calls
 
 
 if __name__ == "__main__":
