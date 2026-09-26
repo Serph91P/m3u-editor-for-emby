@@ -21,6 +21,7 @@ namespace Emby.M3uEditor.Plugin.Service
         public string CollectionType { get; set; }
         public string Path { get; set; }
         public string State { get; set; }
+        public string AbortPath { get; set; }
     }
 
     internal sealed class ManagedLibraryProvisioningService
@@ -80,7 +81,10 @@ namespace Emby.M3uEditor.Plugin.Service
                     return Failed(integrationId, canonicalOperation, "filesystem",
                         "The managed library parent is not safely writable.");
 
-                var staging = Path.Combine(root, ".managed-prepare-" + canonicalOperation);
+                string staging;
+                if (!ManagedOutputPolicy.TryJoinUnderRoot(root, ".managed-prepare-" + canonicalOperation, out staging))
+                    return Failed(integrationId, canonicalOperation, "filesystem",
+                        "The managed library staging path is invalid.");
                 if (Directory.Exists(staging) || File.Exists(staging))
                     return Failed(integrationId, canonicalOperation, "collision",
                         "The managed library operation has an unresolved filesystem collision.");
@@ -185,7 +189,9 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
-            var staging = Path.Combine(parent.Path, ".managed-mapping-" + canonicalMapping);
+            string staging;
+            if (!ManagedOutputPolicy.TryJoinUnderRoot(parent.Path, ".managed-mapping-" + canonicalMapping, out staging))
+                return false;
             var original = config.ManagedDirectoryOwnershipJson;
             var moved = false;
             try
@@ -252,6 +258,17 @@ namespace Emby.M3uEditor.Plugin.Service
                 var validLibrary = record.Kind == "library" && ManagedOutputPolicy.IsDirectChild(canonicalRoot, record.Path);
                 var validMapping = record.Kind == "mapping" && records.Any(parent => parent.Kind == "library" &&
                     parent.State == "committed" && ManagedOutputPolicy.IsDirectChild(parent.Path, record.Path));
+                if (validLibrary)
+                {
+                    var activeState = record.State == "prepared" || record.State == "committed";
+                    var abortState = record.State == "abort_pending" || record.State == "abort_moved" ||
+                        record.State == "aborted";
+                    validLibrary = (activeState && string.IsNullOrEmpty(record.AbortPath)) ||
+                        (abortState && ManagedOutputPolicy.IsDirectChild(canonicalRoot, record.AbortPath) &&
+                         !PathsEqual(record.Path, record.AbortPath));
+                }
+                if (validMapping)
+                    validMapping = record.State == "committed" && string.IsNullOrEmpty(record.AbortPath);
                 if (!validLibrary && !validMapping)
                 {
                     records = null;
@@ -281,48 +298,183 @@ namespace Emby.M3uEditor.Plugin.Service
                 var record = records.FirstOrDefault(value => value.Kind == "library" &&
                     string.Equals(value.OperationId, canonicalOperation, StringComparison.OrdinalIgnoreCase) &&
                     value.IntegrationId == integrationId);
-                if (record == null || !Directory.Exists(record.Path) || ManagedOutputPolicy.HasReparsePointInPath(record.Path))
+                if (record == null)
                     return Failed(integrationId, canonicalOperation, "ownership",
                         "The managed library operation is not owned by this setup.");
-                if (!abort && record.State == "committed") return Success(record, true);
-                if (abort && record.State != "prepared")
-                    return Failed(integrationId, canonicalOperation, "state", "Only a prepared library can be aborted.");
-                if (abort && records.Any(value => value.Kind == "mapping" &&
-                    ManagedOutputPolicy.IsDirectChild(record.Path, value.Path)))
-                    return Failed(integrationId, canonicalOperation, "state",
-                        "A library with owned mapping directories cannot be aborted.");
+
+                if (abort)
+                    return AbortOwnedLibrary(config, integrationId, canonicalOperation, records, record, saveConfiguration);
+
+                if (!Directory.Exists(record.Path) || ManagedOutputPolicy.HasReparsePointInPath(record.Path))
+                    return Failed(integrationId, canonicalOperation, "ownership",
+                        "The managed library operation is not owned by this setup.");
+                if (record.State == "committed") return Success(record, true);
+                if (record.State != "prepared")
+                    return Failed(integrationId, canonicalOperation, "state", "Only a prepared library can be committed.");
 
                 var original = config.ManagedDirectoryOwnershipJson;
                 try
                 {
-                    if (abort)
-                    {
-                        if (Directory.EnumerateFileSystemEntries(record.Path).Any())
-                            return Failed(integrationId, canonicalOperation, "not_empty",
-                                "The prepared library is not empty and cannot be aborted.");
-                        Directory.Delete(record.Path, false);
-                        records.Remove(record);
-                    }
-                    else record.State = "committed";
+                    record.State = "committed";
                     config.ManagedDirectoryOwnershipJson = JsonSerializer.Serialize(records, JsonOptions);
                     saveConfiguration?.Invoke();
-                    if (abort)
-                        return new ManagedLibraryOperationResult { CapabilityVersion = ApiVersion,
-                            IntegrationId = integrationId, OperationId = canonicalOperation, State = "aborted", Success = true };
                     return Success(record, false);
                 }
                 catch (Exception ex) when (IsExpectedException(ex))
                 {
                     config.ManagedDirectoryOwnershipJson = original;
+                    record.State = "prepared";
                     return Failed(integrationId, canonicalOperation, "persistence",
                         "The managed library operation could not be persisted.");
                 }
                 catch
                 {
                     config.ManagedDirectoryOwnershipJson = original;
+                    record.State = "prepared";
                     throw;
                 }
             }
+        }
+
+        private static ManagedLibraryOperationResult AbortOwnedLibrary(PluginConfiguration config, int integrationId,
+            string canonicalOperation, List<ManagedDirectoryOwnership> records, ManagedDirectoryOwnership record,
+            Action saveConfiguration)
+        {
+            if (records.Any(value => value.Kind == "mapping" &&
+                ManagedOutputPolicy.IsDirectChild(record.Path, value.Path)))
+                return Failed(integrationId, canonicalOperation, "state",
+                    "A library with owned mapping directories cannot be aborted.");
+            if (record.State == "committed")
+                return Failed(integrationId, canonicalOperation, "state", "Only a prepared library can be aborted.");
+            if (record.State == "aborted")
+            {
+                if (Directory.Exists(record.AbortPath) || File.Exists(record.AbortPath))
+                    return Failed(integrationId, canonicalOperation, "state",
+                        "The aborted library has unresolved cleanup state.");
+                return Aborted(record, true);
+            }
+
+            if (record.State == "prepared")
+            {
+                if (!IsSafeEmptyDirectory(record.Path))
+                    return Failed(integrationId, canonicalOperation, "not_empty",
+                        "The prepared library is not empty and cannot be aborted.");
+                var root = Path.GetDirectoryName(record.Path);
+                string abortPath;
+                if (!ManagedOutputPolicy.TryJoinUnderRoot(root, ".managed-abort-" + Guid.NewGuid().ToString("N"), out abortPath) ||
+                    Directory.Exists(abortPath) || File.Exists(abortPath))
+                    return Failed(integrationId, canonicalOperation, "collision",
+                        "The managed library abort has an unresolved filesystem collision.");
+
+                var original = config.ManagedDirectoryOwnershipJson;
+                record.State = "abort_pending";
+                record.AbortPath = abortPath;
+                if (!TryPersistAbortState(config, records, saveConfiguration, original, record, "prepared", null))
+                    return Failed(integrationId, canonicalOperation, "persistence",
+                        "The managed library abort could not be durably prepared.");
+            }
+
+            if (record.State == "abort_pending")
+            {
+                try
+                {
+                    if (File.Exists(record.AbortPath))
+                        return Failed(integrationId, canonicalOperation, "collision",
+                            "The managed library abort has an unresolved filesystem collision.");
+                    if (Directory.Exists(record.AbortPath))
+                    {
+                        if (!IsSafeEmptyDirectory(record.AbortPath))
+                            return Failed(integrationId, canonicalOperation, "filesystem",
+                                "The managed library abort path is not safely owned.");
+                    }
+                    else
+                    {
+                        if (!IsSafeEmptyDirectory(record.Path))
+                            return Failed(integrationId, canonicalOperation, "filesystem",
+                                "The prepared library cannot be safely moved for abort.");
+                        Directory.Move(record.Path, record.AbortPath);
+                    }
+                }
+                catch (Exception ex) when (IsExpectedException(ex))
+                {
+                    return Failed(integrationId, canonicalOperation, "filesystem",
+                        "The prepared library could not be safely moved for abort.");
+                }
+
+                var pending = config.ManagedDirectoryOwnershipJson;
+                record.State = "abort_moved";
+                if (!TryPersistAbortState(config, records, saveConfiguration, pending, record, "abort_pending", record.AbortPath))
+                    return Failed(integrationId, canonicalOperation, "persistence",
+                        "The managed library abort move could not be persisted.");
+            }
+
+            if (record.State != "abort_moved")
+                return Failed(integrationId, canonicalOperation, "state", "The managed library abort state is invalid.");
+
+            try
+            {
+                if (File.Exists(record.AbortPath))
+                    return Failed(integrationId, canonicalOperation, "filesystem",
+                        "The managed library abort path is not safely owned.");
+                if (Directory.Exists(record.AbortPath))
+                {
+                    if (!IsSafeEmptyDirectory(record.AbortPath))
+                        return Failed(integrationId, canonicalOperation, "filesystem",
+                            "The managed library abort path is not safely owned.");
+                    Directory.Delete(record.AbortPath, false);
+                }
+            }
+            catch (Exception ex) when (IsExpectedException(ex))
+            {
+                return Failed(integrationId, canonicalOperation, "filesystem",
+                    "The managed library abort cleanup could not be completed.");
+            }
+
+            var moved = config.ManagedDirectoryOwnershipJson;
+            record.State = "aborted";
+            if (!TryPersistAbortState(config, records, saveConfiguration, moved, record, "abort_moved", record.AbortPath))
+                return Failed(integrationId, canonicalOperation, "persistence",
+                    "The completed managed library abort could not be persisted.");
+            return Aborted(record, false);
+        }
+
+        private static bool TryPersistAbortState(PluginConfiguration config,
+            List<ManagedDirectoryOwnership> records, Action saveConfiguration, string previousJson,
+            ManagedDirectoryOwnership record, string previousState, string previousAbortPath)
+        {
+            try
+            {
+                config.ManagedDirectoryOwnershipJson = JsonSerializer.Serialize(records, JsonOptions);
+                saveConfiguration?.Invoke();
+                return true;
+            }
+            catch (Exception ex) when (IsExpectedException(ex))
+            {
+                config.ManagedDirectoryOwnershipJson = previousJson;
+                record.State = previousState;
+                record.AbortPath = previousAbortPath;
+                return false;
+            }
+            catch
+            {
+                config.ManagedDirectoryOwnershipJson = previousJson;
+                record.State = previousState;
+                record.AbortPath = previousAbortPath;
+                throw;
+            }
+        }
+
+        private static bool IsSafeEmptyDirectory(string path)
+        {
+            return Directory.Exists(path) && !ManagedOutputPolicy.HasReparsePointInPath(path) &&
+                !Directory.EnumerateFileSystemEntries(path).Any();
+        }
+
+        private static ManagedLibraryOperationResult Aborted(ManagedDirectoryOwnership record, bool duplicate)
+        {
+            return new ManagedLibraryOperationResult { CapabilityVersion = ApiVersion,
+                IntegrationId = record.IntegrationId, OperationId = record.OperationId, PreparedPath = record.Path,
+                State = "aborted", Success = true, Duplicate = duplicate };
         }
 
         private bool TryValidateRequest(PluginConfiguration config, int integrationId, string operationId,

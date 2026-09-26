@@ -44,7 +44,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(libraries.Commit(config, 71, operation, () => { }).Success);
                 var mapping = MovieMapping(1);
                 mapping.IntegrationId = 71;
-                mapping.TargetLibrary.OutputPath = Path.Combine(prepared.PreparedPath, "movies-a1b2c3d4");
+                mapping.TargetLibrary.OutputPath = JoinUnderRoot(prepared.PreparedPath, "movies-a1b2c3d4");
                 var service = MakeService();
                 service.ManagedOwnerPathProvider = () => owner.Path;
 
@@ -58,10 +58,9 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(result.Success, result.Error);
                 Assert.True(Directory.Exists(mapping.TargetLibrary.OutputPath));
                 Assert.Contains(mapping.MappingUuid, config.ManagedDirectoryOwnershipJson);
-                Assert.True(File.Exists(Path.Combine(
+                Assert.True(File.Exists(JoinUnderRoot(
                     mapping.TargetLibrary.OutputPath,
-                    ".m3u-editor-for-emby",
-                    "active.json")));
+                    ".m3u-editor-for-emby/active.json")));
             }
         }
 
@@ -72,11 +71,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 var config = new PluginConfiguration();
                 Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
-                var foreignLibrary = Path.Combine(config.ManagedApprovedOutputRoots, "foreign-library");
+                var foreignLibrary = JoinUnderRoot(config.ManagedApprovedOutputRoots, "foreign-library");
                 Directory.CreateDirectory(foreignLibrary);
                 var mapping = MovieMapping(1);
                 mapping.IntegrationId = 71;
-                mapping.TargetLibrary.OutputPath = Path.Combine(foreignLibrary, "mapping-leaf");
+                mapping.TargetLibrary.OutputPath = JoinUnderRoot(foreignLibrary, "mapping-leaf");
                 var service = MakeService();
                 service.ManagedOwnerPathProvider = () => owner.Path;
 
@@ -107,7 +106,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var ownership = config.ManagedDirectoryOwnershipJson;
                 var mapping = MovieMapping(1);
                 mapping.IntegrationId = 71;
-                mapping.TargetLibrary.OutputPath = Path.Combine(prepared.PreparedPath, "mapping-leaf");
+                mapping.TargetLibrary.OutputPath = JoinUnderRoot(prepared.PreparedPath, "mapping-leaf");
                 var service = MakeService();
                 service.ManagedOwnerPathProvider = () => owner.Path;
 
@@ -1521,6 +1520,12 @@ namespace Emby.M3uEditor.Plugin.Tests
                     throw new IOException("Injected per-file move failure for " + relativePath + ".");
                 }
             };
+        }
+
+        private static string JoinUnderRoot(string root, string relativePath)
+        {
+            Assert.True(ManagedOutputPolicy.TryJoinUnderRoot(root, relativePath, out var path));
+            return path;
         }
 
         private static Dictionary<string, byte[]> SnapshotFiles(string root)

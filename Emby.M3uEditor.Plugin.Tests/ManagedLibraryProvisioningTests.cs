@@ -204,12 +204,93 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var abortOperation = Guid.NewGuid().ToString("D");
             var prepared = service.Prepare(_config, 71, abortOperation, "Series", "tvshows", () => { });
-            File.WriteAllText(Path.Combine(prepared.PreparedPath, "foreign.txt"), "keep");
+            File.WriteAllText(JoinUnderRoot(prepared.PreparedPath, "foreign.txt"), "keep");
             Assert.False(service.Abort(_config, 71, abortOperation, () => { }).Success);
             Assert.True(Directory.Exists(prepared.PreparedPath));
-            File.Delete(Path.Combine(prepared.PreparedPath, "foreign.txt"));
+            File.Delete(JoinUnderRoot(prepared.PreparedPath, "foreign.txt"));
             Assert.True(service.Abort(_config, 71, abortOperation, () => { }).Success);
             Assert.False(Directory.Exists(prepared.PreparedPath));
+        }
+
+        [Fact]
+        public void Abort_SaveFailureBeforeDeletion_RemainsRecoverableAcrossRestart()
+        {
+            var service = new ManagedLibraryProvisioningService(_owner.Path);
+            var operation = Guid.NewGuid().ToString("D");
+            var prepared = service.Prepare(_config, 71, operation, "Series", "tvshows", () => { });
+            var persistedOwnership = _config.ManagedDirectoryOwnershipJson;
+
+            var failed = service.Abort(
+                _config,
+                71,
+                operation,
+                () => throw new IOException("configuration store unavailable"));
+
+            Assert.False(failed.Success);
+            Assert.True(Directory.Exists(prepared.PreparedPath));
+            Assert.Equal(persistedOwnership, _config.ManagedDirectoryOwnershipJson);
+
+            var restarted = new PluginConfiguration
+            {
+                ManagedApprovedOutputRoots = _config.ManagedApprovedOutputRoots,
+                ManagedPublishingIntegrationId = _config.ManagedPublishingIntegrationId,
+                ManagedSetupReady = _config.ManagedSetupReady,
+                ManagedDirectoryOwnershipJson = persistedOwnership
+            };
+            var recovered = new ManagedLibraryProvisioningService(_owner.Path)
+                .Abort(restarted, 71, operation, () => { });
+
+            Assert.True(recovered.Success, recovered.Message);
+            Assert.Equal("aborted", recovered.State);
+            Assert.False(Directory.Exists(prepared.PreparedPath));
+        }
+
+        [Fact]
+        public void Abort_FinalSaveFailure_RestartFinishesWithoutDeletingRecreatedUnownedTarget()
+        {
+            var service = new ManagedLibraryProvisioningService(_owner.Path);
+            var operation = Guid.NewGuid().ToString("D");
+            var prepared = service.Prepare(_config, 71, operation, "Series", "tvshows", () => { });
+            var saveCalls = 0;
+            string persistedOwnership = null;
+
+            var failed = service.Abort(_config, 71, operation, () =>
+            {
+                saveCalls++;
+                if (saveCalls == 1)
+                {
+                    persistedOwnership = _config.ManagedDirectoryOwnershipJson;
+                    return;
+                }
+                throw new IOException("configuration store unavailable");
+            });
+
+            Assert.False(failed.Success);
+            Assert.False(Directory.Exists(prepared.PreparedPath));
+            Assert.False(string.IsNullOrWhiteSpace(persistedOwnership));
+
+            Directory.CreateDirectory(prepared.PreparedPath);
+            var foreignFile = JoinUnderRoot(prepared.PreparedPath, "foreign.txt");
+            File.WriteAllText(foreignFile, "keep");
+            var restarted = new PluginConfiguration
+            {
+                ManagedApprovedOutputRoots = _config.ManagedApprovedOutputRoots,
+                ManagedPublishingIntegrationId = _config.ManagedPublishingIntegrationId,
+                ManagedSetupReady = _config.ManagedSetupReady,
+                ManagedDirectoryOwnershipJson = persistedOwnership
+            };
+            var recovered = new ManagedLibraryProvisioningService(_owner.Path)
+                .Abort(restarted, 71, operation, () => { });
+
+            Assert.True(recovered.Success, recovered.Message);
+            Assert.Equal("aborted", recovered.State);
+            Assert.True(File.Exists(foreignFile));
+        }
+
+        private static string JoinUnderRoot(string root, string relativePath)
+        {
+            Assert.True(ManagedOutputPolicy.TryJoinUnderRoot(root, relativePath, out var path));
+            return path;
         }
 
         public void Dispose()

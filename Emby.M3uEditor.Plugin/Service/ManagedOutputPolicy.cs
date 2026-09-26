@@ -147,7 +147,11 @@ namespace Emby.M3uEditor.Plugin.Service
             try
             {
                 Directory.CreateDirectory(probeDirectory);
-                var probePath = Path.Combine(probeDirectory, "probe");
+                string probePath;
+                if (!TryJoinUnderRoot(probeDirectory, "probe", out probePath))
+                {
+                    return false;
+                }
                 using (var stream = new FileStream(
                     probePath,
                     FileMode.CreateNew,
@@ -181,20 +185,27 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             finally
             {
-                try
+                DeleteProbeDirectoryIfEmpty(probeDirectory);
+            }
+        }
+
+        private static void DeleteProbeDirectoryIfEmpty(string probeDirectory)
+        {
+            try
+            {
+                if (Directory.Exists(probeDirectory) &&
+                    !Directory.EnumerateFileSystemEntries(probeDirectory).Any())
                 {
-                    if (Directory.Exists(probeDirectory) &&
-                        !Directory.EnumerateFileSystemEntries(probeDirectory).Any())
-                    {
-                        Directory.Delete(probeDirectory, false);
-                    }
+                    Directory.Delete(probeDirectory, false);
                 }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
+            }
+            catch (IOException)
+            {
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return;
             }
         }
 

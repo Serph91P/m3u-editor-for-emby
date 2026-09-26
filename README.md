@@ -166,7 +166,12 @@ must never supply a filesystem path:
   `operationId` after Emby has unambiguously accepted the virtual-folder POST.
 - `POST /M3uEditor/Managed/Libraries/V1/Abort` with those IDs only after an
   unambiguous Emby failure. Abort removes only an empty, still-prepared,
-  plugin-owned directory; committed or non-empty directories are retained.
+  plugin-owned directory; committed or non-empty directories are retained. Before
+  removal, the plugin durably records a private abort tombstone and atomically moves
+  the owned directory to that tombstone. Retries resume `abort_pending` or
+  `abort_moved` cleanup after restart and never remove a path recreated at the
+  original library location; `state: "aborted"` is returned only after that state
+  is durable.
 
 Successful retries return the same path and state with `duplicate: true`. Authenticated
 handled calls return an HTTP 200 operation envelope; Emby supplies 401/403 before the
