@@ -53,6 +53,32 @@ namespace Emby.M3uEditor.Plugin.Api
         public int IntegrationId { get; set; }
     }
 
+    [Route("/M3uEditor/Managed/Libraries/V1/Prepare", "PUT", Summary = "Prepares a plugin-owned managed library directory")]
+    [Authenticated(Roles = "Admin")]
+    public class PrepareManagedLibrary : IReturn<ManagedLibraryOperationResult>
+    {
+        public int IntegrationId { get; set; }
+        public string OperationId { get; set; }
+        public string Name { get; set; }
+        public string CollectionType { get; set; }
+    }
+
+    [Route("/M3uEditor/Managed/Libraries/V1/Commit", "POST", Summary = "Commits a prepared managed library directory")]
+    [Authenticated(Roles = "Admin")]
+    public class CommitManagedLibrary : IReturn<ManagedLibraryOperationResult>
+    {
+        public int IntegrationId { get; set; }
+        public string OperationId { get; set; }
+    }
+
+    [Route("/M3uEditor/Managed/Libraries/V1/Abort", "POST", Summary = "Aborts an empty prepared managed library directory")]
+    [Authenticated(Roles = "Admin")]
+    public class AbortManagedLibrary : IReturn<ManagedLibraryOperationResult>
+    {
+        public int IntegrationId { get; set; }
+        public string OperationId { get; set; }
+    }
+
     [Route("/M3uEditor/Dashboard", "GET", Summary = "Gets managed publishing and Live TV status")]
     [Authenticated(Roles = "Admin")]
     public class GetDashboard : IReturn<DashboardResult>
@@ -151,6 +177,19 @@ namespace Emby.M3uEditor.Plugin.Api
         public string ConfirmedRoot { get; set; }
         public bool Ready { get; set; }
         public string Result { get; set; }
+    }
+
+    public class ManagedLibraryOperationResult
+    {
+        public int CapabilityVersion { get; set; }
+        public int IntegrationId { get; set; }
+        public string OperationId { get; set; }
+        public string PreparedPath { get; set; }
+        public string State { get; set; }
+        public bool Success { get; set; }
+        public bool Duplicate { get; set; }
+        public string ErrorClass { get; set; }
+        public string Message { get; set; }
     }
 
     public class DashboardResult
@@ -476,6 +515,41 @@ namespace Emby.M3uEditor.Plugin.Api
         public object Put(ManagedSetupRequest request)
         {
             return Plugin.Instance.UpdateManagedSetup(request == null ? 0 : request.IntegrationId);
+        }
+
+        public object Put(PrepareManagedLibrary request)
+        {
+            var plugin = Plugin.Instance;
+            return plugin.UpdateManagedLibrary(configuration =>
+                new ManagedLibraryProvisioningService(plugin.DataFolderPath).Prepare(
+                    configuration,
+                    request == null ? 0 : request.IntegrationId,
+                    request == null ? null : request.OperationId,
+                    request == null ? null : request.Name,
+                    request == null ? null : request.CollectionType,
+                    () => plugin.UpdateConfiguration(configuration)));
+        }
+
+        public object Post(CommitManagedLibrary request)
+        {
+            var plugin = Plugin.Instance;
+            return plugin.UpdateManagedLibrary(configuration =>
+                new ManagedLibraryProvisioningService(plugin.DataFolderPath).Commit(
+                    configuration,
+                    request == null ? 0 : request.IntegrationId,
+                    request == null ? null : request.OperationId,
+                    () => plugin.UpdateConfiguration(configuration)));
+        }
+
+        public object Post(AbortManagedLibrary request)
+        {
+            var plugin = Plugin.Instance;
+            return plugin.UpdateManagedLibrary(configuration =>
+                new ManagedLibraryProvisioningService(plugin.DataFolderPath).Abort(
+                    configuration,
+                    request == null ? 0 : request.IntegrationId,
+                    request == null ? null : request.OperationId,
+                    () => plugin.UpdateConfiguration(configuration)));
         }
 
         private static async Task<ManagedActionResult> RollbackManagedCatalogAsync(

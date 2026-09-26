@@ -98,6 +98,29 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(Path.Join(_temp.Path, "managed-child"), result);
         }
 
+        [Fact]
+        public void IsLocallyWritableRoot_ProbesChildLifecycleWithoutLeavingArtifacts()
+        {
+            Assert.True(ManagedOutputPolicy.IsLocallyWritableRoot(_temp.Path));
+            Assert.Empty(Directory.GetFileSystemEntries(_temp.Path));
+        }
+
+        [Fact]
+        public void IsLocallyWritableRoot_ReadOnlyMountLikePermissions_FailsClosed()
+        {
+            if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
+            var originalMode = File.GetUnixFileMode(_temp.Path);
+            try
+            {
+                File.SetUnixFileMode(_temp.Path, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+                Assert.False(ManagedOutputPolicy.IsLocallyWritableRoot(_temp.Path));
+            }
+            finally
+            {
+                File.SetUnixFileMode(_temp.Path, originalMode);
+            }
+        }
+
         public void Dispose()
         {
             _temp.Dispose();

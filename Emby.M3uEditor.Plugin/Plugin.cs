@@ -92,6 +92,15 @@ namespace Emby.M3uEditor.Plugin
             }
         }
 
+        internal ManagedLibraryOperationResult UpdateManagedLibrary(
+            Func<PluginConfiguration, ManagedLibraryOperationResult> operation)
+        {
+            lock (ConfigurationTransactionGate)
+            {
+                return operation(Configuration);
+            }
+        }
+
         /// <summary>
         /// Creates an HttpClient configured with the plugin's User-Agent setting.
         /// </summary>

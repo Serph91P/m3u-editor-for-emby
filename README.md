@@ -151,6 +151,39 @@ Complete publishing setup in m3u-editor. When the plugin dashboard reports
 5. Use **Rollback Previous Generation** only to restore the prior plugin-owned
    generation for the selected mapping.
 
+### Managed library directory contract (V1)
+
+The filesystem-only companion exposes three administrator-authenticated routes
+for new managed Emby libraries. The caller supplies semantic identity only; it
+must never supply a filesystem path:
+
+- `PUT /M3uEditor/Managed/Libraries/V1/Prepare` with `integrationId`, a UUID
+  `operationId`, `name`, and `collectionType` (`movies` or `tvshows`). On
+  success the response contains `capabilityVersion: 1`, the same binding and
+  operation IDs, a plugin-derived direct-child `preparedPath`, and
+  `state: "prepared"`.
+- `POST /M3uEditor/Managed/Libraries/V1/Commit` with `integrationId` and
+  `operationId` after Emby has unambiguously accepted the virtual-folder POST.
+- `POST /M3uEditor/Managed/Libraries/V1/Abort` with those IDs only after an
+  unambiguous Emby failure. Abort removes only an empty, still-prepared,
+  plugin-owned directory; committed or non-empty directories are retained.
+
+Successful retries return the same path and state with `duplicate: true`. Authenticated
+handled calls return an HTTP 200 operation envelope; Emby supplies 401/403 before the
+handler for missing/non-admin authentication, and unexpected server faults remain 5xx.
+Callers must inspect `success` rather than treating HTTP 200 alone as a commit. Callers
+must treat timeout or an otherwise ambiguous Emby result as pending:
+re-read Emby's library inventory before Commit or Abort, and never blindly
+abort or repeat the Emby POST. Failed responses contain a stable `errorClass`
+(`validation`, `state`, `conflict`, `collision`, `filesystem`, `ownership`,
+`not_empty`, or `persistence`) and a sanitized `message`; they do not disclose
+local paths. Existing Emby libraries do not use these routes.
+
+During reconcile, the companion may create one missing mapping child only when
+its direct parent is a committed library in persisted companion ownership
+state. Existing legacy mapping directories remain compatible but are not
+silently adopted into the new ownership registry.
+
 ## Configuration Reference
 
 | Setting | Default | Description |

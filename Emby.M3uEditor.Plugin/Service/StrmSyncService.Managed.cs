@@ -314,7 +314,8 @@ namespace Emby.M3uEditor.Plugin.Service
                             mapping,
                             cancellationToken,
                             approvedOutputRoots,
-                            config).ConfigureAwait(false);
+                            config,
+                            saveConfig).ConfigureAwait(false);
                     }
                     var activeGenerationChanged = published.Success && !published.Duplicate;
 
@@ -751,7 +752,8 @@ namespace Emby.M3uEditor.Plugin.Service
             M3uEditorMapping mapping,
             CancellationToken cancellationToken,
             string approvedOutputRoots = null,
-            PluginConfiguration setupConfig = null)
+            PluginConfiguration setupConfig = null,
+            Action saveConfig = null)
         {
             string approvalError;
             if (approvedOutputRoots != null && !ManagedOutputPolicy.IsApproved(
@@ -780,6 +782,24 @@ namespace Emby.M3uEditor.Plugin.Service
 
             try
             {
+                if (!Directory.Exists(root) && setupConfig != null)
+                {
+                    string provisioningError;
+                    var ownerPath = ManagedOwnerPathProvider == null
+                        ? Plugin.InstanceOrNull?.DataFolderPath
+                        : ManagedOwnerPathProvider();
+                    if (!ManagedLibraryProvisioningService.TryProvisionMapping(
+                        ownerPath,
+                        setupConfig,
+                        mapping.IntegrationId,
+                        mapping.MappingUuid,
+                        root,
+                        saveConfig,
+                        out provisioningError))
+                    {
+                        return Failed(mapping.Revision, provisioningError);
+                    }
+                }
                 return PublishManagedMapping(
                     mapping,
                     root,
