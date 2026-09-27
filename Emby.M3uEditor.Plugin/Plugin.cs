@@ -22,8 +22,8 @@ namespace Emby.M3uEditor.Plugin
         private readonly IApplicationHost _applicationHost;
         private readonly IApplicationPaths _applicationPaths;
         private readonly ILogger _reconcileLogger;
-        private LiveTvService _liveTvService;
-        private StrmSyncService _strmSyncService;
+        private readonly LiveTvService _liveTvService;
+        private readonly StrmSyncService _strmSyncService;
 
         public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer, ILogManager logManager, IApplicationHost applicationHost)
             : base(applicationPaths, xmlSerializer)
