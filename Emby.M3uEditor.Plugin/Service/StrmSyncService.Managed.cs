@@ -1537,8 +1537,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 ?? new Dictionary<string, ManagedManifestFile>(StringComparer.OrdinalIgnoreCase);
             var next = plan.ToDictionary(file => file.RelativePath, StringComparer.OrdinalIgnoreCase);
             result.Added = next.Keys.Count(path => !current.ContainsKey(path));
-            result.Changed = next.Count(pair => current.ContainsKey(pair.Key) &&
-                !string.Equals(current[pair.Key].Sha256, pair.Value.Sha256, StringComparison.Ordinal));
+            result.Changed = next.Count(pair => current.TryGetValue(pair.Key, out var existing) &&
+                !string.Equals(existing.Sha256, pair.Value.Sha256, StringComparison.Ordinal));
             result.Removed = current.Keys.Count(path => !next.ContainsKey(path));
         }
 
