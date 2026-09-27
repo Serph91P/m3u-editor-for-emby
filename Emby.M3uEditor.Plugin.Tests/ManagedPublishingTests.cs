@@ -20,7 +20,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         public async Task PublishManagedMappingAsync_UnapprovedOutputRoot_FailsBeforeWriting()
         {
             var mapping = MovieMapping(1);
-            var approved = Path.Combine(TempDir.Path, "approved");
+            var approved = Path.Join(TempDir.Path, "approved");
             Directory.CreateDirectory(approved);
 
             var result = await MakeService().PublishManagedMappingAsync(mapping, None, approved);
@@ -142,7 +142,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.DoesNotContain(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories),
                 path => File.ReadAllText(path).Contains("/backup/"));
             Assert.Single(Directory.GetFiles(TempDir.Path, "*.nfo", SearchOption.AllDirectories));
-            Assert.True(File.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
+            Assert.True(File.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
         }
 
         [Theory]
@@ -175,7 +175,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var activeStrm = Assert.Single(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories)
                 .Where(path => !path.Contains(Path.DirectorySeparatorChar + ".m3u-editor-for-emby" + Path.DirectorySeparatorChar)));
             Assert.Contains("https://editor.example/play/0", File.ReadAllText(activeStrm));
-            var activeManifest = File.ReadAllText(Path.Combine(TempDir.Path, ".m3u-editor-for-emby", "active.json"));
+            var activeManifest = File.ReadAllText(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "active.json"));
             Assert.Contains(original.Revision, activeManifest);
             Assert.DoesNotContain(replacement.Revision, activeManifest);
         }
@@ -190,7 +190,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 1,
                 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "https://editor.example/current/"), None)).Success);
-            var foreignPath = Path.Combine(TempDir.Path, "foreign.bin");
+            var foreignPath = Path.Join(TempDir.Path, "foreign.bin");
             File.WriteAllBytes(foreignPath, new byte[] { 0, 1, 2, 255 });
             var before = SnapshotFiles(TempDir.Path);
             InjectSecondMoveFailure(service, "quarantine");
@@ -215,7 +215,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 1,
                 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "https://editor.example/current/"), None)).Success);
-            var foreignPath = Path.Combine(TempDir.Path, "foreign.bin");
+            var foreignPath = Path.Join(TempDir.Path, "foreign.bin");
             File.WriteAllBytes(foreignPath, new byte[] { 0, 1, 2, 255 });
             var before = SnapshotFiles(TempDir.Path);
             InjectSecondMoveFailure(service, "publish");
@@ -345,7 +345,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "https://editor.example/replacement/");
             Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
             Assert.True((await service.PublishManagedMappingAsync(replacement, None)).Success);
-            var foreignPath = Path.Combine(TempDir.Path, "foreign.bin");
+            var foreignPath = Path.Join(TempDir.Path, "foreign.bin");
             File.WriteAllBytes(foreignPath, new byte[] { 0, 1, 2, 255 });
             var before = SnapshotFiles(TempDir.Path);
             InjectSecondMoveFailure(service, operation);
@@ -365,7 +365,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task PublishManagedMappingAsync_UnownedFile_PreservesIt()
         {
-            var foreignPath = Path.Combine(TempDir.Path, "keep.txt");
+            var foreignPath = Path.Join(TempDir.Path, "keep.txt");
             File.WriteAllText(foreignPath, "foreign");
 
             var result = await MakeService().PublishManagedMappingAsync(MovieMapping(1), None);
@@ -377,24 +377,24 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task PublishManagedMappingAsync_PreexistingPluginMetadata_FailsWithoutAdoptingForeignFiles()
         {
-            var metadataRoot = Path.Combine(TempDir.Path, ".m3u-editor-for-emby");
+            var metadataRoot = Path.Join(TempDir.Path, ".m3u-editor-for-emby");
             Directory.CreateDirectory(metadataRoot);
-            var foreignPath = Path.Combine(metadataRoot, "foreign.txt");
+            var foreignPath = Path.Join(metadataRoot, "foreign.txt");
             File.WriteAllText(foreignPath, "foreign");
 
             var result = await MakeService().PublishManagedMappingAsync(MovieMapping(1), None);
 
             Assert.False(result.Success);
             Assert.Equal("foreign", File.ReadAllText(foreignPath));
-            Assert.False(File.Exists(Path.Combine(metadataRoot, "active.json")));
+            Assert.False(File.Exists(Path.Join(metadataRoot, "active.json")));
         }
 
         [Fact]
         public async Task PublishManagedMappingAsync_InvalidActiveManifest_PreservesForeignMetadata()
         {
-            var metadataRoot = Path.Combine(TempDir.Path, ".m3u-editor-for-emby");
+            var metadataRoot = Path.Join(TempDir.Path, ".m3u-editor-for-emby");
             Directory.CreateDirectory(metadataRoot);
-            var manifestPath = Path.Combine(metadataRoot, "active.json");
+            var manifestPath = Path.Join(metadataRoot, "active.json");
             var foreignManifest = new byte[] { 0, 1, 2, 255 };
             File.WriteAllBytes(manifestPath, foreignManifest);
 
@@ -409,7 +409,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var outside = new Fakes.TempDirectory())
             {
-                Directory.CreateSymbolicLink(Path.Combine(TempDir.Path, "linked"), outside.Path);
+                Directory.CreateSymbolicLink(Path.Join(TempDir.Path, "linked"), outside.Path);
                 var mapping = MovieMapping(1);
                 mapping.Items[0].RelativeFolder = "linked";
 
@@ -436,7 +436,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(result.Success, result.Error);
             Assert.Equal(2, Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories)
                 .Count(path => !path.Contains(Path.DirectorySeparatorChar + ".m3u-editor-for-emby" + Path.DirectorySeparatorChar)));
-            var activeManifest = File.ReadAllText(Path.Combine(TempDir.Path, ".m3u-editor-for-emby", "active.json"));
+            var activeManifest = File.ReadAllText(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "active.json"));
             Assert.Contains("Movie - v01.strm", activeManifest);
         }
 
@@ -460,7 +460,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.False(result.Success);
             Assert.Contains("generated file byte limit", result.Error);
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*", SearchOption.AllDirectories));
-            Assert.False(Directory.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby")));
+            Assert.False(Directory.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby")));
         }
 
         [Fact]
@@ -602,7 +602,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var result = await ReconcileWithRefresh(MakeService(), config, () =>
             {
-                Assert.True(File.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
+                Assert.True(File.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
                 Assert.Equal(1, Handler.ReceivedBodies.Count(body => body.Contains("status=success")));
                 Assert.Equal(0, SaveConfigCallCount);
                 Assert.False(config.ManagedPublishingEnabled);
@@ -890,8 +890,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task ReconcileManagedAsync_MultipleChangedMappings_RefreshesOnceAfterEveryCallback()
         {
-            var firstRoot = Path.Combine(TempDir.Path, "first");
-            var secondRoot = Path.Combine(TempDir.Path, "second");
+            var firstRoot = Path.Join(TempDir.Path, "first");
+            var secondRoot = Path.Join(TempDir.Path, "second");
             Directory.CreateDirectory(firstRoot);
             Directory.CreateDirectory(secondRoot);
             var first = MovieMapping(1);
@@ -973,7 +973,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.False(result.Success);
             Assert.Equal(0, refreshCount);
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
-            Assert.False(Directory.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby")));
+            Assert.False(Directory.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby")));
             Assert.DoesNotContain(Handler.ReceivedBodies, body => body.Contains("status=failed"));
         }
 
@@ -1020,7 +1020,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.Equal(0, refreshCount);
                 AssertFilesEqual(published, SnapshotFiles(TempDir.Path));
                 Assert.NotEmpty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
-                Assert.True(Directory.Exists(Path.Combine(TempDir.Path, ".m3u-editor-for-emby")));
+                Assert.True(Directory.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby")));
             }
         }
 
@@ -1223,28 +1223,30 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task PublishManagedMappingAsync_OverlappingRunOnSameRoot_IsExcluded()
         {
-            var entered = new ManualResetEventSlim(false);
-            var release = new ManualResetEventSlim(false);
-            var firstService = MakeService();
-            firstService.ManagedPhaseHook = phase =>
+            using (var entered = new ManualResetEventSlim(false))
+            using (var release = new ManualResetEventSlim(false))
             {
-                if (phase == "after-stage")
+                var firstService = MakeService();
+                firstService.ManagedPhaseHook = phase =>
                 {
-                    entered.Set();
-                    release.Wait();
-                }
-            };
+                    if (phase == "after-stage")
+                    {
+                        entered.Set();
+                        release.Wait();
+                    }
+                };
 
-            var firstTask = Task.Run(() => firstService.PublishManagedMappingAsync(MovieMapping(1), None));
-            Assert.True(entered.Wait(5000));
+                var firstTask = Task.Run(() => firstService.PublishManagedMappingAsync(MovieMapping(1), None));
+                Assert.True(entered.Wait(5000));
 
-            var overlapping = await MakeService().PublishManagedMappingAsync(MovieMapping(1), None);
-            release.Set();
-            var first = await firstTask;
+                var overlapping = await MakeService().PublishManagedMappingAsync(MovieMapping(1), None);
+                release.Set();
+                var first = await firstTask;
 
-            Assert.False(overlapping.Success);
-            Assert.Contains("already running", overlapping.Error);
-            Assert.True(first.Success, first.Error);
+                Assert.False(overlapping.Success);
+                Assert.Contains("already running", overlapping.Error);
+                Assert.True(first.Success, first.Error);
+            }
         }
 
         [Fact]
@@ -1361,18 +1363,18 @@ namespace Emby.M3uEditor.Plugin.Tests
             var template = mapping.Items[0];
             mapping.Items = Enumerable.Range(0, itemCount).Select(index => new M3uEditorCatalogItem
             {
-                CanonicalId = "movie:tmdb:" + prefix + index.ToString(),
+                CanonicalId = "movie:tmdb:" + prefix + index,
                 MediaType = template.MediaType,
-                DisplayTitle = prefix + index.ToString(),
-                OriginalTitle = prefix + index.ToString(),
+                DisplayTitle = prefix + index,
+                OriginalTitle = prefix + index,
                 Year = template.Year,
-                RelativeFolder = prefix + index.ToString(),
-                BaseFilename = prefix + index.ToString(),
+                RelativeFolder = prefix + index,
+                BaseFilename = prefix + index,
                 Ids = new M3uEditorProviderIds { Tmdb = index + 1 },
                 Nfo = new M3uEditorNfo
                 {
-                    Title = prefix + index.ToString(),
-                    OriginalTitle = prefix + index.ToString(),
+                    Title = prefix + index,
+                    OriginalTitle = prefix + index,
                     Year = template.Year,
                     Plot = plot,
                     Genres = EmptyJsonArray(),
@@ -1386,7 +1388,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                         Preferred = new M3uEditorSource
                         {
                             SourceId = index + 1,
-                            PlaybackUrl = "https://editor.example/" + prefix + "/" + index.ToString()
+                            PlaybackUrl = "https://editor.example/" + prefix + "/" + index
                         },
                         Failover = new List<M3uEditorSource>(),
                         TechnicalMetadata = EmptyJsonArray()

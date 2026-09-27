@@ -54,7 +54,16 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             var canonicalOperation = parsedOperation.ToString("D");
-            var target = BuildExpectedPath(root, normalizedName, collectionType);
+            string target;
+            try
+            {
+                target = BuildExpectedPath(root, normalizedName, collectionType);
+            }
+            catch (InvalidOperationException)
+            {
+                return Failed(integrationId, canonicalOperation, "filesystem",
+                    "The managed library destination is invalid.");
+            }
             var gate = Gates.GetOrAdd(root, _ => new object());
             lock (gate)
             {

@@ -1094,7 +1094,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 BindingFlags.NonPublic | BindingFlags.Static);
             Assert.NotNull(method);
             Func<string, bool> accepts = path => (bool)method.Invoke(null, new object[] { path });
-            var nativeAbsolutePath = Path.Combine(Path.GetTempPath(), "managed-movies");
+            var nativeAbsolutePath = Path.Join(Path.GetTempPath(), "managed-movies");
             var candidates = new[]
             {
                 nativeAbsolutePath,
@@ -1105,12 +1105,9 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             Assert.True(Path.IsPathRooted(nativeAbsolutePath));
             Assert.True(accepts(nativeAbsolutePath));
-            foreach (var candidate in candidates)
+            foreach (var candidate in candidates.Where(accepts))
             {
-                if (accepts(candidate))
-                {
-                    Assert.True(Path.IsPathRooted(candidate), "Accepted path was not rooted on this runtime: " + candidate);
-                }
+                Assert.True(Path.IsPathRooted(candidate), "Accepted path was not rooted on this runtime: " + candidate);
             }
 
             if (Path.DirectorySeparatorChar == '/')
@@ -1299,10 +1296,15 @@ namespace Emby.M3uEditor.Plugin.Tests
                 CancellationToken cancellationToken)
             {
                 Method = request.Method.Method;
-                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                return Task.FromResult(CreateResponse(_content));
+            }
+
+            private static HttpResponseMessage CreateResponse(HttpContent content)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
-                    Content = _content
-                });
+                    Content = content
+                };
             }
         }
 
@@ -1542,12 +1544,17 @@ namespace Emby.M3uEditor.Plugin.Tests
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
+                return Task.FromResult(CreateResponse(_length));
+            }
+
+            private static HttpResponseMessage CreateResponse(long length)
+            {
                 var content = new ByteArrayContent(new byte[0]);
-                content.Headers.ContentLength = _length;
-                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                content.Headers.ContentLength = length;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
                     Content = content
-                });
+                };
             }
         }
     }

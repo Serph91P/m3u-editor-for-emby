@@ -233,7 +233,8 @@ namespace Emby.M3uEditor.Plugin.Service
             var candidate = normalizedRoot + Path.DirectorySeparatorChar + relativePath;
             if (!TryNormalize(candidate, out normalizedCandidate) ||
                 string.Equals(normalizedRoot, normalizedCandidate, PathComparison) ||
-                !IsSameOrChild(normalizedRoot, normalizedCandidate))
+                !IsSameOrChild(normalizedRoot, normalizedCandidate) ||
+                HasReparsePoint(normalizedCandidate))
             {
                 return false;
             }
@@ -336,9 +337,17 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
                 catch (FileNotFoundException)
                 {
+                    if (current.Length == 0)
+                    {
+                        return false;
+                    }
                 }
                 catch (DirectoryNotFoundException)
                 {
+                    if (current.Length == 0)
+                    {
+                        return false;
+                    }
                 }
                 catch (UnauthorizedAccessException)
                 {
