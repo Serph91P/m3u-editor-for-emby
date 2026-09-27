@@ -68,11 +68,16 @@ namespace Emby.M3uEditor.Plugin.Service
         public M3uEditorTunerHost(IServerApplicationHost applicationHost)
             : base(applicationHost)
         {
-            _instance = this;
+            SetInstance(this);
             _applicationHost = applicationHost;
         }
 
         public static M3uEditorTunerHost Instance => _instance;
+
+        private static void SetInstance(M3uEditorTunerHost instance)
+        {
+            _instance = instance;
+        }
 
         public IServerApplicationHost ApplicationHost => _applicationHost;
 
