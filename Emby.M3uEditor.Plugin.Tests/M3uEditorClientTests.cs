@@ -1299,10 +1299,15 @@ namespace Emby.M3uEditor.Plugin.Tests
                 CancellationToken cancellationToken)
             {
                 Method = request.Method.Method;
-                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                return Task.FromResult(CreateResponse(_content));
+            }
+
+            private static HttpResponseMessage CreateResponse(HttpContent content)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
-                    Content = _content
-                });
+                    Content = content
+                };
             }
         }
 
@@ -1542,12 +1547,17 @@ namespace Emby.M3uEditor.Plugin.Tests
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
+                return Task.FromResult(CreateResponse(_length));
+            }
+
+            private static HttpResponseMessage CreateResponse(long length)
+            {
                 var content = new ByteArrayContent(new byte[0]);
-                content.Headers.ContentLength = _length;
-                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                content.Headers.ContentLength = length;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
                     Content = content
-                });
+                };
             }
         }
     }
