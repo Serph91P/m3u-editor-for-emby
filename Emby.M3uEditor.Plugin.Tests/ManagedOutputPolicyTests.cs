@@ -61,21 +61,19 @@ namespace Emby.M3uEditor.Plugin.Tests
                 return;
             }
 
-            var outside = new TempDirectory();
-            try
+            using (var outside = new TempDirectory())
             {
-                var link = Path.Join(_temp.Path, "link");
-                File.CreateSymbolicLink(link, outside.Path);
+                try
+                {
+                    var link = Path.Join(_temp.Path, "link");
+                    File.CreateSymbolicLink(link, outside.Path);
 
-                Assert.False(ManagedOutputPolicy.IsApproved(Path.Join(link, "movies"), _temp.Path, out _));
-            }
-            catch (PlatformNotSupportedException)
-            {
-                return;
-            }
-            finally
-            {
-                outside.Dispose();
+                    Assert.False(ManagedOutputPolicy.IsApproved(Path.Join(link, "movies"), _temp.Path, out _));
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    return;
+                }
             }
         }
 
