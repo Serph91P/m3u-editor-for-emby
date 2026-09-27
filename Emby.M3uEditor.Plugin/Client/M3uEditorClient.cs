@@ -222,6 +222,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     }
                     catch (HttpRequestException) when (attempt == 0)
                     {
+                        continue;
                     }
                     catch (HttpRequestException)
                     {
@@ -314,6 +315,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     }
                     catch (HttpRequestException) when (attempt == 0)
                     {
+                        continue;
                     }
                     catch (HttpRequestException)
                     {

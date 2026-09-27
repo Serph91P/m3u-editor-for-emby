@@ -234,7 +234,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 programs = await liveTvService.FetchEpgForChannelCachedAsync(streamId, cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException))
             {
                 Logger.Warn("GetProgramsInternal: failed to fetch EPG for stream {0}: {1}", streamId, ex.Message);
                 programs = new List<EpgProgram>();
@@ -279,7 +279,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     result.Add(BuildProgramInfo(p, streamId, tunerChannelId, title, description));
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
                     Logger.Warn("GetProgramsInternal: skipping program on channel {0} " +
                         "(start={1}, stop={2}, title='{3}'): {4}",
@@ -438,7 +438,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     Logger.Debug("Fetched {0} live categories for guide chips", cats.Count);
                     return cats.ToDictionary(c => c.CategoryId, c => c.CategoryName);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
                     Logger.Warn("Failed to fetch live categories for guide chips: {0}", ex.Message);
                     return new Dictionary<int, string>();
@@ -695,7 +695,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         updateItem.Invoke(libraryManager, new object[] { item, null, 4 });
                         result.ClearedChannels++;
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
                         Logger?.Warn("Channel artwork cleanup skipped one item: {0}", ex.Message);
                     }
@@ -708,7 +708,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     result.ClearedChannels,
                     result.MatchedChannels);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException))
             {
                 result.Message = ex.Message;
                 Logger?.Warn("Channel artwork cleanup failed: {0}", ex.Message);

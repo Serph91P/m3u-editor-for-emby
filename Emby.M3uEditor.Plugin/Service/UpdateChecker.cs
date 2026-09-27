@@ -116,7 +116,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException))
             {
                 result = new UpdateCheckResult
                 {

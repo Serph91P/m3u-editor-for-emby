@@ -135,7 +135,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     await Task.WhenAll(channelsTask, categoriesTask).ConfigureAwait(false);
                     categoryMap = categoriesTask.Result.ToDictionary(c => c.CategoryId, c => c.CategoryName);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
                     _logger.Warn("Failed to fetch live categories for M3U group-title; categories will be omitted: {0}", ex.Message);
                     await channelsTask.ConfigureAwait(false);
@@ -826,7 +826,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     _logger.Info("XMLTV EPG fetched: {0} channels with program data", _xmltvCache.Count);
                     return true;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
                     _xmltvFailed = true;
                     _xmltvFailedTime = DateTime.UtcNow;

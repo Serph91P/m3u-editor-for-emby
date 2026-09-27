@@ -1803,12 +1803,10 @@ namespace Emby.M3uEditor.Plugin.Service
         private static void DeleteEmptyDirectoryTree(string root)
         {
             foreach (var directory in Directory.GetDirectories(root, "*", SearchOption.AllDirectories)
+                .Where(directory => !Directory.EnumerateFileSystemEntries(directory).Any())
                 .OrderByDescending(path => path.Length))
             {
-                if (!Directory.EnumerateFileSystemEntries(directory).Any())
-                {
-                    Directory.Delete(directory);
-                }
+                Directory.Delete(directory);
             }
 
             if (Directory.EnumerateFileSystemEntries(root).Any())
@@ -1832,9 +1830,11 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (IOException)
             {
+                return;
             }
             catch (UnauthorizedAccessException)
             {
+                return;
             }
         }
 

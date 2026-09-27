@@ -337,9 +337,17 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
                 catch (FileNotFoundException)
                 {
+                    if (current.Length == 0)
+                    {
+                        return false;
+                    }
                 }
                 catch (DirectoryNotFoundException)
                 {
+                    if (current.Length == 0)
+                    {
+                        return false;
+                    }
                 }
                 catch (UnauthorizedAccessException)
                 {
