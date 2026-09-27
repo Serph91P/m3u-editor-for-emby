@@ -28,7 +28,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var result = Parse(xml);
 
-            Assert.True(result.ContainsKey("ch1"));
+            Assert.Contains("ch1", result.Keys);
             var prog = Assert.Single(result["ch1"]);
             Assert.Equal("https://example.com/poster.jpg", prog.ImageUrl);
         }
@@ -110,7 +110,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var result = Parse(xml);
 
-            Assert.True(result.ContainsKey("ch1"));
+            Assert.Contains("ch1", result.Keys);
             var prog = Assert.Single(result["ch1"]);
             Assert.Null(prog.ImageUrl);
         }
@@ -128,7 +128,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var result = Parse(xml);
 
-            Assert.True(result.ContainsKey("ch1"));
+            Assert.Contains("ch1", result.Keys);
             var prog = Assert.Single(result["ch1"]);
             Assert.Null(prog.ImageUrl);
         }
@@ -147,7 +147,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var result = Parse(xml);
 
-            Assert.True(result.ContainsKey("ch2"));
+            Assert.Contains("ch2", result.Keys);
             var prog = Assert.Single(result["ch2"]);
             Assert.Equal("Documentary Night", prog.Title);
             Assert.Equal("A fascinating documentary.", prog.Description);
