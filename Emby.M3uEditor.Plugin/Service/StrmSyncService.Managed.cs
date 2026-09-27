@@ -772,6 +772,11 @@ namespace Emby.M3uEditor.Plugin.Service
                 Mappings = new List<M3uEditorMapping> { mapping }
             });
 
+            if (mapping == null || mapping.TargetLibrary == null)
+            {
+                throw new InvalidOperationException("Managed catalog mapping is invalid.");
+            }
+
             var root = Path.GetFullPath(mapping.TargetLibrary.OutputPath)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var rootLock = ManagedRootLocks.GetOrAdd(root, _ => new SemaphoreSlim(1, 1));

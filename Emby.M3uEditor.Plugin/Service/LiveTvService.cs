@@ -554,12 +554,10 @@ namespace Emby.M3uEditor.Plugin.Service
             CancellationToken cancellationToken)
         {
             var allPrograms = new List<EpgProgram>();
-            var semaphore = new SemaphoreSlim(5);
-
             var now = DateTimeOffset.UtcNow;
             var endTime = now.AddDays(config.EpgDaysToFetch);
 
-            try
+            using (var semaphore = new SemaphoreSlim(5))
             {
                 var tasks = channels.Select(async channel =>
                 {
@@ -643,10 +641,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     allPrograms.AddRange(result);
                 }
-            }
-            finally
-            {
-                semaphore.Dispose();
             }
 
             _logger.Info("Fetched {0} EPG programs for {1} channels", allPrograms.Count, channels.Count);
