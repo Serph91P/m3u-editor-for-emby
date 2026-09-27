@@ -1361,18 +1361,18 @@ namespace Emby.M3uEditor.Plugin.Tests
             var template = mapping.Items[0];
             mapping.Items = Enumerable.Range(0, itemCount).Select(index => new M3uEditorCatalogItem
             {
-                CanonicalId = "movie:tmdb:" + prefix + index.ToString(),
+                CanonicalId = "movie:tmdb:" + prefix + index,
                 MediaType = template.MediaType,
-                DisplayTitle = prefix + index.ToString(),
-                OriginalTitle = prefix + index.ToString(),
+                DisplayTitle = prefix + index,
+                OriginalTitle = prefix + index,
                 Year = template.Year,
-                RelativeFolder = prefix + index.ToString(),
-                BaseFilename = prefix + index.ToString(),
+                RelativeFolder = prefix + index,
+                BaseFilename = prefix + index,
                 Ids = new M3uEditorProviderIds { Tmdb = index + 1 },
                 Nfo = new M3uEditorNfo
                 {
-                    Title = prefix + index.ToString(),
-                    OriginalTitle = prefix + index.ToString(),
+                    Title = prefix + index,
+                    OriginalTitle = prefix + index,
                     Year = template.Year,
                     Plot = plot,
                     Genres = EmptyJsonArray(),
@@ -1386,7 +1386,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                         Preferred = new M3uEditorSource
                         {
                             SourceId = index + 1,
-                            PlaybackUrl = "https://editor.example/" + prefix + "/" + index.ToString()
+                            PlaybackUrl = "https://editor.example/" + prefix + "/" + index
                         },
                         Failover = new List<M3uEditorSource>(),
                         TechnicalMetadata = EmptyJsonArray()
