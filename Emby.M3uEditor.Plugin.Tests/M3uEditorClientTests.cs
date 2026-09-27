@@ -1105,12 +1105,9 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             Assert.True(Path.IsPathRooted(nativeAbsolutePath));
             Assert.True(accepts(nativeAbsolutePath));
-            foreach (var candidate in candidates)
+            foreach (var candidate in candidates.Where(accepts))
             {
-                if (accepts(candidate))
-                {
-                    Assert.True(Path.IsPathRooted(candidate), "Accepted path was not rooted on this runtime: " + candidate);
-                }
+                Assert.True(Path.IsPathRooted(candidate), "Accepted path was not rooted on this runtime: " + candidate);
             }
 
             if (Path.DirectorySeparatorChar == '/')

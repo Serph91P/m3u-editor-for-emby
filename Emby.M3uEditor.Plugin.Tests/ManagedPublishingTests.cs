@@ -1223,28 +1223,30 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task PublishManagedMappingAsync_OverlappingRunOnSameRoot_IsExcluded()
         {
-            var entered = new ManualResetEventSlim(false);
-            var release = new ManualResetEventSlim(false);
-            var firstService = MakeService();
-            firstService.ManagedPhaseHook = phase =>
+            using (var entered = new ManualResetEventSlim(false))
+            using (var release = new ManualResetEventSlim(false))
             {
-                if (phase == "after-stage")
+                var firstService = MakeService();
+                firstService.ManagedPhaseHook = phase =>
                 {
-                    entered.Set();
-                    release.Wait();
-                }
-            };
+                    if (phase == "after-stage")
+                    {
+                        entered.Set();
+                        release.Wait();
+                    }
+                };
 
-            var firstTask = Task.Run(() => firstService.PublishManagedMappingAsync(MovieMapping(1), None));
-            Assert.True(entered.Wait(5000));
+                var firstTask = Task.Run(() => firstService.PublishManagedMappingAsync(MovieMapping(1), None));
+                Assert.True(entered.Wait(5000));
 
-            var overlapping = await MakeService().PublishManagedMappingAsync(MovieMapping(1), None);
-            release.Set();
-            var first = await firstTask;
+                var overlapping = await MakeService().PublishManagedMappingAsync(MovieMapping(1), None);
+                release.Set();
+                var first = await firstTask;
 
-            Assert.False(overlapping.Success);
-            Assert.Contains("already running", overlapping.Error);
-            Assert.True(first.Success, first.Error);
+                Assert.False(overlapping.Success);
+                Assert.Contains("already running", overlapping.Error);
+                Assert.True(first.Success, first.Error);
+            }
         }
 
         [Fact]

@@ -299,24 +299,18 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var mapping = catalog.Mappings[index];
-                    ManagedPublishResult published;
                     string approvalError;
-                    if (!ManagedOutputPolicy.IsApproved(
+                    var published = !ManagedOutputPolicy.IsApproved(
                         mapping.TargetLibrary.OutputPath,
                         approvedOutputRoots,
-                        out approvalError))
-                    {
-                        published = Failed(mapping.Revision, approvalError);
-                    }
-                    else
-                    {
-                        published = await PublishManagedMappingAsync(
+                        out approvalError)
+                        ? Failed(mapping.Revision, approvalError)
+                        : await PublishManagedMappingAsync(
                             mapping,
                             cancellationToken,
                             approvedOutputRoots,
                             config,
                             saveConfig).ConfigureAwait(false);
-                    }
                     var activeGenerationChanged = published.Success && !published.Duplicate;
 
                     string currentRoot;
@@ -689,6 +683,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (HttpRequestException)
             {
+                return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -696,9 +691,11 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (TaskCanceledException)
             {
+                return;
             }
             catch (InvalidOperationException)
             {
+                return;
             }
         }
 
@@ -1473,9 +1470,9 @@ namespace Emby.M3uEditor.Plugin.Service
         private static long GetGeneratedOutputBytes(IEnumerable<ManagedPlannedFile> plan)
         {
             long total = 0;
-            foreach (var content in plan.Select(file => file.Content))
+            foreach (var file in plan)
             {
-                var fileBytes = Encoding.UTF8.GetByteCount(content);
+                var fileBytes = Encoding.UTF8.GetByteCount(file.Content);
                 if (fileBytes > MaximumGeneratedFileBytes)
                 {
                     throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
@@ -1687,9 +1684,9 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             var expectedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var path in expectedFiles)
+            foreach (var expectedDirectory in expectedFiles.Select(Path.GetDirectoryName))
             {
-                var directory = Path.GetDirectoryName(path);
+                var directory = expectedDirectory;
                 while (!string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
                 {
                     expectedDirectories.Add(directory);
