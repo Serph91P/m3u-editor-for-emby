@@ -1773,9 +1773,9 @@ namespace Emby.M3uEditor.Plugin.Service
                 Directory.Move(previousBackupRoot, previousFilesRoot);
             }
 
-            var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
-            var activeManifestPath = Path.Combine(metadataRoot, "active.json");
-            var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
+            var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
+            var activeManifestPath = CombineUnderRoot(metadataRoot, "active.json");
+            var previousManifestPath = CombineUnderRoot(metadataRoot, "previous.json");
             if (active == null)
             {
                 File.Delete(activeManifestPath);
