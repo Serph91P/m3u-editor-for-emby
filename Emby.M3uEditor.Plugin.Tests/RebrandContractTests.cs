@@ -24,9 +24,9 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var releaseConfig = ReadText(".releaserc.json");
             Assert.Contains("artifacts/Emby.M3uEditor.Plugin.dll", releaseConfig);
-            Assert.Contains("m3u-editor-for-emby-${nextRelease.version}.zip", releaseConfig);
-            Assert.Contains("m3u-editor-for-emby-${nextRelease.version}.sha256", releaseConfig);
-            Assert.Contains("m3u-editor-for-emby-${nextRelease.version}.md5", releaseConfig);
+            Assert.Contains("artifacts/m3u-editor-for-emby-*.zip", releaseConfig);
+            Assert.Contains("artifacts/m3u-editor-for-emby-*.sha256", releaseConfig);
+            Assert.Contains("artifacts/m3u-editor-for-emby-*.md5", releaseConfig);
 
             var package = ReadText("package.json");
             Assert.Contains("\"name\": \"m3u-editor-for-emby-release\"", package);
