@@ -1094,7 +1094,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 BindingFlags.NonPublic | BindingFlags.Static);
             Assert.NotNull(method);
             Func<string, bool> accepts = path => (bool)method.Invoke(null, new object[] { path });
-            var nativeAbsolutePath = Path.Combine(Path.GetTempPath(), "managed-movies");
+            var nativeAbsolutePath = Path.Join(Path.GetTempPath(), "managed-movies");
             var candidates = new[]
             {
                 nativeAbsolutePath,

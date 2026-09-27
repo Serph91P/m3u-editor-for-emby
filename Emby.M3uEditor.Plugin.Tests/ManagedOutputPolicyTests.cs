@@ -13,7 +13,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void IsApproved_ChildOfApprovedRoot_Allows()
         {
-            var target = Path.Combine(_temp.Path, "movies");
+            var target = Path.Join(_temp.Path, "movies");
 
             Assert.True(ManagedOutputPolicy.IsApproved(target, _temp.Path, out var error), error);
         }
@@ -35,7 +35,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void IsApproved_OverlappingApprovals_Rejects()
         {
-            var nested = Path.Combine(_temp.Path, "nested");
+            var nested = Path.Join(_temp.Path, "nested");
 
             Assert.False(ManagedOutputPolicy.IsApproved(
                 nested,
@@ -64,10 +64,10 @@ namespace Emby.M3uEditor.Plugin.Tests
             var outside = new TempDirectory();
             try
             {
-                var link = Path.Combine(_temp.Path, "link");
+                var link = Path.Join(_temp.Path, "link");
                 File.CreateSymbolicLink(link, outside.Path);
 
-                Assert.False(ManagedOutputPolicy.IsApproved(Path.Combine(link, "movies"), _temp.Path, out _));
+                Assert.False(ManagedOutputPolicy.IsApproved(Path.Join(link, "movies"), _temp.Path, out _));
             }
             catch (PlatformNotSupportedException)
             {

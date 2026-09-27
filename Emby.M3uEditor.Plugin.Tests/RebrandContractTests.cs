@@ -17,9 +17,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void ProjectAndReleasePaths_UseNewIdentity()
         {
-            Assert.True(File.Exists(Path.Combine(RepositoryRoot,
+            Assert.True(File.Exists(Path.Join(RepositoryRoot,
                 "Emby.M3uEditor.Plugin", "Emby.M3uEditor.Plugin.csproj")));
-            Assert.True(File.Exists(Path.Combine(RepositoryRoot,
+            Assert.True(File.Exists(Path.Join(RepositoryRoot,
                 "Emby.M3uEditor.Plugin.Tests", "Emby.M3uEditor.Plugin.Tests.csproj")));
 
             var releaseConfig = ReadText(".releaserc.json");
@@ -224,7 +224,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         private static string ReadText(string relativePath)
         {
-            return File.ReadAllText(Path.Combine(RepositoryRoot, relativePath));
+            return File.ReadAllText(Path.Join(RepositoryRoot, relativePath));
         }
 
         private static IEnumerable<string> GetTrackedFiles()
@@ -249,8 +249,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
             while (directory != null)
             {
-                if (File.Exists(Path.Combine(directory.FullName, "package.json"))
-                    && Directory.Exists(Path.Combine(directory.FullName, "scripts", "release")))
+                if (File.Exists(Path.Join(directory.FullName, "package.json"))
+                    && Directory.Exists(Path.Join(directory.FullName, "scripts", "release")))
                 {
                     return directory.FullName;
                 }
