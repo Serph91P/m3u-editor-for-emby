@@ -1469,19 +1469,20 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static long GetGeneratedOutputBytes(IEnumerable<ManagedPlannedFile> plan)
         {
-            long total = 0;
-            foreach (var file in plan)
-            {
-                var fileBytes = Encoding.UTF8.GetByteCount(file.Content);
-                if (fileBytes > MaximumGeneratedFileBytes)
-                {
-                    throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
-                }
+            return plan.Aggregate(
+                0L,
+                (total, file) => AddGeneratedBytes(total, GetGeneratedFileBytes(file)));
+        }
 
-                total = AddGeneratedBytes(total, fileBytes);
+        private static long GetGeneratedFileBytes(ManagedPlannedFile file)
+        {
+            var fileBytes = Encoding.UTF8.GetByteCount(file.Content);
+            if (fileBytes > MaximumGeneratedFileBytes)
+            {
+                throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
             }
 
-            return total;
+            return fileBytes;
         }
 
         private static long AddGeneratedBytes(long total, long fileBytes)
@@ -1684,21 +1685,28 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             var expectedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var expectedDirectory in expectedFiles.Select(Path.GetDirectoryName))
-            {
-                var directory = expectedDirectory;
-                while (!string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
-                {
-                    expectedDirectories.Add(directory);
-                    directory = Path.GetDirectoryName(directory);
-                }
-            }
+            expectedFiles
+                .Select(Path.GetDirectoryName)
+                .ToList()
+                .ForEach(directory => AddExpectedParentDirectories(expectedDirectories, directory, root));
 
             var actualDirectories = new HashSet<string>(
                 Directory.GetDirectories(root, "*", SearchOption.AllDirectories).Select(Path.GetFullPath),
                 StringComparer.OrdinalIgnoreCase);
             return expectedDirectories.SetEquals(actualDirectories) &&
                 actualDirectories.All(path => (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0);
+        }
+
+        private static void AddExpectedParentDirectories(
+            HashSet<string> expectedDirectories,
+            string directory,
+            string root)
+        {
+            while (!string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
+            {
+                expectedDirectories.Add(directory);
+                directory = Path.GetDirectoryName(directory);
+            }
         }
 
         private static bool IsManagedHash(string value)
