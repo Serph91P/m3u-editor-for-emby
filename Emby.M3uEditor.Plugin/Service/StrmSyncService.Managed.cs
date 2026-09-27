@@ -1473,9 +1473,9 @@ namespace Emby.M3uEditor.Plugin.Service
         private static long GetGeneratedOutputBytes(IEnumerable<ManagedPlannedFile> plan)
         {
             long total = 0;
-            foreach (var file in plan)
+            foreach (var content in plan.Select(file => file.Content))
             {
-                var fileBytes = Encoding.UTF8.GetByteCount(file.Content);
+                var fileBytes = Encoding.UTF8.GetByteCount(content);
                 if (fileBytes > MaximumGeneratedFileBytes)
                 {
                     throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
