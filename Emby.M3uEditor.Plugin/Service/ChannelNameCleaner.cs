@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace Emby.M3uEditor.Plugin.Service
@@ -48,18 +49,16 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (!string.IsNullOrWhiteSpace(userRemoveTerms))
             {
-                var lines = userRemoveTerms.Split(LineSeparators, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
+                foreach (var term in userRemoveTerms
+                    .Split(LineSeparators, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(line => line.Trim())
+                    .Where(term => !string.IsNullOrEmpty(term)))
                 {
-                    var term = line.Trim();
-                    if (!string.IsNullOrEmpty(term))
+                    // Case-insensitive replace for netstandard2.0
+                    int idx;
+                    while ((idx = result.IndexOf(term, StringComparison.OrdinalIgnoreCase)) >= 0)
                     {
-                        // Case-insensitive replace for netstandard2.0
-                        int idx;
-                        while ((idx = result.IndexOf(term, StringComparison.OrdinalIgnoreCase)) >= 0)
-                        {
-                            result = result.Remove(idx, term.Length);
-                        }
+                        result = result.Remove(idx, term.Length);
                     }
                 }
             }

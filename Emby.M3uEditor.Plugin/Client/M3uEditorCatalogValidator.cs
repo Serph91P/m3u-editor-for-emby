@@ -270,15 +270,24 @@ namespace Emby.M3uEditor.Plugin.Client
 
         private static void ValidateProviderIds(M3uEditorProviderIds ids)
         {
-            if (ids == null ||
-                (ids.Tmdb.HasValue && ids.Tmdb.Value < 1) ||
-                (ids.Tvdb.HasValue && ids.Tvdb.Value < 1) ||
-                (!string.IsNullOrEmpty(ids.Imdb) &&
-                 (ids.Imdb.Length > MaximumProviderIdCharacters ||
-                  ids.Imdb.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-' && ch != '_' && ch != '.'))))
+            if (HasInvalidProviderIds(ids))
             {
                 Fail("Managed catalog provider ID is invalid.");
             }
+        }
+
+        private static bool HasInvalidProviderIds(M3uEditorProviderIds ids)
+        {
+            if (ids == null ||
+                (ids.Tmdb.HasValue && ids.Tmdb.Value < 1) ||
+                (ids.Tvdb.HasValue && ids.Tvdb.Value < 1))
+            {
+                return true;
+            }
+
+            return !string.IsNullOrEmpty(ids.Imdb) &&
+                (ids.Imdb.Length > MaximumProviderIdCharacters ||
+                 ids.Imdb.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-' && ch != '_' && ch != '.'));
         }
 
         private static void ValidateNfo(M3uEditorNfo nfo)

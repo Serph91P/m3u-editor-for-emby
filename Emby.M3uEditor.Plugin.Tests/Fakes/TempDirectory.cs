@@ -13,7 +13,7 @@ namespace Emby.M3uEditor.Plugin.Tests.Fakes
 
         public TempDirectory()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName());
+            Path = System.IO.Path.Join(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName());
             Directory.CreateDirectory(Path);
         }
 

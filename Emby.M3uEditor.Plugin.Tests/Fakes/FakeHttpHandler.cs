@@ -51,11 +51,7 @@ namespace Emby.M3uEditor.Plugin.Tests.Fakes
                 if (url.Contains(urlSubstring) && queue.Count > 0)
                 {
                     var (body, status) = queue.Dequeue();
-                    var response = new HttpResponseMessage(status)
-                    {
-                        Content = new StringContent(body, Encoding.UTF8, "application/json")
-                    };
-                    return Task.FromResult(response);
+                    return Task.FromResult(CreateResponse(body, status));
                 }
             }
 
@@ -65,5 +61,13 @@ namespace Emby.M3uEditor.Plugin.Tests.Fakes
         }
 
         protected override void Dispose(bool disposing) { }
+
+        private static HttpResponseMessage CreateResponse(string body, HttpStatusCode status)
+        {
+            return new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+        }
     }
 }

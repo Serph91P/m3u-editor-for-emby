@@ -98,7 +98,7 @@ namespace Emby.M3uEditor.Plugin.Api
                         Message = "Managed action timed out or was cancelled."
                     };
                 }
-                catch (Exception)
+                catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
                     result = new ManagedActionResult
                     {

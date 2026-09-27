@@ -135,27 +135,37 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
-            string probePath;
+            string probeDirectory;
             if (!TryJoinUnderRoot(
                 root,
                 ".managed-write-probe-" + Guid.NewGuid().ToString("N"),
-                out probePath))
+                out probeDirectory))
             {
                 return false;
             }
 
             try
             {
-                using (new FileStream(
+                Directory.CreateDirectory(probeDirectory);
+                string probePath;
+                if (!TryJoinUnderRoot(probeDirectory, "probe", out probePath))
+                {
+                    return false;
+                }
+                using (var stream = new FileStream(
                     probePath,
                     FileMode.CreateNew,
                     FileAccess.Write,
                     FileShare.None,
                     1,
-                    FileOptions.DeleteOnClose))
+                    FileOptions.WriteThrough))
                 {
-                    return true;
+                    stream.WriteByte(0);
+                    stream.Flush();
                 }
+                File.Delete(probePath);
+                Directory.Delete(probeDirectory, false);
+                return true;
             }
             catch (ArgumentException)
             {
@@ -172,6 +182,30 @@ namespace Emby.M3uEditor.Plugin.Service
             catch (UnauthorizedAccessException)
             {
                 return false;
+            }
+            finally
+            {
+                DeleteProbeDirectoryIfEmpty(probeDirectory);
+            }
+        }
+
+        private static void DeleteProbeDirectoryIfEmpty(string probeDirectory)
+        {
+            try
+            {
+                if (Directory.Exists(probeDirectory) &&
+                    !Directory.EnumerateFileSystemEntries(probeDirectory).Any())
+                {
+                    Directory.Delete(probeDirectory, false);
+                }
+            }
+            catch (IOException)
+            {
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return;
             }
         }
 
@@ -199,7 +233,8 @@ namespace Emby.M3uEditor.Plugin.Service
             var candidate = normalizedRoot + Path.DirectorySeparatorChar + relativePath;
             if (!TryNormalize(candidate, out normalizedCandidate) ||
                 string.Equals(normalizedRoot, normalizedCandidate, PathComparison) ||
-                !IsSameOrChild(normalizedRoot, normalizedCandidate))
+                !IsSameOrChild(normalizedRoot, normalizedCandidate) ||
+                HasReparsePoint(normalizedCandidate))
             {
                 return false;
             }
@@ -216,6 +251,21 @@ namespace Emby.M3uEditor.Plugin.Service
                    TryNormalize(right, out normalizedRight) &&
                    (IsSameOrChild(normalizedLeft, normalizedRight) ||
                     IsSameOrChild(normalizedRight, normalizedLeft));
+        }
+
+        internal static bool IsDirectChild(string parentPath, string childPath)
+        {
+            string parent;
+            string child;
+            return TryNormalize(parentPath, out parent) && TryNormalize(childPath, out child) &&
+                string.Equals(Path.GetDirectoryName(child), parent, PathComparison) &&
+                !string.Equals(parent, child, PathComparison);
+        }
+
+        internal static bool HasReparsePointInPath(string path)
+        {
+            string normalized;
+            return !TryNormalize(path, out normalized) || HasReparsePoint(normalized);
         }
 
         private static List<string> ParseRoots(string value)
@@ -287,9 +337,17 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
                 catch (FileNotFoundException)
                 {
+                    if (current.Length == 0)
+                    {
+                        return false;
+                    }
                 }
                 catch (DirectoryNotFoundException)
                 {
+                    if (current.Length == 0)
+                    {
+                        return false;
+                    }
                 }
                 catch (UnauthorizedAccessException)
                 {
