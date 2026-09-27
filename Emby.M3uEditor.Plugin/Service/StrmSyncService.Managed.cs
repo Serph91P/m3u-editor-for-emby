@@ -1577,11 +1577,11 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static string CombineUnderRoot(string root, string relativePath)
         {
-            var combined = Path.GetFullPath(Path.Combine(
+            string combined;
+            if (!ManagedOutputPolicy.TryJoinUnderRoot(
                 root,
-                relativePath.Replace('/', Path.DirectorySeparatorChar)));
-            var prefix = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!combined.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                relativePath.Replace('/', Path.DirectorySeparatorChar),
+                out combined))
             {
                 throw new InvalidOperationException("Managed publication path is outside the output root.");
             }

@@ -99,6 +99,24 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void TryJoinUnderRoot_SymlinkedChild_Rejects()
+        {
+            if (Path.DirectorySeparatorChar != '/')
+            {
+                return;
+            }
+
+            using (var outside = new TempDirectory())
+            {
+                var link = Path.Join(_temp.Path, "link");
+                Directory.CreateSymbolicLink(link, outside.Path);
+
+                Assert.False(ManagedOutputPolicy.TryJoinUnderRoot(_temp.Path, "link/managed-child", out var result));
+                Assert.Null(result);
+            }
+        }
+
+        [Fact]
         public void IsLocallyWritableRoot_ProbesChildLifecycleWithoutLeavingArtifacts()
         {
             Assert.True(ManagedOutputPolicy.IsLocallyWritableRoot(_temp.Path));
