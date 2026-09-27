@@ -722,8 +722,8 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             var root = Path.GetFullPath(outputRoot)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
-            var manifest = ReadManifest(Path.Combine(metadataRoot, "active.json"));
+            var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
+            var manifest = ReadManifest(CombineUnderRoot(metadataRoot, "active.json"));
             if (manifest == null ||
                 !string.Equals(manifest.MappingUuid, mappingUuid, StringComparison.OrdinalIgnoreCase) ||
                 !ManifestFilesAreValid(root, manifest))
@@ -908,11 +908,11 @@ namespace Emby.M3uEditor.Plugin.Service
             string mappingUuid,
             CancellationToken cancellationToken)
         {
-            var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
-            var activeManifestPath = Path.Combine(metadataRoot, "active.json");
-            var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
-            var previousFilesRoot = Path.Combine(metadataRoot, "previous-files");
-            var currentFilesRoot = Path.Combine(metadataRoot, "rollback-current");
+            var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
+            var activeManifestPath = CombineUnderRoot(metadataRoot, "active.json");
+            var previousManifestPath = CombineUnderRoot(metadataRoot, "previous.json");
+            var previousFilesRoot = CombineUnderRoot(metadataRoot, "previous-files");
+            var currentFilesRoot = CombineUnderRoot(metadataRoot, "rollback-current");
             ManagedGenerationManifest active = null;
             ManagedGenerationManifest previous = null;
             var currentMoved = new List<string>();
@@ -1005,12 +1005,12 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (active != null)
             {
-                WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "active.json"), active);
+                WriteManifestAtomic(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/active.json"), active);
             }
 
             if (previous != null)
             {
-                WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "previous.json"), previous);
+                WriteManifestAtomic(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/previous.json"), previous);
             }
         }
 
@@ -1035,15 +1035,15 @@ namespace Emby.M3uEditor.Plugin.Service
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
+                var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
                 EnsureNoReparsePoint(root, metadataRoot);
-                var activeManifestPath = Path.Combine(metadataRoot, "active.json");
+                var activeManifestPath = CombineUnderRoot(metadataRoot, "active.json");
                 if (Directory.Exists(metadataRoot) && !File.Exists(activeManifestPath) &&
                     Directory.EnumerateFileSystemEntries(metadataRoot).Any())
                 {
                     throw new InvalidOperationException("Managed metadata path contains files not owned by this plugin.");
                 }
-                var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
+                var previousManifestPath = CombineUnderRoot(metadataRoot, "previous.json");
                 activeManifest = ReadManifest(activeManifestPath);
                 previousManifest = ReadManifest(previousManifestPath);
                 if (activeManifest != null &&
@@ -1079,13 +1079,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 ComputeDiff(plan, activeManifest, result);
                 EnsureWritableManagedRoot(root);
                 Directory.CreateDirectory(metadataRoot);
-                stagingRoot = Path.Combine(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
+                stagingRoot = CombineUnderRoot(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(stagingRoot);
                 WriteAndValidateStaging(stagingRoot, plan, cancellationToken);
                 InvokeManagedPhase("after-stage");
                 EnsureCurrentSetupApproval(mapping, root, approvedOutputRoots, setupConfig);
 
-                previousFilesRoot = Path.Combine(metadataRoot, "previous-files");
+                previousFilesRoot = CombineUnderRoot(metadataRoot, "previous-files");
                 if (Directory.Exists(previousFilesRoot))
                 {
                     if (previousManifest == null || !ManifestOwnsDirectory(previousFilesRoot, previousManifest))
@@ -1093,7 +1093,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         throw new InvalidOperationException("The previous managed generation is invalid.");
                     }
 
-                    previousBackupRoot = Path.Combine(metadataRoot, "previous-backup-" + Guid.NewGuid().ToString("N"));
+                    previousBackupRoot = CombineUnderRoot(metadataRoot, "previous-backup-" + Guid.NewGuid().ToString("N"));
                     Directory.Move(previousFilesRoot, previousBackupRoot);
                     mutationStarted = true;
                 }
@@ -1554,7 +1554,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 throw new InvalidOperationException("Managed output root cannot be a symbolic link.");
             }
 
-            var probe = Path.Combine(root, ".m3u-editor-write-" + Guid.NewGuid().ToString("N"));
+            var probe = CombineUnderRoot(root, ".m3u-editor-write-" + Guid.NewGuid().ToString("N"));
             File.WriteAllText(probe, string.Empty);
             File.Delete(probe);
         }
@@ -1566,7 +1566,7 @@ namespace Emby.M3uEditor.Plugin.Service
             var current = root;
             foreach (var segment in relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries))
             {
-                current = Path.Combine(current, segment);
+                current = CombineUnderRoot(current, segment);
                 if ((Directory.Exists(current) || File.Exists(current)) &&
                     (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 {
