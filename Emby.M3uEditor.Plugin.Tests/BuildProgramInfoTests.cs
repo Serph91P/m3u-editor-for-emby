@@ -333,6 +333,49 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.DoesNotContain("<icon src=\"https://example.com/poster.jpg\" type=", xml);
         }
 
+        [Theory]
+        [InlineData(0, 0)]
+        [InlineData(750, 750)]
+        [InlineData(1280, 720)]
+        public void XmltvReExport_InvalidPosterCandidateUsesOnlyCompleteValidatedImageCandidate(int posterWidth, int posterHeight)
+        {
+            var output = new StringBuilder();
+            LiveTvService.AppendXmltvArtwork(output, new EpgProgram
+            {
+                PosterUrl = "https://example.com/invalid-poster.jpg",
+                PosterWidth = posterWidth,
+                PosterHeight = posterHeight,
+                ImageUrl = "https://example.com/validated-image.jpg",
+                ImageWidth = 500,
+                ImageHeight = 750,
+            });
+
+            var xml = output.ToString();
+
+            Assert.Contains("<image type=\"poster\" orient=\"P\">https://example.com/validated-image.jpg</image>", xml);
+            Assert.Contains("<icon src=\"https://example.com/validated-image.jpg\" width=\"500\" height=\"750\" />", xml);
+            Assert.DoesNotContain("invalid-poster.jpg", xml);
+        }
+
+        [Theory]
+        [InlineData(0, 0)]
+        [InlineData(750, 750)]
+        [InlineData(1280, 720)]
+        public void XmltvReExport_InvalidPosterCandidateDoesNotBorrowImageGeometryWithoutCompleteFallback(int posterWidth, int posterHeight)
+        {
+            var output = new StringBuilder();
+            LiveTvService.AppendXmltvArtwork(output, new EpgProgram
+            {
+                PosterUrl = "https://example.com/invalid-poster.jpg",
+                PosterWidth = posterWidth,
+                PosterHeight = posterHeight,
+                ImageWidth = 0,
+                ImageHeight = 0,
+            });
+
+            Assert.DoesNotContain("invalid-poster.jpg", output.ToString());
+        }
+
         [Fact]
         public void IdContainsStreamIdAndTimestamp()
         {

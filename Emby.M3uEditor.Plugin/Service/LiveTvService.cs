@@ -551,10 +551,15 @@ namespace Emby.M3uEditor.Plugin.Service
 
         internal static void AppendXmltvArtwork(StringBuilder sb, EpgProgram program)
         {
-            var posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.PosterUrl)
-                ?? Util.UrlValidator.SanitizeHttpUrl(program.ImageUrl);
-            var posterWidth = program.PosterWidth > 0 ? program.PosterWidth : program.ImageWidth;
-            var posterHeight = program.PosterHeight > 0 ? program.PosterHeight : program.ImageHeight;
+            var posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.PosterUrl);
+            var posterWidth = program.PosterWidth;
+            var posterHeight = program.PosterHeight;
+            if (posterUrl == null || posterWidth <= 0 || posterHeight <= posterWidth)
+            {
+                posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.ImageUrl);
+                posterWidth = program.ImageWidth;
+                posterHeight = program.ImageHeight;
+            }
             if (posterUrl != null && posterWidth > 0 && posterHeight > posterWidth)
             {
                 sb.AppendFormat(CultureInfo.InvariantCulture,
