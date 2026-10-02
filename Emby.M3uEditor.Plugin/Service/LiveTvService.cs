@@ -551,6 +551,21 @@ namespace Emby.M3uEditor.Plugin.Service
 
         internal static void AppendXmltvArtwork(StringBuilder sb, EpgProgram program)
         {
+            // episode-num is a standard XMLTV extension point. Preserve only the
+            // explicit producer contract; generic Id is a transport occurrence.
+            if (!string.IsNullOrWhiteSpace(program.ContentId))
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <episode-num system=\"m3u-editor:content-id\">{0}</episode-num>\n",
+                    EscapeXml(program.ContentId.Trim()));
+            }
+            if (!string.IsNullOrWhiteSpace(program.SeriesId))
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <episode-num system=\"m3u-editor:series-id\">{0}</episode-num>\n",
+                    EscapeXml(program.SeriesId.Trim()));
+            }
+
             var posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.PosterUrl);
             var posterWidth = program.PosterWidth;
             var posterHeight = program.PosterHeight;

@@ -159,6 +159,25 @@ namespace Emby.M3uEditor.Plugin.Client
                     if (!reader.IsEmptyElement)
                         program.SubTitle = ReadText(reader);
                 }
+                else if (string.Equals(name, "episode-num", StringComparison.OrdinalIgnoreCase))
+                {
+                    // XMLTV's episode-num element is extensible through its standard
+                    // system attribute. Only accept m3u-editor's explicit producer
+                    // contract; onscreen/xmltv_ns values are display/ordering metadata,
+                    // not proof that two programmes are the same content.
+                    var system = (reader.GetAttribute("system") ?? string.Empty).Trim();
+                    var value = reader.IsEmptyElement ? null : ReadText(reader).Trim();
+                    if (string.Equals(system, "m3u-editor:content-id", StringComparison.Ordinal)
+                        && !string.IsNullOrEmpty(value))
+                    {
+                        program.ContentId = value;
+                    }
+                    else if (string.Equals(system, "m3u-editor:series-id", StringComparison.Ordinal)
+                        && !string.IsNullOrEmpty(value))
+                    {
+                        program.SeriesId = value;
+                    }
+                }
                 else if (string.Equals(name, "icon", StringComparison.OrdinalIgnoreCase))
                 {
                     var imageType = (reader.GetAttribute("type") ?? string.Empty).Trim();

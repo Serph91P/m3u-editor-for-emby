@@ -17,6 +17,44 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ParseProgramme_M3uEditorIdentityEpisodeNumbers_TransportContentAndSeriesIds()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""first"">
+    <title>Synthetic series</title>
+    <episode-num system=""m3u-editor:content-id"">episode-12</episode-num>
+    <episode-num system=""m3u-editor:series-id"">series-4</episode-num>
+  </programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["first"]);
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "first", program.Title, program.Description);
+
+            Assert.Equal("episode-12", program.ContentId);
+            Assert.Equal("series-4", program.SeriesId);
+            Assert.Equal("xtream:program:episode-12", info.ShowId);
+            Assert.Equal("xtream:series:series-4", info.SeriesId);
+        }
+
+        [Fact]
+        public void ParseProgramme_UnknownEpisodeNumberSystem_DoesNotCreateContentIdentity()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""first"">
+    <title>Synthetic series</title>
+    <episode-num system=""onscreen"">S01E12</episode-num>
+  </programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["first"]);
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "first", program.Title, program.Description);
+
+            Assert.True(string.IsNullOrEmpty(program.ContentId));
+            Assert.Equal("xtream:occurrence:1:1735732800", info.ShowId);
+            Assert.Null(info.SeriesId);
+        }
+
+        [Fact]
         public void ParseProgramme_WithIcon_SetsImageUrl()
         {
             const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>

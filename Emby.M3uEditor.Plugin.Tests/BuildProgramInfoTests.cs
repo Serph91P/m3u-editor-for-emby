@@ -28,7 +28,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             bool isNew = false,
             bool isPreviouslyShown = false,
             bool isPlainText = true,
-            string sourceId = "",
+            string sourceContentId = "",
             string sourceSeriesId = "")
         {
             return new EpgProgram
@@ -49,7 +49,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 IsNew = isNew,
                 IsPreviouslyShown = isPreviouslyShown,
                 IsPlainText = isPlainText,
-                Id = sourceId,
+                ContentId = sourceContentId,
                 SeriesId = sourceSeriesId,
             };
         }
@@ -144,13 +144,13 @@ namespace Emby.M3uEditor.Plugin.Tests
             var first = Build(MakeProgram(
                 title: "Synthetic Film",
                 categories: new List<string> { "Movie" },
-                sourceId: "film-42"),
+                sourceContentId: "film-42"),
                 streamId: 1,
                 channelId: "1");
             var repeat = Build(MakeProgram(
                 title: "Synthetic Film",
                 categories: new List<string> { "Movie" },
-                sourceId: "film-42"),
+                sourceContentId: "film-42"),
                 streamId: 2,
                 channelId: "2");
 
@@ -165,13 +165,13 @@ namespace Emby.M3uEditor.Plugin.Tests
             var first = Build(MakeProgram(
                 title: "Synthetic Series",
                 subTitle: "Episode One",
-                sourceId: "episode-1",
+                sourceContentId: "episode-1",
                 sourceSeriesId: "series-7"),
                 streamId: 1);
             var repeat = Build(MakeProgram(
                 title: "Synthetic Series",
                 subTitle: "Episode One",
-                sourceId: "episode-1",
+                sourceContentId: "episode-1",
                 sourceSeriesId: "series-7"),
                 streamId: 2);
 
@@ -186,17 +186,17 @@ namespace Emby.M3uEditor.Plugin.Tests
             var firstEpisode = Build(MakeProgram(
                 title: "Same Title",
                 subTitle: "Episode One",
-                sourceId: "episode-1",
+                sourceContentId: "episode-1",
                 sourceSeriesId: "series-1"));
             var secondEpisode = Build(MakeProgram(
                 title: "Same Title",
                 subTitle: "Episode Two",
-                sourceId: "episode-2",
+                sourceContentId: "episode-2",
                 sourceSeriesId: "series-1"));
             var differentSeries = Build(MakeProgram(
                 title: "Same Title",
                 subTitle: "Episode One",
-                sourceId: "other-episode-1",
+                sourceContentId: "other-episode-1",
                 sourceSeriesId: "series-2"));
 
             Assert.NotEqual(firstEpisode.ShowId, secondEpisode.ShowId);
@@ -205,22 +205,24 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void MissingSourceIdentity_AbstainsInsteadOfGroupingByTitle()
+        public void MissingSourceIdentity_UsesUniqueOccurrenceShowIdInsteadOfGroupingByTitle()
         {
             var first = Build(MakeProgram(title: "Ambiguous Title", subTitle: "Part One"), streamId: 1);
             var second = Build(MakeProgram(title: "Ambiguous Title", subTitle: "Part One"), streamId: 2);
 
-            Assert.Null(first.ShowId);
-            Assert.Null(second.ShowId);
+            Assert.Equal("xtream:occurrence:1:1735689600", first.ShowId);
+            Assert.Equal("xtream:occurrence:2:1735689600", second.ShowId);
+            Assert.NotEqual(first.ShowId, second.ShowId);
             Assert.Null(first.SeriesId);
             Assert.Null(second.SeriesId);
         }
 
         [Fact]
-        public void CoreIdentityJson_MapsStableIdsWithoutChangingUtcScheduleTimes()
+        public void CoreIdentityJson_MapsExplicitContentAndSeriesIdsWithoutChangingUtcScheduleTimes()
         {
             var program = JsonSerializer.Deserialize<EpgProgram>(@"{
-                ""id"": ""episode-17"",
+                ""id"": ""per-occurrence-row-17"",
+                ""content_id"": ""episode-17"",
                 ""series_id"": ""series-3"",
                 ""start_timestamp"": 1735689600,
                 ""stop_timestamp"": 1735693200
@@ -232,6 +234,21 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("xtream:series:series-3", info.SeriesId);
             Assert.Equal(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc), info.StartDate);
             Assert.Equal(new DateTime(2025, 1, 1, 1, 0, 0, DateTimeKind.Utc), info.EndDate);
+        }
+
+        [Fact]
+        public void GenericSourceId_DoesNotBecomeContentShowId()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(@"{
+                ""id"": ""per-occurrence-row-17"",
+                ""start_timestamp"": 1735689600,
+                ""stop_timestamp"": 1735693200
+            }");
+
+            var info = Build(program, streamId: 9);
+
+            Assert.Equal("xtream:occurrence:9:1735689600", info.ShowId);
+            Assert.Null(info.SeriesId);
         }
 
         // ── Metadata fields ──────────────────────────────────────────────────
@@ -396,6 +413,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             var output = new StringBuilder();
             LiveTvService.AppendXmltvArtwork(output, new EpgProgram
             {
+                ContentId = "episode-12",
+                SeriesId = "series-4",
                 PosterUrl = "https://example.com/poster.jpg",
                 PosterWidth = 500,
                 PosterHeight = 750,
@@ -405,6 +424,8 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var xml = output.ToString();
 
+            Assert.Contains("<episode-num system=\"m3u-editor:content-id\">episode-12</episode-num>", xml);
+            Assert.Contains("<episode-num system=\"m3u-editor:series-id\">series-4</episode-num>", xml);
             Assert.Contains("<image type=\"poster\" orient=\"P\">https://example.com/poster.jpg</image>", xml);
             Assert.Contains("<icon src=\"https://example.com/poster.jpg\" width=\"500\" height=\"750\" />", xml);
             Assert.Contains("<image type=\"backdrop\" orient=\"L\">https://example.com/backdrop.jpg</image>", xml);

@@ -8,9 +8,13 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonPropertyName("id")]
         public string Id { get; set; } = string.Empty;
 
-        // Stable programme identity supplied by m3u-editor. Unlike the Emby
-        // ProgramInfo.Id built by the tuner, this value can survive a repeat on
-        // another channel or at another air time.
+        // A producer-issued identity for exactly one film or episode. Generic
+        // transport/database ids remain in Id and must not be used for grouping.
+        [JsonPropertyName("content_id")]
+        public string ContentId { get; set; } = string.Empty;
+
+        // A producer-issued identity for exactly one series. It is optional for
+        // films, one-off programmes and source records without a known series.
         [JsonPropertyName("series_id")]
         public string SeriesId { get; set; } = string.Empty;
 

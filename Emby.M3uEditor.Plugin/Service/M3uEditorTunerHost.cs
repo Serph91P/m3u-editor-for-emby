@@ -359,7 +359,8 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
-            var showId = ToStableIdentity("program", p.Id);
+            var showId = ToStableIdentity("program", p.ContentId)
+                ?? ToOccurrenceIdentity(streamId, p.StartTimestamp);
             var seriesId = ToStableIdentity("series", p.SeriesId);
 
             return new ProgramInfo
@@ -389,9 +390,9 @@ namespace Emby.M3uEditor.Plugin.Service
                     c.IndexOf("children", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                     c.IndexOf("kids", System.StringComparison.OrdinalIgnoreCase) >= 0),
                 IsSeries = isSeries,
-                // Emby uses ShowId for its exact other-airings lookup. Do not
-                // derive either identity from a display title: unrelated films
-                // and series can legitimately share one.
+                // Emby uses ShowId for its exact other-airings lookup. Generic
+                // source ids and display titles cannot prove content equality, so
+                // unknown records get an occurrence-only identity rather than null.
                 ShowId = showId,
                 SeriesId = isSeries ? seriesId : null,
             };
@@ -405,6 +406,12 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             return string.Concat("xtream:", type, ":", sourceId.Trim());
+        }
+
+        private static string ToOccurrenceIdentity(int streamId, long startTimestamp)
+        {
+            return string.Format(CultureInfo.InvariantCulture,
+                "xtream:occurrence:{0}:{1}", streamId, startTimestamp);
         }
 
         private static bool IsValidPortrait(string url, int width, int height)
