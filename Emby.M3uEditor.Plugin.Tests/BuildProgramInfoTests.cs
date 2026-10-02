@@ -27,7 +27,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             bool isLive = false,
             bool isNew = false,
             bool isPreviouslyShown = false,
-            bool isPlainText = true)
+            bool isPlainText = true,
+            string sourceId = "",
+            string sourceSeriesId = "")
         {
             return new EpgProgram
             {
@@ -47,6 +49,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                 IsNew = isNew,
                 IsPreviouslyShown = isPreviouslyShown,
                 IsPlainText = isPlainText,
+                Id = sourceId,
+                SeriesId = sourceSeriesId,
             };
         }
 
@@ -132,27 +136,102 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(info.IsKids);
         }
 
-        // ── SeriesId ─────────────────────────────────────────────────────────
+        // ── Programme identity ───────────────────────────────────────────────
 
         [Fact]
-        public void Series_SeriesIdIsLowercaseTitle()
+        public void RepeatedFilmAcrossChannels_UsesTheSameStableShowId()
         {
-            var info = Build(MakeProgram(title: "Breaking Bad", categories: null));
-            Assert.Equal("breaking bad", info.SeriesId);
+            var first = Build(MakeProgram(
+                title: "Synthetic Film",
+                categories: new List<string> { "Movie" },
+                sourceId: "film-42"),
+                streamId: 1,
+                channelId: "1");
+            var repeat = Build(MakeProgram(
+                title: "Synthetic Film",
+                categories: new List<string> { "Movie" },
+                sourceId: "film-42"),
+                streamId: 2,
+                channelId: "2");
+
+            Assert.NotEqual(first.Id, repeat.Id);
+            Assert.Equal("xtream:program:film-42", first.ShowId);
+            Assert.Equal(first.ShowId, repeat.ShowId);
         }
 
         [Fact]
-        public void Movie_SeriesIdIsNull()
+        public void SameSeriesEpisodeAcrossChannels_UsesStableShowAndSeriesIds()
         {
-            var info = Build(MakeProgram(title: "Inception", categories: new List<string> { "Movie" }));
-            Assert.Null(info.SeriesId);
+            var first = Build(MakeProgram(
+                title: "Synthetic Series",
+                subTitle: "Episode One",
+                sourceId: "episode-1",
+                sourceSeriesId: "series-7"),
+                streamId: 1);
+            var repeat = Build(MakeProgram(
+                title: "Synthetic Series",
+                subTitle: "Episode One",
+                sourceId: "episode-1",
+                sourceSeriesId: "series-7"),
+                streamId: 2);
+
+            Assert.Equal(first.ShowId, repeat.ShowId);
+            Assert.Equal("xtream:series:series-7", first.SeriesId);
+            Assert.Equal(first.SeriesId, repeat.SeriesId);
         }
 
         [Fact]
-        public void Sports_SeriesIdIsNull()
+        public void DistinctEpisodesAndTitleCollisions_DoNotShareShowOrSeriesIds()
         {
-            var info = Build(MakeProgram(title: "Grand Prix", categories: new List<string> { "Sport" }));
-            Assert.Null(info.SeriesId);
+            var firstEpisode = Build(MakeProgram(
+                title: "Same Title",
+                subTitle: "Episode One",
+                sourceId: "episode-1",
+                sourceSeriesId: "series-1"));
+            var secondEpisode = Build(MakeProgram(
+                title: "Same Title",
+                subTitle: "Episode Two",
+                sourceId: "episode-2",
+                sourceSeriesId: "series-1"));
+            var differentSeries = Build(MakeProgram(
+                title: "Same Title",
+                subTitle: "Episode One",
+                sourceId: "other-episode-1",
+                sourceSeriesId: "series-2"));
+
+            Assert.NotEqual(firstEpisode.ShowId, secondEpisode.ShowId);
+            Assert.NotEqual(firstEpisode.ShowId, differentSeries.ShowId);
+            Assert.NotEqual(firstEpisode.SeriesId, differentSeries.SeriesId);
+        }
+
+        [Fact]
+        public void MissingSourceIdentity_AbstainsInsteadOfGroupingByTitle()
+        {
+            var first = Build(MakeProgram(title: "Ambiguous Title", subTitle: "Part One"), streamId: 1);
+            var second = Build(MakeProgram(title: "Ambiguous Title", subTitle: "Part One"), streamId: 2);
+
+            Assert.Null(first.ShowId);
+            Assert.Null(second.ShowId);
+            Assert.Null(first.SeriesId);
+            Assert.Null(second.SeriesId);
+        }
+
+        [Fact]
+        public void CoreIdentityJson_MapsStableIdsWithoutChangingUtcScheduleTimes()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(@"{
+                ""id"": ""episode-17"",
+                ""series_id"": ""series-3"",
+                ""start_timestamp"": 1735689600,
+                ""stop_timestamp"": 1735693200
+            }");
+
+            var info = Build(program);
+
+            Assert.Equal("xtream:program:episode-17", info.ShowId);
+            Assert.Equal("xtream:series:series-3", info.SeriesId);
+            Assert.Equal(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc), info.StartDate);
+            Assert.Equal(new DateTime(2025, 1, 1, 1, 0, 0, DateTimeKind.Utc), info.EndDate);
         }
 
         // ── Metadata fields ──────────────────────────────────────────────────

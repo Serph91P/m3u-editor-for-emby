@@ -8,6 +8,12 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonPropertyName("id")]
         public string Id { get; set; } = string.Empty;
 
+        // Stable programme identity supplied by m3u-editor. Unlike the Emby
+        // ProgramInfo.Id built by the tuner, this value can survive a repeat on
+        // another channel or at another air time.
+        [JsonPropertyName("series_id")]
+        public string SeriesId { get; set; } = string.Empty;
+
         [JsonPropertyName("epg_id")]
         public string EpgId { get; set; } = string.Empty;
 

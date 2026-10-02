@@ -359,6 +359,8 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
+            var showId = ToStableIdentity("program", p.Id);
+            var seriesId = ToStableIdentity("series", p.SeriesId);
 
             return new ProgramInfo
             {
@@ -387,8 +389,22 @@ namespace Emby.M3uEditor.Plugin.Service
                     c.IndexOf("children", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                     c.IndexOf("kids", System.StringComparison.OrdinalIgnoreCase) >= 0),
                 IsSeries = isSeries,
-                SeriesId = isSeries && !string.IsNullOrEmpty(title) ? title.ToLowerInvariant() : null,
+                // Emby uses ShowId for its exact other-airings lookup. Do not
+                // derive either identity from a display title: unrelated films
+                // and series can legitimately share one.
+                ShowId = showId,
+                SeriesId = isSeries ? seriesId : null,
             };
+        }
+
+        private static string ToStableIdentity(string type, string sourceId)
+        {
+            if (string.IsNullOrWhiteSpace(sourceId))
+            {
+                return null;
+            }
+
+            return string.Concat("xtream:", type, ":", sourceId.Trim());
         }
 
         private static bool IsValidPortrait(string url, int width, int height)
