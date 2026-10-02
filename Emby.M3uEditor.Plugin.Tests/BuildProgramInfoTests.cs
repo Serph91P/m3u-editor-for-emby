@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Text;
 using Emby.M3uEditor.Plugin.Client.Models;
 using Emby.M3uEditor.Plugin.Service;
 using MediaBrowser.Controller.LiveTv;
@@ -257,6 +259,78 @@ namespace Emby.M3uEditor.Plugin.Tests
             var info = Build(MakeProgram(startTimestamp: 1735689600L, stopTimestamp: 1735693200L));
             Assert.Equal(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc), info.StartDate);
             Assert.Equal(new DateTime(2025, 1, 1, 1, 0, 0, DateTimeKind.Utc), info.EndDate);
+        }
+
+        [Fact]
+        public void CoreArtworkJson_MapsValidatedPortraitAndSeparateBackdropToProgramInfo()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(@"{
+                ""title"": ""Test Show"",
+                ""start_timestamp"": 1735689600,
+                ""stop_timestamp"": 1735693200,
+                ""poster_url"": ""https://example.com/poster.jpg"",
+                ""poster_width"": 500,
+                ""poster_height"": 750,
+                ""backdrop_url"": ""https://example.com/backdrop.jpg""
+            }");
+
+            var info = Build(program);
+
+            Assert.Equal("https://example.com/poster.jpg", info.ImageUrl);
+            Assert.Equal(500, info.ImageWidth);
+            Assert.Equal(750, info.ImageHeight);
+            Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
+        }
+
+        [Theory]
+        [InlineData(750, 750)]
+        [InlineData(1280, 720)]
+        [InlineData(0, 0)]
+        public void CoreArtworkJson_DoesNotPromoteSquareLandscapeOrUnknownPoster(int width, int height)
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(string.Format(
+                "{{\"start_timestamp\":1735689600,\"stop_timestamp\":1735693200,\"poster_url\":\"https://example.com/art.jpg\",\"poster_width\":{0},\"poster_height\":{1}}}",
+                width,
+                height));
+
+            var info = Build(program);
+
+            Assert.Null(info.ImageUrl);
+            Assert.Equal(0, info.ImageWidth);
+            Assert.Equal(0, info.ImageHeight);
+        }
+
+        [Fact]
+        public void CoreArtworkJson_OldPayloadWithoutArtworkRemainsAccepted()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>("{\"start_timestamp\":1735689600,\"stop_timestamp\":1735693200}");
+
+            var info = Build(program);
+
+            Assert.Null(info.ImageUrl);
+            Assert.Null(info.BackdropImageUrl);
+        }
+
+        [Fact]
+        public void XmltvReExport_PreservesValidatedRoleAndGeometryWithoutCustomIconAttributes()
+        {
+            var output = new StringBuilder();
+            LiveTvService.AppendXmltvArtwork(output, new EpgProgram
+            {
+                PosterUrl = "https://example.com/poster.jpg",
+                PosterWidth = 500,
+                PosterHeight = 750,
+                BackdropUrl = "https://example.com/backdrop.jpg",
+                ThumbImageUrl = "https://example.com/still.jpg",
+            });
+
+            var xml = output.ToString();
+
+            Assert.Contains("<image type=\"poster\" orient=\"P\">https://example.com/poster.jpg</image>", xml);
+            Assert.Contains("<icon src=\"https://example.com/poster.jpg\" width=\"500\" height=\"750\" />", xml);
+            Assert.Contains("<image type=\"backdrop\" orient=\"L\">https://example.com/backdrop.jpg</image>", xml);
+            Assert.Contains("<image type=\"still\" orient=\"L\">https://example.com/still.jpg</image>", xml);
+            Assert.DoesNotContain("<icon src=\"https://example.com/poster.jpg\" type=", xml);
         }
 
         [Fact]

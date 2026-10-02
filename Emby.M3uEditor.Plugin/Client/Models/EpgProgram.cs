@@ -39,6 +39,15 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonConverter(typeof(IntAsBoolConverter))]
         public bool HasArchive { get; set; }
 
+        [JsonPropertyName("poster_url")]
+        public string PosterUrl { get; set; }
+        [JsonPropertyName("poster_width")]
+        public int PosterWidth { get; set; }
+        [JsonPropertyName("poster_height")]
+        public int PosterHeight { get; set; }
+        [JsonPropertyName("backdrop_url")]
+        public string BackdropUrl { get; set; }
+
         // Not from JSON - populated by XMLTV parser only
         [JsonIgnore] public bool IsLive { get; set; }
         [JsonIgnore] public bool IsNew { get; set; }

@@ -536,6 +536,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         sb.AppendFormat(CultureInfo.InvariantCulture,
                             "    <desc>{0}</desc>\n", EscapeXml(desc));
                     }
+                    AppendXmltvArtwork(sb, program);
                     if (program.IsLive) sb.AppendLine("    <live />");
                     if (program.IsNew) sb.AppendLine("    <new />");
                     if (program.IsPreviouslyShown) sb.AppendLine("    <previously-shown />");
@@ -546,6 +547,37 @@ namespace Emby.M3uEditor.Plugin.Service
 
             sb.AppendLine("</tv>");
             return sb.ToString();
+        }
+
+        internal static void AppendXmltvArtwork(StringBuilder sb, EpgProgram program)
+        {
+            var posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.PosterUrl)
+                ?? Util.UrlValidator.SanitizeHttpUrl(program.ImageUrl);
+            var posterWidth = program.PosterWidth > 0 ? program.PosterWidth : program.ImageWidth;
+            var posterHeight = program.PosterHeight > 0 ? program.PosterHeight : program.ImageHeight;
+            if (posterUrl != null && posterWidth > 0 && posterHeight > posterWidth)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <image type=\"poster\" orient=\"P\">{0}</image>\n", EscapeXml(posterUrl));
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <icon src=\"{0}\" width=\"{1}\" height=\"{2}\" />\n",
+                    EscapeXml(posterUrl), posterWidth, posterHeight);
+            }
+
+            var backdropUrl = Util.UrlValidator.SanitizeHttpUrl(program.BackdropUrl)
+                ?? Util.UrlValidator.SanitizeHttpUrl(program.BackdropImageUrl);
+            if (backdropUrl != null)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <image type=\"backdrop\" orient=\"L\">{0}</image>\n", EscapeXml(backdropUrl));
+            }
+
+            var stillUrl = Util.UrlValidator.SanitizeHttpUrl(program.ThumbImageUrl);
+            if (stillUrl != null)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <image type=\"still\" orient=\"L\">{0}</image>\n", EscapeXml(stillUrl));
+            }
         }
 
         private async Task<List<EpgProgram>> FetchEpgDataAsync(
