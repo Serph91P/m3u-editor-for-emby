@@ -536,6 +536,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         sb.AppendFormat(CultureInfo.InvariantCulture,
                             "    <desc>{0}</desc>\n", EscapeXml(desc));
                     }
+                    AppendXmltvArtwork(sb, program);
                     if (program.IsLive) sb.AppendLine("    <live />");
                     if (program.IsNew) sb.AppendLine("    <new />");
                     if (program.IsPreviouslyShown) sb.AppendLine("    <previously-shown />");
@@ -546,6 +547,57 @@ namespace Emby.M3uEditor.Plugin.Service
 
             sb.AppendLine("</tv>");
             return sb.ToString();
+        }
+
+        internal static void AppendXmltvArtwork(StringBuilder sb, EpgProgram program)
+        {
+            // episode-num is a standard XMLTV extension point. Preserve only the
+            // explicit producer contract; generic Id is a transport occurrence.
+            if (!string.IsNullOrWhiteSpace(program.ContentId))
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <episode-num system=\"m3u-editor:content-id\">{0}</episode-num>\n",
+                    EscapeXml(program.ContentId.Trim()));
+            }
+            if (!string.IsNullOrWhiteSpace(program.SeriesId))
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <episode-num system=\"m3u-editor:series-id\">{0}</episode-num>\n",
+                    EscapeXml(program.SeriesId.Trim()));
+            }
+
+            var posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.PosterUrl);
+            var posterWidth = program.PosterWidth;
+            var posterHeight = program.PosterHeight;
+            if (posterUrl == null || posterWidth <= 0 || posterHeight <= posterWidth)
+            {
+                posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.ImageUrl);
+                posterWidth = program.ImageWidth;
+                posterHeight = program.ImageHeight;
+            }
+            if (posterUrl != null && posterWidth > 0 && posterHeight > posterWidth)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <image type=\"poster\" orient=\"P\">{0}</image>\n", EscapeXml(posterUrl));
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <icon src=\"{0}\" width=\"{1}\" height=\"{2}\" />\n",
+                    EscapeXml(posterUrl), posterWidth, posterHeight);
+            }
+
+            var backdropUrl = Util.UrlValidator.SanitizeHttpUrl(program.BackdropUrl)
+                ?? Util.UrlValidator.SanitizeHttpUrl(program.BackdropImageUrl);
+            if (backdropUrl != null)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <image type=\"backdrop\" orient=\"L\">{0}</image>\n", EscapeXml(backdropUrl));
+            }
+
+            var stillUrl = Util.UrlValidator.SanitizeHttpUrl(program.ThumbImageUrl);
+            if (stillUrl != null)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <image type=\"still\" orient=\"L\">{0}</image>\n", EscapeXml(stillUrl));
+            }
         }
 
         private async Task<List<EpgProgram>> FetchEpgDataAsync(

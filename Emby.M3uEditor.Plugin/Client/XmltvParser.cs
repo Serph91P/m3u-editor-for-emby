@@ -95,12 +95,23 @@ namespace Emby.M3uEditor.Plugin.Client
 
             // Read child elements at depth + 1; break when we return to the parent's end element
             var depth = reader.Depth;
-            var hasTypedPoster = false;
+            var hasTypedArtworkRole = false;
+            string legacyImageUrl = null;
+            var legacyImageWidth = 0;
+            var legacyImageHeight = 0;
+            string legacyBackdropImageUrl = null;
+            string legacyThumbImageUrl = null;
+            string legacyLogoImageUrl = null;
+            string standardBackdropImageUrl = null;
+            string standardThumbImageUrl = null;
+            var standardPosterCandidates = new List<ArtworkCandidate>();
+            var untypedIcons = new List<ArtworkCandidate>();
+            var typedPosterCandidates = new List<ArtworkCandidate>();
             while (reader.Read())
             {
                 if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth)
                     break;
-                if (reader.NodeType != XmlNodeType.Element) continue;
+                if (reader.NodeType != XmlNodeType.Element || reader.Depth != depth + 1) continue;
 
                 var name = reader.Name;
 
@@ -148,50 +159,271 @@ namespace Emby.M3uEditor.Plugin.Client
                     if (!reader.IsEmptyElement)
                         program.SubTitle = ReadText(reader);
                 }
+                else if (string.Equals(name, "episode-num", StringComparison.OrdinalIgnoreCase))
+                {
+                    // XMLTV's episode-num element is extensible through its standard
+                    // system attribute. Only accept m3u-editor's explicit producer
+                    // contract; onscreen/xmltv_ns values are display/ordering metadata,
+                    // not proof that two programmes are the same content.
+                    var system = (reader.GetAttribute("system") ?? string.Empty).Trim();
+                    var value = reader.IsEmptyElement ? null : ReadText(reader).Trim();
+                    if (string.Equals(system, "m3u-editor:content-id", StringComparison.Ordinal)
+                        && !string.IsNullOrEmpty(value))
+                    {
+                        program.ContentId = value;
+                    }
+                    else if (string.Equals(system, "m3u-editor:series-id", StringComparison.Ordinal)
+                        && !string.IsNullOrEmpty(value))
+                    {
+                        program.SeriesId = value;
+                    }
+                }
                 else if (string.Equals(name, "icon", StringComparison.OrdinalIgnoreCase))
                 {
+                    var imageType = (reader.GetAttribute("type") ?? string.Empty).Trim();
+                    var isPoster = string.Equals(imageType, "poster", StringComparison.OrdinalIgnoreCase);
+                    var isBackdrop = string.Equals(imageType, "backdrop", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(imageType, "fanart", StringComparison.OrdinalIgnoreCase);
+                    var isThumb = string.Equals(imageType, "screenshot", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(imageType, "episode-still", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(imageType, "still", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(imageType, "thumb", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(imageType, "thumbnail", StringComparison.OrdinalIgnoreCase);
+                    var isLogo = string.Equals(imageType, "logo", StringComparison.OrdinalIgnoreCase);
+                    if (isPoster || isBackdrop || isThumb || isLogo)
+                        hasTypedArtworkRole = true;
+
                     var src = reader.GetAttribute("src");
                     var sanitized = Util.UrlValidator.SanitizeHttpUrl(src);
-                    if (sanitized != null)
+                    if (sanitized == null)
+                        continue;
+
+                    if (isPoster)
                     {
-                        var imageType = (reader.GetAttribute("type") ?? string.Empty).Trim();
-                        if (string.Equals(imageType, "poster", StringComparison.OrdinalIgnoreCase))
+                        var width = ParsePositiveDimension(reader.GetAttribute("width"));
+                        var height = ParsePositiveDimension(reader.GetAttribute("height"));
+                        typedPosterCandidates.Add(new ArtworkCandidate
                         {
-                            program.ImageUrl = sanitized;
-                            program.ImageWidth = ParsePositiveDimension(reader.GetAttribute("width"));
-                            program.ImageHeight = ParsePositiveDimension(reader.GetAttribute("height"));
-                            hasTypedPoster = true;
-                        }
-                        else if (string.Equals(imageType, "backdrop", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(imageType, "fanart", StringComparison.OrdinalIgnoreCase))
-                        {
-                            program.BackdropImageUrl = sanitized;
-                        }
-                        else if (string.Equals(imageType, "screenshot", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(imageType, "episode-still", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(imageType, "still", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(imageType, "thumb", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(imageType, "thumbnail", StringComparison.OrdinalIgnoreCase))
-                        {
-                            program.ThumbImageUrl = sanitized;
-                        }
-                        else if (string.Equals(imageType, "logo", StringComparison.OrdinalIgnoreCase))
-                        {
-                            program.LogoImageUrl = sanitized;
-                        }
-                        else if (!hasTypedPoster)
-                        {
-                            // Preserve the historical last-valid-icon fallback for feeds
-                            // without m3u-editor's explicit artwork roles.
-                            program.ImageUrl = sanitized;
-                            program.ImageWidth = ParsePositiveDimension(reader.GetAttribute("width"));
-                            program.ImageHeight = ParsePositiveDimension(reader.GetAttribute("height"));
-                        }
+                            Url = sanitized,
+                            Width = width,
+                            Height = height,
+                            Orient = reader.GetAttribute("orient"),
+                        });
                     }
+                    else if (isBackdrop)
+                    {
+                        legacyBackdropImageUrl = sanitized;
+                    }
+                    else if (isThumb)
+                    {
+                        legacyThumbImageUrl = sanitized;
+                    }
+                    else if (isLogo)
+                    {
+                        legacyLogoImageUrl = sanitized;
+                    }
+                    else
+                    {
+                        // Delay the legacy fallback until the programme has been fully read.
+                        // A later typed role, even one with unusable poster geometry, must not
+                        // let a generic icon occupy Emby's portrait-primary slot.
+                        legacyImageUrl = sanitized;
+                        legacyImageWidth = ParsePositiveDimension(reader.GetAttribute("width"));
+                        legacyImageHeight = ParsePositiveDimension(reader.GetAttribute("height"));
+                        untypedIcons.Add(new ArtworkCandidate
+                        {
+                            Url = sanitized,
+                            Width = legacyImageWidth,
+                            Height = legacyImageHeight,
+                        });
+                    }
+                }
+                else if (string.Equals(name, "image", StringComparison.OrdinalIgnoreCase))
+                {
+                    // XMLTV's standard <image> has a text URL and role attributes, but no
+                    // width/height. It is only valid as a direct programme child; nested
+                    // images (for example inside <rating> or <credits>) are ignored above.
+                    var imageType = (reader.GetAttribute("type") ?? string.Empty).Trim();
+                    var isPoster = string.Equals(imageType, "poster", StringComparison.OrdinalIgnoreCase);
+                    var isBackdrop = string.Equals(imageType, "backdrop", StringComparison.OrdinalIgnoreCase);
+                    var isStill = string.Equals(imageType, "still", StringComparison.OrdinalIgnoreCase);
+                    if (!isPoster && !isBackdrop && !isStill)
+                        continue;
+
+                    hasTypedArtworkRole = true;
+                    var orient = (reader.GetAttribute("orient") ?? string.Empty).Trim();
+                    var sanitized = reader.IsEmptyElement
+                        ? null
+                        : Util.UrlValidator.SanitizeHttpUrl(ReadText(reader));
+                    if (sanitized == null)
+                        continue;
+
+                    if (isBackdrop && string.Equals(orient, "L", StringComparison.OrdinalIgnoreCase))
+                    {
+                        standardBackdropImageUrl = sanitized;
+                    }
+                    else if (isStill && string.Equals(orient, "L", StringComparison.OrdinalIgnoreCase))
+                    {
+                        standardThumbImageUrl = sanitized;
+                    }
+                    else if (isPoster && string.Equals(orient, "P", StringComparison.OrdinalIgnoreCase))
+                    {
+                        standardPosterCandidates.Add(new ArtworkCandidate { Url = sanitized });
+                    }
+                    // A standard poster alone is not promoted. XMLTV DTD image
+                    // elements do not carry intrinsic dimensions, and this parser does not
+                    // fetch remote image bytes. It can be promoted only below when an
+                    // untyped direct-child icon reports matching portrait geometry.
                 }
             }
 
+            var pairedPosters = new List<ArtworkCandidate>();
+            foreach (var standardPoster in standardPosterCandidates)
+            {
+                var pairedPoster = FindConsistentPortraitPair(standardPoster.Url, untypedIcons, typedPosterCandidates);
+                if (pairedPoster != null && !ContainsUrl(pairedPosters, pairedPoster.Url))
+                    pairedPosters.Add(pairedPoster);
+            }
+
+            if (pairedPosters.Count == 1 && !HasConflictingTypedPoster(pairedPosters[0].Url, typedPosterCandidates))
+            {
+                // The matching untyped icon attests reported portrait geometry only;
+                // the parser does not fetch remote image bytes for verification.
+                program.ImageUrl = pairedPosters[0].Url;
+                program.ImageWidth = pairedPosters[0].Width;
+                program.ImageHeight = pairedPosters[0].Height;
+            }
+            else if (pairedPosters.Count == 0)
+            {
+                var legacyPoster = FindSingleValidTypedPoster(typedPosterCandidates);
+                if (legacyPoster != null)
+                {
+                    program.ImageUrl = legacyPoster.Url;
+                    program.ImageWidth = legacyPoster.Width;
+                    program.ImageHeight = legacyPoster.Height;
+                }
+            }
+            program.BackdropImageUrl = standardBackdropImageUrl ?? legacyBackdropImageUrl;
+            program.ThumbImageUrl = standardThumbImageUrl ?? legacyThumbImageUrl;
+            program.LogoImageUrl = legacyLogoImageUrl;
+
+            if (!hasTypedArtworkRole && legacyImageUrl != null
+                && legacyImageWidth == 0 && legacyImageHeight == 0)
+            {
+                // Preserve the historical fallback only for feeds that offer no
+                // recognized artwork role and no geometry to classify the icon.
+                // Known wide or square batch icons cannot occupy the portrait slot.
+                program.ImageUrl = legacyImageUrl;
+                program.ImageWidth = legacyImageWidth;
+                program.ImageHeight = legacyImageHeight;
+            }
+
             return program;
+        }
+
+        private static bool IsPortraitPoster(int width, int height, string orient)
+        {
+            // Geometry is mandatory because role and orient can be falsely labelled.
+            // An explicitly landscape or unknown orientation is rejected rather than
+            // trusting it over portrait dimensions; omitted orient is allowed.
+            if (width <= 0 || height <= width)
+                return false;
+
+            var normalizedOrient = (orient ?? string.Empty).Trim();
+            return normalizedOrient.Length == 0
+                || string.Equals(normalizedOrient, "P", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static ArtworkCandidate FindConsistentPortraitPair(
+            string posterUrl,
+            List<ArtworkCandidate> untypedIcons,
+            List<ArtworkCandidate> typedPosterCandidates)
+        {
+            ArtworkCandidate pair = null;
+            foreach (var icon in untypedIcons)
+            {
+                if (!string.Equals(icon.Url, posterUrl, StringComparison.Ordinal))
+                    continue;
+
+                if (!IsPortraitPoster(icon.Width, icon.Height, null))
+                    return null;
+
+                if (pair == null)
+                    pair = icon;
+                else if (pair.Width != icon.Width || pair.Height != icon.Height)
+                    return null;
+            }
+
+            if (pair == null)
+                return null;
+
+            foreach (var typedPoster in typedPosterCandidates)
+            {
+                if (!string.Equals(typedPoster.Url, posterUrl, StringComparison.Ordinal))
+                    continue;
+
+                if (!IsPortraitPoster(typedPoster.Width, typedPoster.Height, typedPoster.Orient)
+                    || typedPoster.Width != pair.Width
+                    || typedPoster.Height != pair.Height)
+                    return null;
+            }
+
+            return pair;
+        }
+
+        private static bool HasConflictingTypedPoster(string posterUrl, List<ArtworkCandidate> typedPosterCandidates)
+        {
+            foreach (var typedPoster in typedPosterCandidates)
+            {
+                if (!string.Equals(typedPoster.Url, posterUrl, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static ArtworkCandidate FindSingleValidTypedPoster(List<ArtworkCandidate> typedPosterCandidates)
+        {
+            ArtworkCandidate candidate = null;
+            foreach (var typedPoster in typedPosterCandidates)
+            {
+                if (!IsPortraitPoster(typedPoster.Width, typedPoster.Height, typedPoster.Orient))
+                    return null;
+
+                if (candidate == null)
+                {
+                    candidate = typedPoster;
+                }
+                else if (!string.Equals(candidate.Url, typedPoster.Url, StringComparison.Ordinal)
+                    || candidate.Width != typedPoster.Width
+                    || candidate.Height != typedPoster.Height)
+                {
+                    // Different legacy typed posters are alternatives without a
+                    // programme-specific pairing signal, so fail closed.
+                    return null;
+                }
+            }
+
+            return candidate;
+        }
+
+        private static bool ContainsUrl(List<ArtworkCandidate> candidates, string url)
+        {
+            foreach (var candidate in candidates)
+            {
+                if (string.Equals(candidate.Url, url, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private sealed class ArtworkCandidate
+        {
+            public string Url { get; set; }
+            public int Width { get; set; }
+            public int Height { get; set; }
+            public string Orient { get; set; }
         }
 
         private static int ParsePositiveDimension(string value)

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Text;
 using Emby.M3uEditor.Plugin.Client.Models;
 using Emby.M3uEditor.Plugin.Service;
 using MediaBrowser.Controller.LiveTv;
@@ -25,7 +27,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             bool isLive = false,
             bool isNew = false,
             bool isPreviouslyShown = false,
-            bool isPlainText = true)
+            bool isPlainText = true,
+            string sourceContentId = "",
+            string sourceSeriesId = "")
         {
             return new EpgProgram
             {
@@ -45,6 +49,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                 IsNew = isNew,
                 IsPreviouslyShown = isPreviouslyShown,
                 IsPlainText = isPlainText,
+                ContentId = sourceContentId,
+                SeriesId = sourceSeriesId,
             };
         }
 
@@ -130,26 +136,118 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(info.IsKids);
         }
 
-        // ── SeriesId ─────────────────────────────────────────────────────────
+        // ── Programme identity ───────────────────────────────────────────────
 
         [Fact]
-        public void Series_SeriesIdIsLowercaseTitle()
+        public void RepeatedFilmAcrossChannels_UsesTheSameStableShowId()
         {
-            var info = Build(MakeProgram(title: "Breaking Bad", categories: null));
-            Assert.Equal("breaking bad", info.SeriesId);
+            var first = Build(MakeProgram(
+                title: "Synthetic Film",
+                categories: new List<string> { "Movie" },
+                sourceContentId: "film-42"),
+                streamId: 1,
+                channelId: "1");
+            var repeat = Build(MakeProgram(
+                title: "Synthetic Film",
+                categories: new List<string> { "Movie" },
+                sourceContentId: "film-42"),
+                streamId: 2,
+                channelId: "2");
+
+            Assert.NotEqual(first.Id, repeat.Id);
+            Assert.Equal("xtream:program:film-42", first.ShowId);
+            Assert.Equal(first.ShowId, repeat.ShowId);
         }
 
         [Fact]
-        public void Movie_SeriesIdIsNull()
+        public void SameSeriesEpisodeAcrossChannels_UsesStableShowAndSeriesIds()
         {
-            var info = Build(MakeProgram(title: "Inception", categories: new List<string> { "Movie" }));
-            Assert.Null(info.SeriesId);
+            var first = Build(MakeProgram(
+                title: "Synthetic Series",
+                subTitle: "Episode One",
+                sourceContentId: "episode-1",
+                sourceSeriesId: "series-7"),
+                streamId: 1);
+            var repeat = Build(MakeProgram(
+                title: "Synthetic Series",
+                subTitle: "Episode One",
+                sourceContentId: "episode-1",
+                sourceSeriesId: "series-7"),
+                streamId: 2);
+
+            Assert.Equal(first.ShowId, repeat.ShowId);
+            Assert.Equal("xtream:series:series-7", first.SeriesId);
+            Assert.Equal(first.SeriesId, repeat.SeriesId);
         }
 
         [Fact]
-        public void Sports_SeriesIdIsNull()
+        public void DistinctEpisodesAndTitleCollisions_DoNotShareShowOrSeriesIds()
         {
-            var info = Build(MakeProgram(title: "Grand Prix", categories: new List<string> { "Sport" }));
+            var firstEpisode = Build(MakeProgram(
+                title: "Same Title",
+                subTitle: "Episode One",
+                sourceContentId: "episode-1",
+                sourceSeriesId: "series-1"));
+            var secondEpisode = Build(MakeProgram(
+                title: "Same Title",
+                subTitle: "Episode Two",
+                sourceContentId: "episode-2",
+                sourceSeriesId: "series-1"));
+            var differentSeries = Build(MakeProgram(
+                title: "Same Title",
+                subTitle: "Episode One",
+                sourceContentId: "other-episode-1",
+                sourceSeriesId: "series-2"));
+
+            Assert.NotEqual(firstEpisode.ShowId, secondEpisode.ShowId);
+            Assert.NotEqual(firstEpisode.ShowId, differentSeries.ShowId);
+            Assert.NotEqual(firstEpisode.SeriesId, differentSeries.SeriesId);
+        }
+
+        [Fact]
+        public void MissingSourceIdentity_UsesUniqueOccurrenceShowIdInsteadOfGroupingByTitle()
+        {
+            var first = Build(MakeProgram(title: "Ambiguous Title", subTitle: "Part One"), streamId: 1);
+            var second = Build(MakeProgram(title: "Ambiguous Title", subTitle: "Part One"), streamId: 2);
+
+            Assert.Equal("xtream:occurrence:1:1735689600", first.ShowId);
+            Assert.Equal("xtream:occurrence:2:1735689600", second.ShowId);
+            Assert.NotEqual(first.ShowId, second.ShowId);
+            Assert.Null(first.SeriesId);
+            Assert.Null(second.SeriesId);
+        }
+
+        [Fact]
+        public void CoreIdentityJson_MapsExplicitContentAndSeriesIdsWithoutChangingUtcScheduleTimes()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(@"{
+                ""id"": ""per-occurrence-row-17"",
+                ""content_id"": ""episode-17"",
+                ""series_id"": ""series-3"",
+                ""start_timestamp"": 1735689600,
+                ""stop_timestamp"": 1735693200
+            }");
+
+            var info = Build(program);
+
+            Assert.Equal("xtream:program:episode-17", info.ShowId);
+            Assert.Equal("xtream:series:series-3", info.SeriesId);
+            Assert.Equal(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc), info.StartDate);
+            Assert.Equal(new DateTime(2025, 1, 1, 1, 0, 0, DateTimeKind.Utc), info.EndDate);
+        }
+
+        [Fact]
+        public void GenericSourceId_DoesNotBecomeContentShowId()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(@"{
+                ""id"": ""per-occurrence-row-17"",
+                ""start_timestamp"": 1735689600,
+                ""stop_timestamp"": 1735693200
+            }");
+
+            var info = Build(program, streamId: 9);
+
+            Assert.Equal("xtream:occurrence:9:1735689600", info.ShowId);
             Assert.Null(info.SeriesId);
         }
 
@@ -257,6 +355,125 @@ namespace Emby.M3uEditor.Plugin.Tests
             var info = Build(MakeProgram(startTimestamp: 1735689600L, stopTimestamp: 1735693200L));
             Assert.Equal(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc), info.StartDate);
             Assert.Equal(new DateTime(2025, 1, 1, 1, 0, 0, DateTimeKind.Utc), info.EndDate);
+        }
+
+        [Fact]
+        public void CoreArtworkJson_MapsValidatedPortraitAndSeparateBackdropToProgramInfo()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(@"{
+                ""title"": ""Test Show"",
+                ""start_timestamp"": 1735689600,
+                ""stop_timestamp"": 1735693200,
+                ""poster_url"": ""https://example.com/poster.jpg"",
+                ""poster_width"": 500,
+                ""poster_height"": 750,
+                ""backdrop_url"": ""https://example.com/backdrop.jpg""
+            }");
+
+            var info = Build(program);
+
+            Assert.Equal("https://example.com/poster.jpg", info.ImageUrl);
+            Assert.Equal(500, info.ImageWidth);
+            Assert.Equal(750, info.ImageHeight);
+            Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
+        }
+
+        [Theory]
+        [InlineData(750, 750)]
+        [InlineData(1280, 720)]
+        [InlineData(0, 0)]
+        public void CoreArtworkJson_DoesNotPromoteSquareLandscapeOrUnknownPoster(int width, int height)
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>(string.Format(
+                "{{\"start_timestamp\":1735689600,\"stop_timestamp\":1735693200,\"poster_url\":\"https://example.com/art.jpg\",\"poster_width\":{0},\"poster_height\":{1}}}",
+                width,
+                height));
+
+            var info = Build(program);
+
+            Assert.Null(info.ImageUrl);
+            Assert.Equal(0, info.ImageWidth);
+            Assert.Equal(0, info.ImageHeight);
+        }
+
+        [Fact]
+        public void CoreArtworkJson_OldPayloadWithoutArtworkRemainsAccepted()
+        {
+            var program = JsonSerializer.Deserialize<EpgProgram>("{\"start_timestamp\":1735689600,\"stop_timestamp\":1735693200}");
+
+            var info = Build(program);
+
+            Assert.Null(info.ImageUrl);
+            Assert.Null(info.BackdropImageUrl);
+        }
+
+        [Fact]
+        public void XmltvReExport_PreservesValidatedRoleAndGeometryWithoutCustomIconAttributes()
+        {
+            var output = new StringBuilder();
+            LiveTvService.AppendXmltvArtwork(output, new EpgProgram
+            {
+                ContentId = "episode-12",
+                SeriesId = "series-4",
+                PosterUrl = "https://example.com/poster.jpg",
+                PosterWidth = 500,
+                PosterHeight = 750,
+                BackdropUrl = "https://example.com/backdrop.jpg",
+                ThumbImageUrl = "https://example.com/still.jpg",
+            });
+
+            var xml = output.ToString();
+
+            Assert.Contains("<episode-num system=\"m3u-editor:content-id\">episode-12</episode-num>", xml);
+            Assert.Contains("<episode-num system=\"m3u-editor:series-id\">series-4</episode-num>", xml);
+            Assert.Contains("<image type=\"poster\" orient=\"P\">https://example.com/poster.jpg</image>", xml);
+            Assert.Contains("<icon src=\"https://example.com/poster.jpg\" width=\"500\" height=\"750\" />", xml);
+            Assert.Contains("<image type=\"backdrop\" orient=\"L\">https://example.com/backdrop.jpg</image>", xml);
+            Assert.Contains("<image type=\"still\" orient=\"L\">https://example.com/still.jpg</image>", xml);
+            Assert.DoesNotContain("<icon src=\"https://example.com/poster.jpg\" type=", xml);
+        }
+
+        [Theory]
+        [InlineData(0, 0)]
+        [InlineData(750, 750)]
+        [InlineData(1280, 720)]
+        public void XmltvReExport_InvalidPosterCandidateUsesOnlyCompleteValidatedImageCandidate(int posterWidth, int posterHeight)
+        {
+            var output = new StringBuilder();
+            LiveTvService.AppendXmltvArtwork(output, new EpgProgram
+            {
+                PosterUrl = "https://example.com/invalid-poster.jpg",
+                PosterWidth = posterWidth,
+                PosterHeight = posterHeight,
+                ImageUrl = "https://example.com/validated-image.jpg",
+                ImageWidth = 500,
+                ImageHeight = 750,
+            });
+
+            var xml = output.ToString();
+
+            Assert.Contains("<image type=\"poster\" orient=\"P\">https://example.com/validated-image.jpg</image>", xml);
+            Assert.Contains("<icon src=\"https://example.com/validated-image.jpg\" width=\"500\" height=\"750\" />", xml);
+            Assert.DoesNotContain("invalid-poster.jpg", xml);
+        }
+
+        [Theory]
+        [InlineData(0, 0)]
+        [InlineData(750, 750)]
+        [InlineData(1280, 720)]
+        public void XmltvReExport_InvalidPosterCandidateDoesNotBorrowImageGeometryWithoutCompleteFallback(int posterWidth, int posterHeight)
+        {
+            var output = new StringBuilder();
+            LiveTvService.AppendXmltvArtwork(output, new EpgProgram
+            {
+                PosterUrl = "https://example.com/invalid-poster.jpg",
+                PosterWidth = posterWidth,
+                PosterHeight = posterHeight,
+                ImageWidth = 0,
+                ImageHeight = 0,
+            });
+
+            Assert.DoesNotContain("invalid-poster.jpg", output.ToString());
         }
 
         [Fact]
