@@ -99,9 +99,6 @@ namespace Emby.M3uEditor.Plugin.Client
             string legacyImageUrl = null;
             var legacyImageWidth = 0;
             var legacyImageHeight = 0;
-            string legacyPosterImageUrl = null;
-            var legacyPosterImageWidth = 0;
-            var legacyPosterImageHeight = 0;
             string legacyBackdropImageUrl = null;
             string legacyThumbImageUrl = null;
             string legacyLogoImageUrl = null;
@@ -193,12 +190,6 @@ namespace Emby.M3uEditor.Plugin.Client
                             Height = height,
                             Orient = reader.GetAttribute("orient"),
                         });
-                        if (IsPortraitPoster(width, height, reader.GetAttribute("orient")))
-                        {
-                            legacyPosterImageUrl = sanitized;
-                            legacyPosterImageWidth = width;
-                            legacyPosterImageHeight = height;
-                        }
                     }
                     else if (isBackdrop)
                     {
@@ -283,20 +274,26 @@ namespace Emby.M3uEditor.Plugin.Client
                 program.ImageWidth = pairedPosters[0].Width;
                 program.ImageHeight = pairedPosters[0].Height;
             }
-            else if (pairedPosters.Count == 0 && legacyPosterImageUrl != null)
+            else if (pairedPosters.Count == 0)
             {
-                program.ImageUrl = legacyPosterImageUrl;
-                program.ImageWidth = legacyPosterImageWidth;
-                program.ImageHeight = legacyPosterImageHeight;
+                var legacyPoster = FindSingleValidTypedPoster(typedPosterCandidates);
+                if (legacyPoster != null)
+                {
+                    program.ImageUrl = legacyPoster.Url;
+                    program.ImageWidth = legacyPoster.Width;
+                    program.ImageHeight = legacyPoster.Height;
+                }
             }
             program.BackdropImageUrl = standardBackdropImageUrl ?? legacyBackdropImageUrl;
             program.ThumbImageUrl = standardThumbImageUrl ?? legacyThumbImageUrl;
             program.LogoImageUrl = legacyLogoImageUrl;
 
-            if (!hasTypedArtworkRole && legacyImageUrl != null)
+            if (!hasTypedArtworkRole && legacyImageUrl != null
+                && legacyImageWidth == 0 && legacyImageHeight == 0)
             {
-                // Preserve the historical last-valid-icon fallback only for feeds
-                // which provide no recognized typed artwork roles.
+                // Preserve the historical fallback only for feeds that offer no
+                // recognized artwork role and no geometry to classify the icon.
+                // Known wide or square batch icons cannot occupy the portrait slot.
                 program.ImageUrl = legacyImageUrl;
                 program.ImageWidth = legacyImageWidth;
                 program.ImageHeight = legacyImageHeight;
@@ -364,6 +361,31 @@ namespace Emby.M3uEditor.Plugin.Client
             }
 
             return false;
+        }
+
+        private static ArtworkCandidate FindSingleValidTypedPoster(List<ArtworkCandidate> typedPosterCandidates)
+        {
+            ArtworkCandidate candidate = null;
+            foreach (var typedPoster in typedPosterCandidates)
+            {
+                if (!IsPortraitPoster(typedPoster.Width, typedPoster.Height, typedPoster.Orient))
+                    return null;
+
+                if (candidate == null)
+                {
+                    candidate = typedPoster;
+                }
+                else if (!string.Equals(candidate.Url, typedPoster.Url, StringComparison.Ordinal)
+                    || candidate.Width != typedPoster.Width
+                    || candidate.Height != typedPoster.Height)
+                {
+                    // Different legacy typed posters are alternatives without a
+                    // programme-specific pairing signal, so fail closed.
+                    return null;
+                }
+            }
+
+            return candidate;
         }
 
         private static bool ContainsUrl(List<ArtworkCandidate> candidates, string url)

@@ -262,6 +262,25 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ParseProgramme_KnownWideOrSquareUntypedIcons_DoNotReachProgramInfoPrimary()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""wide""><icon src=""https://example.com/wide.jpg"" width=""1280"" height=""720"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""square""><icon src=""https://example.com/square.jpg"" width=""750"" height=""750"" /></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            foreach (var channelId in new[] { "wide", "square" })
+            {
+                var program = Assert.Single(programs[channelId]);
+                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, channelId, program.Title, program.Description);
+
+                Assert.Null(program.ImageUrl);
+                Assert.Null(info.ImageUrl);
+            }
+        }
+
+        [Fact]
         public void ParseProgramme_TypedPosterWinsRegardlessOfIconOrder()
         {
             const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
@@ -278,6 +297,31 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("https://example.com/poster.jpg", prog.ImageUrl);
             Assert.Equal(500, prog.ImageWidth);
             Assert.Equal(750, prog.ImageHeight);
+        }
+
+        [Fact]
+        public void ParseProgramme_TypedPosterAlternatives_DeduplicateOrAbstainDeterministically()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""duplicates""><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" /><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""distinct""><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" /><icon src=""https://example.com/two.jpg"" type=""poster"" width=""500"" height=""750"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""conflicting""><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" /><icon src=""https://example.com/two.jpg"" type=""poster"" width=""600"" height=""900"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""orientation-conflict""><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" orient=""P"" /><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" orient=""L"" /></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            var duplicate = Assert.Single(programs["duplicates"]);
+            Assert.Equal("https://example.com/one.jpg", duplicate.ImageUrl);
+            Assert.Equal("https://example.com/one.jpg", M3uEditorTunerHost.BuildProgramInfo(duplicate, 1, "duplicates", duplicate.Title, duplicate.Description).ImageUrl);
+
+            foreach (var channelId in new[] { "distinct", "conflicting", "orientation-conflict" })
+            {
+                var program = Assert.Single(programs[channelId]);
+                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, channelId, program.Title, program.Description);
+
+                Assert.Null(program.ImageUrl);
+                Assert.Null(info.ImageUrl);
+            }
         }
 
         [Fact]
