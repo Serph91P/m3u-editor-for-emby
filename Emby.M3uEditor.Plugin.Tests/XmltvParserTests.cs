@@ -439,6 +439,157 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ParseProgramme_ConflictingStandardAndLegacyEvidenceForSameUrlNeverPromotesPrimary()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""legacy-first""><icon src=""https://example.com/same.jpg"" width=""500"" height=""500"" /><image type=""poster"" orient=""P"">https://example.com/same.jpg</image><icon src=""https://example.com/same.jpg"" type=""poster"" width=""500"" height=""750"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""standard-first""><image type=""poster"" orient=""P"">https://example.com/same.jpg</image><icon src=""https://example.com/same.jpg"" type=""poster"" width=""500"" height=""750"" /><icon src=""https://example.com/same.jpg"" width=""500"" height=""500"" /></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            foreach (var channelId in new[] { "legacy-first", "standard-first" })
+            {
+                var program = Assert.Single(programs[channelId]);
+                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, channelId, program.Title, program.Description);
+
+                Assert.Null(program.ImageUrl);
+                Assert.Null(info.ImageUrl);
+            }
+        }
+
+        [Fact]
+        public void ParseProgramme_ConflictingStandardRolesForSameUrlNeverPromoteEitherRole()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""first""><image type=""poster"" orient=""P"">https://example.com/same.jpg</image><image type=""backdrop"" orient=""L"">https://example.com/same.jpg</image><icon src=""https://example.com/same.jpg"" width=""600"" height=""900"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""last""><icon src=""https://example.com/same.jpg"" width=""600"" height=""900"" /><image type=""backdrop"" orient=""L"">https://example.com/same.jpg</image><image type=""poster"" orient=""P"">https://example.com/same.jpg</image></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            foreach (var channelId in new[] { "first", "last" })
+            {
+                var program = Assert.Single(programs[channelId]);
+
+                Assert.Null(program.ImageUrl);
+                Assert.Null(program.BackdropImageUrl);
+            }
+        }
+
+        [Fact]
+        public void ParseProgramme_ConflictingStandardRolesDoNotEraseIndependentBackdrop()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""valid-first""><image type=""backdrop"" orient=""L"">https://example.com/valid.jpg</image><image type=""poster"" orient=""P"">https://example.com/conflict.jpg</image><image type=""backdrop"" orient=""L"">https://example.com/conflict.jpg</image><icon src=""https://example.com/conflict.jpg"" width=""600"" height=""900"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""valid-last""><icon src=""https://example.com/conflict.jpg"" width=""600"" height=""900"" /><image type=""backdrop"" orient=""L"">https://example.com/conflict.jpg</image><image type=""poster"" orient=""P"">https://example.com/conflict.jpg</image><image type=""backdrop"" orient=""L"">https://example.com/valid.jpg</image></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            foreach (var channelId in new[] { "valid-first", "valid-last" })
+            {
+                var program = Assert.Single(programs[channelId]);
+                Assert.Null(program.ImageUrl);
+                Assert.Equal("https://example.com/valid.jpg", program.BackdropImageUrl);
+            }
+        }
+
+        [Fact]
+        public void ParseProgramme_UntypedIconWithIncompleteGeometryPreservesLegacyUrlWithoutClaimingPortrait()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""width""><icon src=""https://example.com/width.jpg"" width=""500"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""height""><icon src=""https://example.com/height.jpg"" height=""750"" /></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            Assert.Equal("https://example.com/width.jpg", Assert.Single(programs["width"]).ImageUrl);
+            Assert.Equal("https://example.com/height.jpg", Assert.Single(programs["height"]).ImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_StandardOrientationConflictPersistsWhileIndependentPortraitSurvives()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""conflict-first""><image type=""poster"" orient=""P"">https://example.com/conflict.jpg</image><image type=""poster"" orient=""L"">https://example.com/conflict.jpg</image><icon src=""https://example.com/conflict.jpg"" width=""600"" height=""900"" /><image type=""poster"" orient=""P"">https://example.com/valid.jpg</image><icon src=""https://example.com/valid.jpg"" width=""500"" height=""750"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""conflict-last""><icon src=""https://example.com/valid.jpg"" width=""500"" height=""750"" /><image type=""poster"" orient=""P"">https://example.com/valid.jpg</image><icon src=""https://example.com/conflict.jpg"" width=""600"" height=""900"" /><image type=""poster"" orient=""L"">https://example.com/conflict.jpg</image><image type=""poster"" orient=""P"">https://example.com/conflict.jpg</image></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            foreach (var channelId in new[] { "conflict-first", "conflict-last" })
+            {
+                var program = Assert.Single(programs[channelId]);
+                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, channelId, program.Title, program.Description);
+
+                Assert.Equal("https://example.com/valid.jpg", program.ImageUrl);
+                Assert.Equal(500, program.ImageWidth);
+                Assert.Equal(750, program.ImageHeight);
+                Assert.Equal("https://example.com/valid.jpg", info.ImageUrl);
+            }
+        }
+
+        [Fact]
+        public void ParseProgramme_RejectedMixedDialectUrlCannotHealButDoesNotBlockAlternative()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""first""><image type=""poster"" orient=""P"">https://example.com/conflict.jpg</image><icon src=""https://example.com/conflict.jpg"" width=""500"" height=""500"" /><icon src=""https://example.com/conflict.jpg"" type=""poster"" width=""500"" height=""750"" /><icon src=""https://example.com/valid.jpg"" type=""poster"" width=""400"" height=""600"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""last""><icon src=""https://example.com/valid.jpg"" type=""poster"" width=""400"" height=""600"" /><icon src=""https://example.com/conflict.jpg"" type=""poster"" width=""500"" height=""750"" /><icon src=""https://example.com/conflict.jpg"" width=""500"" height=""500"" /><image type=""poster"" orient=""P"">https://example.com/conflict.jpg</image></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            foreach (var channelId in new[] { "first", "last" })
+            {
+                var program = Assert.Single(programs[channelId]);
+                Assert.Equal("https://example.com/valid.jpg", program.ImageUrl);
+                Assert.Equal(400, program.ImageWidth);
+                Assert.Equal(600, program.ImageHeight);
+            }
+        }
+
+        [Fact]
+        public void ParseProgramme_ConsistentStandardAndLegacyPortraitEvidencePromotesPrimary()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""ch1""><image type=""poster"" orient=""P"">https://example.com/poster.jpg</image><icon src=""https://example.com/poster.jpg"" width=""500"" height=""750"" /><icon src=""https://example.com/poster.jpg"" type=""poster"" width=""500"" height=""750"" /></programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["ch1"]);
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "ch1", program.Title, program.Description);
+
+            Assert.Equal("https://example.com/poster.jpg", program.ImageUrl);
+            Assert.Equal(500, program.ImageWidth);
+            Assert.Equal(750, program.ImageHeight);
+            Assert.Equal("https://example.com/poster.jpg", info.ImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_UntypedIconWithIncompleteGeometryPreservesDimensionsThroughProgramInfo()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""none""><icon src=""https://example.com/none.jpg"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""width""><icon src=""https://example.com/width.jpg"" width=""500"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""height""><icon src=""https://example.com/height.jpg"" height=""750"" /></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            foreach (var expected in new[]
+            {
+                new { Channel = "none", Url = "https://example.com/none.jpg", Width = 0, Height = 0 },
+                new { Channel = "width", Url = "https://example.com/width.jpg", Width = 500, Height = 0 },
+                new { Channel = "height", Url = "https://example.com/height.jpg", Width = 0, Height = 750 },
+            })
+            {
+                var program = Assert.Single(programs[expected.Channel]);
+                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, expected.Channel, program.Title, program.Description);
+
+                Assert.Equal(expected.Url, program.ImageUrl);
+                Assert.Equal(expected.Width, program.ImageWidth);
+                Assert.Equal(expected.Height, program.ImageHeight);
+                Assert.Equal(expected.Url, info.ImageUrl);
+                Assert.Equal(expected.Width, info.ImageWidth);
+                Assert.Equal(expected.Height, info.ImageHeight);
+            }
+        }
+
+        [Fact]
         public void ParseProgramme_WithoutIcon_ImageUrlIsNull()
         {
             const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>

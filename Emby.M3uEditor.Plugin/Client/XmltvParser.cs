@@ -99,14 +99,15 @@ namespace Emby.M3uEditor.Plugin.Client
             string legacyImageUrl = null;
             var legacyImageWidth = 0;
             var legacyImageHeight = 0;
-            string legacyBackdropImageUrl = null;
-            string legacyThumbImageUrl = null;
-            string legacyLogoImageUrl = null;
-            string standardBackdropImageUrl = null;
-            string standardThumbImageUrl = null;
+            var legacyBackdropCandidates = new List<string>();
+            var legacyThumbCandidates = new List<string>();
+            var legacyLogoCandidates = new List<string>();
+            var standardBackdropCandidates = new List<string>();
+            var standardThumbCandidates = new List<string>();
             var standardPosterCandidates = new List<ArtworkCandidate>();
             var untypedIcons = new List<ArtworkCandidate>();
             var typedPosterCandidates = new List<ArtworkCandidate>();
+            var artworkByUrl = new Dictionary<string, ArtworkEvidence>(StringComparer.Ordinal);
             while (reader.Read())
             {
                 if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth)
@@ -198,6 +199,14 @@ namespace Emby.M3uEditor.Plugin.Client
                     if (sanitized == null)
                         continue;
 
+                    AddArtworkEvidence(
+                        artworkByUrl,
+                        sanitized,
+                        isPoster ? "poster" : isBackdrop ? "backdrop" : isThumb ? "still" : isLogo ? "logo" : null,
+                        reader.GetAttribute("orient"),
+                        ParsePositiveDimension(reader.GetAttribute("width")),
+                        ParsePositiveDimension(reader.GetAttribute("height")));
+
                     if (isPoster)
                     {
                         var width = ParsePositiveDimension(reader.GetAttribute("width"));
@@ -212,15 +221,15 @@ namespace Emby.M3uEditor.Plugin.Client
                     }
                     else if (isBackdrop)
                     {
-                        legacyBackdropImageUrl = sanitized;
+                        legacyBackdropCandidates.Add(sanitized);
                     }
                     else if (isThumb)
                     {
-                        legacyThumbImageUrl = sanitized;
+                        legacyThumbCandidates.Add(sanitized);
                     }
                     else if (isLogo)
                     {
-                        legacyLogoImageUrl = sanitized;
+                        legacyLogoCandidates.Add(sanitized);
                     }
                     else
                     {
@@ -258,13 +267,21 @@ namespace Emby.M3uEditor.Plugin.Client
                     if (sanitized == null)
                         continue;
 
+                    AddArtworkEvidence(
+                        artworkByUrl,
+                        sanitized,
+                        isPoster ? "poster" : isBackdrop ? "backdrop" : "still",
+                        orient,
+                        0,
+                        0);
+
                     if (isBackdrop && string.Equals(orient, "L", StringComparison.OrdinalIgnoreCase))
                     {
-                        standardBackdropImageUrl = sanitized;
+                        standardBackdropCandidates.Add(sanitized);
                     }
                     else if (isStill && string.Equals(orient, "L", StringComparison.OrdinalIgnoreCase))
                     {
-                        standardThumbImageUrl = sanitized;
+                        standardThumbCandidates.Add(sanitized);
                     }
                     else if (isPoster && string.Equals(orient, "P", StringComparison.OrdinalIgnoreCase))
                     {
@@ -277,15 +294,23 @@ namespace Emby.M3uEditor.Plugin.Client
                 }
             }
 
+            var conflictingArtworkUrls = FindConflictingArtworkUrls(artworkByUrl);
             var pairedPosters = new List<ArtworkCandidate>();
             foreach (var standardPoster in standardPosterCandidates)
             {
-                var pairedPoster = FindConsistentPortraitPair(standardPoster.Url, untypedIcons, typedPosterCandidates);
+                var pairedPoster = FindConsistentPortraitPair(
+                    standardPoster.Url,
+                    untypedIcons,
+                    typedPosterCandidates,
+                    conflictingArtworkUrls);
                 if (pairedPoster != null && !ContainsUrl(pairedPosters, pairedPoster.Url))
                     pairedPosters.Add(pairedPoster);
             }
 
-            if (pairedPosters.Count == 1 && !HasConflictingTypedPoster(pairedPosters[0].Url, typedPosterCandidates))
+            if (pairedPosters.Count == 1 && !HasConflictingTypedPoster(
+                pairedPosters[0].Url,
+                typedPosterCandidates,
+                conflictingArtworkUrls))
             {
                 // The matching untyped icon attests reported portrait geometry only;
                 // the parser does not fetch remote image bytes for verification.
@@ -295,7 +320,7 @@ namespace Emby.M3uEditor.Plugin.Client
             }
             else if (pairedPosters.Count == 0)
             {
-                var legacyPoster = FindSingleValidTypedPoster(typedPosterCandidates);
+                var legacyPoster = FindSingleValidTypedPoster(typedPosterCandidates, conflictingArtworkUrls);
                 if (legacyPoster != null)
                 {
                     program.ImageUrl = legacyPoster.Url;
@@ -303,16 +328,24 @@ namespace Emby.M3uEditor.Plugin.Client
                     program.ImageHeight = legacyPoster.Height;
                 }
             }
-            program.BackdropImageUrl = standardBackdropImageUrl ?? legacyBackdropImageUrl;
-            program.ThumbImageUrl = standardThumbImageUrl ?? legacyThumbImageUrl;
-            program.LogoImageUrl = legacyLogoImageUrl;
+            program.BackdropImageUrl = SelectLastNonConflictingArtwork(
+                standardBackdropCandidates,
+                conflictingArtworkUrls)
+                ?? SelectLastNonConflictingArtwork(legacyBackdropCandidates, conflictingArtworkUrls);
+            program.ThumbImageUrl = SelectLastNonConflictingArtwork(
+                standardThumbCandidates,
+                conflictingArtworkUrls)
+                ?? SelectLastNonConflictingArtwork(legacyThumbCandidates, conflictingArtworkUrls);
+            program.LogoImageUrl = SelectLastNonConflictingArtwork(legacyLogoCandidates, conflictingArtworkUrls);
 
             if (!hasTypedArtworkRole && legacyImageUrl != null
-                && legacyImageWidth == 0 && legacyImageHeight == 0)
+                && (legacyImageWidth == 0 || legacyImageHeight == 0))
             {
                 // Preserve the historical fallback only for feeds that offer no
-                // recognized artwork role and no geometry to classify the icon.
-                // Known wide or square batch icons cannot occupy the portrait slot.
+                // recognized artwork role and incomplete geometry. Without both
+                // dimensions, the icon's aspect ratio is unknown, so it is not a
+                // positive portrait classification. Known wide or square batch
+                // icons cannot occupy the portrait slot.
                 program.ImageUrl = legacyImageUrl;
                 program.ImageWidth = legacyImageWidth;
                 program.ImageHeight = legacyImageHeight;
@@ -337,8 +370,12 @@ namespace Emby.M3uEditor.Plugin.Client
         private static ArtworkCandidate FindConsistentPortraitPair(
             string posterUrl,
             List<ArtworkCandidate> untypedIcons,
-            List<ArtworkCandidate> typedPosterCandidates)
+            List<ArtworkCandidate> typedPosterCandidates,
+            HashSet<string> conflictingArtworkUrls)
         {
+            if (conflictingArtworkUrls.Contains(posterUrl))
+                return null;
+
             ArtworkCandidate pair = null;
             foreach (var icon in untypedIcons)
             {
@@ -371,8 +408,14 @@ namespace Emby.M3uEditor.Plugin.Client
             return pair;
         }
 
-        private static bool HasConflictingTypedPoster(string posterUrl, List<ArtworkCandidate> typedPosterCandidates)
+        private static bool HasConflictingTypedPoster(
+            string posterUrl,
+            List<ArtworkCandidate> typedPosterCandidates,
+            HashSet<string> conflictingArtworkUrls)
         {
+            if (conflictingArtworkUrls.Contains(posterUrl))
+                return true;
+
             foreach (var typedPoster in typedPosterCandidates)
             {
                 if (!string.Equals(typedPoster.Url, posterUrl, StringComparison.Ordinal))
@@ -382,11 +425,16 @@ namespace Emby.M3uEditor.Plugin.Client
             return false;
         }
 
-        private static ArtworkCandidate FindSingleValidTypedPoster(List<ArtworkCandidate> typedPosterCandidates)
+        private static ArtworkCandidate FindSingleValidTypedPoster(
+            List<ArtworkCandidate> typedPosterCandidates,
+            HashSet<string> conflictingArtworkUrls)
         {
             ArtworkCandidate candidate = null;
             foreach (var typedPoster in typedPosterCandidates)
             {
+                if (conflictingArtworkUrls.Contains(typedPoster.Url))
+                    continue;
+
                 if (!IsPortraitPoster(typedPoster.Width, typedPoster.Height, typedPoster.Orient))
                     return null;
 
@@ -407,6 +455,50 @@ namespace Emby.M3uEditor.Plugin.Client
             return candidate;
         }
 
+        private static string SelectLastNonConflictingArtwork(
+            List<string> candidates,
+            HashSet<string> conflictingArtworkUrls)
+        {
+            for (var index = candidates.Count - 1; index >= 0; index--)
+            {
+                if (!conflictingArtworkUrls.Contains(candidates[index]))
+                    return candidates[index];
+            }
+
+            return null;
+        }
+
+        private static void AddArtworkEvidence(
+            Dictionary<string, ArtworkEvidence> artworkByUrl,
+            string url,
+            string role,
+            string orient,
+            int width,
+            int height)
+        {
+            ArtworkEvidence evidence;
+            if (!artworkByUrl.TryGetValue(url, out evidence))
+            {
+                evidence = new ArtworkEvidence();
+                artworkByUrl[url] = evidence;
+            }
+
+            evidence.Add(role, orient, width, height);
+        }
+
+        private static HashSet<string> FindConflictingArtworkUrls(
+            Dictionary<string, ArtworkEvidence> artworkByUrl)
+        {
+            var conflicts = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in artworkByUrl)
+            {
+                if (entry.Value.IsConflicting)
+                    conflicts.Add(entry.Key);
+            }
+
+            return conflicts;
+        }
+
         private static bool ContainsUrl(List<ArtworkCandidate> candidates, string url)
         {
             foreach (var candidate in candidates)
@@ -424,6 +516,54 @@ namespace Emby.M3uEditor.Plugin.Client
             public int Width { get; set; }
             public int Height { get; set; }
             public string Orient { get; set; }
+        }
+
+        private sealed class ArtworkEvidence
+        {
+            private string _role;
+            private string _posterOrient;
+            private int _width;
+            private int _height;
+            private bool _hasCompleteGeometry;
+
+            public bool IsConflicting { get; private set; }
+
+            public void Add(string role, string orient, int width, int height)
+            {
+                if (role != null)
+                {
+                    if (_role == null)
+                        _role = role;
+                    else if (!string.Equals(_role, role, StringComparison.OrdinalIgnoreCase))
+                        IsConflicting = true;
+
+                    if (string.Equals(role, "poster", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var normalizedOrient = (orient ?? string.Empty).Trim();
+                        if (normalizedOrient.Length > 0)
+                        {
+                            if (_posterOrient == null)
+                                _posterOrient = normalizedOrient;
+                            else if (!string.Equals(_posterOrient, normalizedOrient, StringComparison.OrdinalIgnoreCase))
+                                IsConflicting = true;
+                        }
+                    }
+                }
+
+                if (width > 0 && height > 0)
+                {
+                    if (!_hasCompleteGeometry)
+                    {
+                        _width = width;
+                        _height = height;
+                        _hasCompleteGeometry = true;
+                    }
+                    else if (_width != width || _height != height)
+                    {
+                        IsConflicting = true;
+                    }
+                }
+            }
         }
 
         private static int ParsePositiveDimension(string value)

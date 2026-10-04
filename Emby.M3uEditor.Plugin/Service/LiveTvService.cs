@@ -536,11 +536,15 @@ namespace Emby.M3uEditor.Plugin.Service
                         sb.AppendFormat(CultureInfo.InvariantCulture,
                             "    <desc>{0}</desc>\n", EscapeXml(desc));
                     }
-                    AppendXmltvArtwork(sb, program);
-                    if (program.IsLive) sb.AppendLine("    <live />");
-                    if (program.IsNew) sb.AppendLine("    <new />");
+                    AppendXmltvPosterIcon(sb, program);
+                    AppendXmltvIdentity(sb, program);
+                    // XMLTV's published DTD has no <live> programme child. The
+                    // internal and JSON IsLive fields remain unchanged; omit only
+                    // the non-standard re-export element.
                     if (program.IsPreviouslyShown) sb.AppendLine("    <previously-shown />");
                     if (program.IsPremiere) sb.AppendLine("    <premiere />");
+                    if (program.IsNew) sb.AppendLine("    <new />");
+                    AppendXmltvImages(sb, program);
                     sb.AppendLine("  </programme>");
                 }
             }
@@ -550,6 +554,13 @@ namespace Emby.M3uEditor.Plugin.Service
         }
 
         internal static void AppendXmltvArtwork(StringBuilder sb, EpgProgram program)
+        {
+            AppendXmltvPosterIcon(sb, program);
+            AppendXmltvIdentity(sb, program);
+            AppendXmltvImages(sb, program);
+        }
+
+        private static void AppendXmltvIdentity(StringBuilder sb, EpgProgram program)
         {
             // episode-num is a standard XMLTV extension point. Preserve only the
             // explicit producer contract; generic Id is a transport occurrence.
@@ -565,23 +576,32 @@ namespace Emby.M3uEditor.Plugin.Service
                     "    <episode-num system=\"m3u-editor:series-id\">{0}</episode-num>\n",
                     EscapeXml(program.SeriesId.Trim()));
             }
+        }
 
-            var posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.PosterUrl);
-            var posterWidth = program.PosterWidth;
-            var posterHeight = program.PosterHeight;
-            if (posterUrl == null || posterWidth <= 0 || posterHeight <= posterWidth)
+        private static void AppendXmltvPosterIcon(StringBuilder sb, EpgProgram program)
+        {
+            string posterUrl;
+            int posterWidth;
+            int posterHeight;
+            GetValidatedXmltvPoster(program, out posterUrl, out posterWidth, out posterHeight);
+            if (posterUrl != null)
             {
-                posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.ImageUrl);
-                posterWidth = program.ImageWidth;
-                posterHeight = program.ImageHeight;
-            }
-            if (posterUrl != null && posterWidth > 0 && posterHeight > posterWidth)
-            {
-                sb.AppendFormat(CultureInfo.InvariantCulture,
-                    "    <image type=\"poster\" orient=\"P\">{0}</image>\n", EscapeXml(posterUrl));
                 sb.AppendFormat(CultureInfo.InvariantCulture,
                     "    <icon src=\"{0}\" width=\"{1}\" height=\"{2}\" />\n",
                     EscapeXml(posterUrl), posterWidth, posterHeight);
+            }
+        }
+
+        private static void AppendXmltvImages(StringBuilder sb, EpgProgram program)
+        {
+            string posterUrl;
+            int posterWidth;
+            int posterHeight;
+            GetValidatedXmltvPoster(program, out posterUrl, out posterWidth, out posterHeight);
+            if (posterUrl != null)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "    <image type=\"poster\" orient=\"P\">{0}</image>\n", EscapeXml(posterUrl));
             }
 
             var backdropUrl = Util.UrlValidator.SanitizeHttpUrl(program.BackdropUrl)
@@ -597,6 +617,29 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 sb.AppendFormat(CultureInfo.InvariantCulture,
                     "    <image type=\"still\" orient=\"L\">{0}</image>\n", EscapeXml(stillUrl));
+            }
+        }
+
+        private static void GetValidatedXmltvPoster(
+            EpgProgram program,
+            out string posterUrl,
+            out int posterWidth,
+            out int posterHeight)
+        {
+            posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.PosterUrl);
+            posterWidth = program.PosterWidth;
+            posterHeight = program.PosterHeight;
+            if (posterUrl == null || posterWidth <= 0 || posterHeight <= posterWidth)
+            {
+                posterUrl = Util.UrlValidator.SanitizeHttpUrl(program.ImageUrl);
+                posterWidth = program.ImageWidth;
+                posterHeight = program.ImageHeight;
+            }
+            if (posterUrl == null || posterWidth <= 0 || posterHeight <= posterWidth)
+            {
+                posterUrl = null;
+                posterWidth = 0;
+                posterHeight = 0;
             }
         }
 
@@ -616,9 +659,9 @@ namespace Emby.M3uEditor.Plugin.Service
                     await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        var epgListings = await FetchEpgForChannelAsync(channel.StreamId, cancellationToken).ConfigureAwait(false);
+                        var programs = await FetchEpgForChannelCachedAsync(channel.StreamId, cancellationToken).ConfigureAwait(false);
 
-                        if (epgListings == null || epgListings.Listings == null)
+                        if (programs == null)
                         {
                             if (IsLiveTvDiagnosticsEnabled())
                             {
@@ -630,28 +673,28 @@ namespace Emby.M3uEditor.Plugin.Service
                         // Warm the per-channel cache so GetProgramsInternal finds hits without re-fetching.
                         lock (_perChannelEpgLock)
                         {
-                            _perChannelEpgCache[channel.StreamId] = (epgListings.Listings, DateTime.UtcNow);
+                            _perChannelEpgCache[channel.StreamId] = (programs, DateTime.UtcNow);
                         }
 
                         var channelId = !string.IsNullOrEmpty(channel.EpgChannelId)
                             ? channel.EpgChannelId
                             : channel.StreamId.ToString(CultureInfo.InvariantCulture);
 
-                        foreach (var program in epgListings.Listings.Where(p => string.IsNullOrEmpty(p.ChannelId)))
+                        foreach (var program in programs.Where(p => string.IsNullOrEmpty(p.ChannelId)))
                         {
                             program.ChannelId = channelId;
                         }
 
                         var nowUnix = now.ToUnixTimeSeconds();
                         var endUnix = endTime.ToUnixTimeSeconds();
-                        var filtered = epgListings.Listings
+                        var filtered = programs
                             .Where(p => p.StopTimestamp > nowUnix && p.StartTimestamp < endUnix)
                             .ToList();
                         if (IsLiveTvDiagnosticsEnabled())
                         {
                             _logger.Info("[livetv-diag] epg-data stream={0} rawPrograms={1} windowPrograms={2} epgId='{3}' name='{4}'",
                                 channel.StreamId,
-                                epgListings.Listings.Count,
+                                programs.Count,
                                 filtered.Count,
                                 channelId,
                                 channel.Name ?? string.Empty);
@@ -725,7 +768,7 @@ namespace Emby.M3uEditor.Plugin.Service
             if (xmltvCacheFresh)
             {
                 var programs = PopulateFromXmltvCache(streamId);
-                if (Diagnostics.IsEnabled)
+                if (IsLiveTvDiagnosticsEnabled())
                 {
                     _logger.Info("[livetv-diag] stream={0} xmltv-cache-hit programs={1}", streamId, programs != null ? programs.Count : 0);
                 }
@@ -740,7 +783,7 @@ namespace Emby.M3uEditor.Plugin.Service
             if (!xmltvCacheFresh && (!_xmltvFailed || xmltvFailedButRetryDue))
             {
                 var xmltvOk = await TryFetchXmltvEpgAsync(cancellationToken).ConfigureAwait(false);
-                if (Diagnostics.IsEnabled)
+                if (IsLiveTvDiagnosticsEnabled())
                 {
                     _logger.Info("[livetv-diag] stream={0} xmltv-refetch attempted ok={1} failedFlag={2}", streamId, xmltvOk, _xmltvFailed);
                 }
@@ -764,7 +807,7 @@ namespace Emby.M3uEditor.Plugin.Service
             _logger.Debug("FetchEpgForChannelCachedAsync: using JSON fallback for stream {0}", streamId);
             var epgListings = await FetchEpgForChannelAsync(streamId, cancellationToken).ConfigureAwait(false);
             var jsonPrograms = epgListings?.Listings ?? new List<EpgProgram>();
-            if (Diagnostics.IsEnabled)
+            if (IsLiveTvDiagnosticsEnabled())
             {
                 _logger.Info("[livetv-diag] stream={0} json-fallback programs={1}", streamId, jsonPrograms.Count);
             }
