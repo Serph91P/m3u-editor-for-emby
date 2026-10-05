@@ -17,16 +17,16 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void ProjectAndReleasePaths_UseNewIdentity()
         {
-            Assert.True(File.Exists(Path.Combine(RepositoryRoot,
+            Assert.True(File.Exists(Path.Join(RepositoryRoot,
                 "Emby.M3uEditor.Plugin", "Emby.M3uEditor.Plugin.csproj")));
-            Assert.True(File.Exists(Path.Combine(RepositoryRoot,
+            Assert.True(File.Exists(Path.Join(RepositoryRoot,
                 "Emby.M3uEditor.Plugin.Tests", "Emby.M3uEditor.Plugin.Tests.csproj")));
 
             var releaseConfig = ReadText(".releaserc.json");
             Assert.Contains("artifacts/Emby.M3uEditor.Plugin.dll", releaseConfig);
-            Assert.Contains("m3u-editor-for-emby-${nextRelease.version}.zip", releaseConfig);
-            Assert.Contains("m3u-editor-for-emby-${nextRelease.version}.sha256", releaseConfig);
-            Assert.Contains("m3u-editor-for-emby-${nextRelease.version}.md5", releaseConfig);
+            Assert.Contains("artifacts/m3u-editor-for-emby-*.zip", releaseConfig);
+            Assert.Contains("artifacts/m3u-editor-for-emby-*.sha256", releaseConfig);
+            Assert.Contains("artifacts/m3u-editor-for-emby-*.md5", releaseConfig);
 
             var package = ReadText("package.json");
             Assert.Contains("\"name\": \"m3u-editor-for-emby-release\"", package);
@@ -59,7 +59,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "HttpUserAgent", "IncludeAdultChannels", "LastChannelListHash", "LastInstalledVersion",
                 "LiveTvOutputFormat", "LiveTvTunerCount", "M3UCacheMinutes",
                 "ManagedActiveGeneration", "ManagedApprovedOutputRoots", "ManagedCatalogRevision",
-                "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
+                "ManagedDirectoryOwnershipJson", "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
                 "ManagedOmittedVersions", "ManagedPreviousGeneration", "ManagedPublishingApiVersion",
                 "ManagedPublishingEnabled", "ManagedPublishingIntegrationId", "ManagedSetupLastResult",
                 "ManagedSetupReady", "Password", "SelectedLiveCategoryIds", "UseBetaChannel",
@@ -224,7 +224,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         private static string ReadText(string relativePath)
         {
-            return File.ReadAllText(Path.Combine(RepositoryRoot, relativePath));
+            return File.ReadAllText(Path.Join(RepositoryRoot, relativePath));
         }
 
         private static IEnumerable<string> GetTrackedFiles()
@@ -249,8 +249,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
             while (directory != null)
             {
-                if (File.Exists(Path.Combine(directory.FullName, "package.json"))
-                    && Directory.Exists(Path.Combine(directory.FullName, "scripts", "release")))
+                if (File.Exists(Path.Join(directory.FullName, "package.json"))
+                    && Directory.Exists(Path.Join(directory.FullName, "scripts", "release")))
                 {
                     return directory.FullName;
                 }

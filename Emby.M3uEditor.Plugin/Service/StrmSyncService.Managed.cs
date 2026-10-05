@@ -299,23 +299,18 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var mapping = catalog.Mappings[index];
-                    ManagedPublishResult published;
                     string approvalError;
-                    if (!ManagedOutputPolicy.IsApproved(
+                    var published = !ManagedOutputPolicy.IsApproved(
                         mapping.TargetLibrary.OutputPath,
                         approvedOutputRoots,
-                        out approvalError))
-                    {
-                        published = Failed(mapping.Revision, approvalError);
-                    }
-                    else
-                    {
-                        published = await PublishManagedMappingAsync(
+                        out approvalError)
+                        ? Failed(mapping.Revision, approvalError)
+                        : await PublishManagedMappingAsync(
                             mapping,
                             cancellationToken,
                             approvedOutputRoots,
-                            config).ConfigureAwait(false);
-                    }
+                            config,
+                            saveConfig).ConfigureAwait(false);
                     var activeGenerationChanged = published.Success && !published.Duplicate;
 
                     string currentRoot;
@@ -688,6 +683,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (HttpRequestException)
             {
+                return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -695,9 +691,11 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (TaskCanceledException)
             {
+                return;
             }
             catch (InvalidOperationException)
             {
+                return;
             }
         }
 
@@ -721,8 +719,8 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             var root = Path.GetFullPath(outputRoot)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
-            var manifest = ReadManifest(Path.Combine(metadataRoot, "active.json"));
+            var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
+            var manifest = ReadManifest(CombineUnderRoot(metadataRoot, "active.json"));
             if (manifest == null ||
                 !string.Equals(manifest.MappingUuid, mappingUuid, StringComparison.OrdinalIgnoreCase) ||
                 !ManifestFilesAreValid(root, manifest))
@@ -751,7 +749,8 @@ namespace Emby.M3uEditor.Plugin.Service
             M3uEditorMapping mapping,
             CancellationToken cancellationToken,
             string approvedOutputRoots = null,
-            PluginConfiguration setupConfig = null)
+            PluginConfiguration setupConfig = null,
+            Action saveConfig = null)
         {
             string approvalError;
             if (approvedOutputRoots != null && !ManagedOutputPolicy.IsApproved(
@@ -770,6 +769,11 @@ namespace Emby.M3uEditor.Plugin.Service
                 Mappings = new List<M3uEditorMapping> { mapping }
             });
 
+            if (mapping == null || mapping.TargetLibrary == null)
+            {
+                throw new InvalidOperationException("Managed catalog mapping is invalid.");
+            }
+
             var root = Path.GetFullPath(mapping.TargetLibrary.OutputPath)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var rootLock = ManagedRootLocks.GetOrAdd(root, _ => new SemaphoreSlim(1, 1));
@@ -780,6 +784,24 @@ namespace Emby.M3uEditor.Plugin.Service
 
             try
             {
+                if (!Directory.Exists(root) && setupConfig != null)
+                {
+                    string provisioningError;
+                    var ownerPath = ManagedOwnerPathProvider == null
+                        ? Plugin.InstanceOrNull?.DataFolderPath
+                        : ManagedOwnerPathProvider();
+                    if (!ManagedLibraryProvisioningService.TryProvisionMapping(
+                        ownerPath,
+                        setupConfig,
+                        mapping.IntegrationId,
+                        mapping.MappingUuid,
+                        root,
+                        saveConfig,
+                        out provisioningError))
+                    {
+                        return Failed(mapping.Revision, provisioningError);
+                    }
+                }
                 return PublishManagedMapping(
                     mapping,
                     root,
@@ -888,11 +910,11 @@ namespace Emby.M3uEditor.Plugin.Service
             string mappingUuid,
             CancellationToken cancellationToken)
         {
-            var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
-            var activeManifestPath = Path.Combine(metadataRoot, "active.json");
-            var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
-            var previousFilesRoot = Path.Combine(metadataRoot, "previous-files");
-            var currentFilesRoot = Path.Combine(metadataRoot, "rollback-current");
+            var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
+            var activeManifestPath = CombineUnderRoot(metadataRoot, "active.json");
+            var previousManifestPath = CombineUnderRoot(metadataRoot, "previous.json");
+            var previousFilesRoot = CombineUnderRoot(metadataRoot, "previous-files");
+            var currentFilesRoot = CombineUnderRoot(metadataRoot, "rollback-current");
             ManagedGenerationManifest active = null;
             ManagedGenerationManifest previous = null;
             var currentMoved = new List<string>();
@@ -985,12 +1007,12 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (active != null)
             {
-                WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "active.json"), active);
+                WriteManifestAtomic(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/active.json"), active);
             }
 
             if (previous != null)
             {
-                WriteManifestAtomic(Path.Combine(root, ManagedMetadataDirectoryName, "previous.json"), previous);
+                WriteManifestAtomic(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/previous.json"), previous);
             }
         }
 
@@ -1015,15 +1037,15 @@ namespace Emby.M3uEditor.Plugin.Service
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
+                var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
                 EnsureNoReparsePoint(root, metadataRoot);
-                var activeManifestPath = Path.Combine(metadataRoot, "active.json");
+                var activeManifestPath = CombineUnderRoot(metadataRoot, "active.json");
                 if (Directory.Exists(metadataRoot) && !File.Exists(activeManifestPath) &&
                     Directory.EnumerateFileSystemEntries(metadataRoot).Any())
                 {
                     throw new InvalidOperationException("Managed metadata path contains files not owned by this plugin.");
                 }
-                var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
+                var previousManifestPath = CombineUnderRoot(metadataRoot, "previous.json");
                 activeManifest = ReadManifest(activeManifestPath);
                 previousManifest = ReadManifest(previousManifestPath);
                 if (activeManifest != null &&
@@ -1059,13 +1081,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 ComputeDiff(plan, activeManifest, result);
                 EnsureWritableManagedRoot(root);
                 Directory.CreateDirectory(metadataRoot);
-                stagingRoot = Path.Combine(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
+                stagingRoot = CombineUnderRoot(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(stagingRoot);
                 WriteAndValidateStaging(stagingRoot, plan, cancellationToken);
                 InvokeManagedPhase("after-stage");
                 EnsureCurrentSetupApproval(mapping, root, approvedOutputRoots, setupConfig);
 
-                previousFilesRoot = Path.Combine(metadataRoot, "previous-files");
+                previousFilesRoot = CombineUnderRoot(metadataRoot, "previous-files");
                 if (Directory.Exists(previousFilesRoot))
                 {
                     if (previousManifest == null || !ManifestOwnsDirectory(previousFilesRoot, previousManifest))
@@ -1073,7 +1095,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         throw new InvalidOperationException("The previous managed generation is invalid.");
                     }
 
-                    previousBackupRoot = Path.Combine(metadataRoot, "previous-backup-" + Guid.NewGuid().ToString("N"));
+                    previousBackupRoot = CombineUnderRoot(metadataRoot, "previous-backup-" + Guid.NewGuid().ToString("N"));
                     Directory.Move(previousFilesRoot, previousBackupRoot);
                     mutationStarted = true;
                 }
@@ -1447,19 +1469,20 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static long GetGeneratedOutputBytes(IEnumerable<ManagedPlannedFile> plan)
         {
-            long total = 0;
-            foreach (var file in plan)
-            {
-                var fileBytes = Encoding.UTF8.GetByteCount(file.Content);
-                if (fileBytes > MaximumGeneratedFileBytes)
-                {
-                    throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
-                }
+            return plan.Aggregate(
+                0L,
+                (total, file) => AddGeneratedBytes(total, GetGeneratedFileBytes(file)));
+        }
 
-                total = AddGeneratedBytes(total, fileBytes);
+        private static long GetGeneratedFileBytes(ManagedPlannedFile file)
+        {
+            var fileBytes = Encoding.UTF8.GetByteCount(file.Content);
+            if (fileBytes > MaximumGeneratedFileBytes)
+            {
+                throw new InvalidOperationException("Managed publication generated file byte limit exceeded.");
             }
 
-            return total;
+            return fileBytes;
         }
 
         private static long AddGeneratedBytes(long total, long fileBytes)
@@ -1517,8 +1540,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 ?? new Dictionary<string, ManagedManifestFile>(StringComparer.OrdinalIgnoreCase);
             var next = plan.ToDictionary(file => file.RelativePath, StringComparer.OrdinalIgnoreCase);
             result.Added = next.Keys.Count(path => !current.ContainsKey(path));
-            result.Changed = next.Count(pair => current.ContainsKey(pair.Key) &&
-                !string.Equals(current[pair.Key].Sha256, pair.Value.Sha256, StringComparison.Ordinal));
+            result.Changed = next.Count(pair => current.TryGetValue(pair.Key, out var existing) &&
+                !string.Equals(existing.Sha256, pair.Value.Sha256, StringComparison.Ordinal));
             result.Removed = current.Keys.Count(path => !next.ContainsKey(path));
         }
 
@@ -1534,7 +1557,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 throw new InvalidOperationException("Managed output root cannot be a symbolic link.");
             }
 
-            var probe = Path.Combine(root, ".m3u-editor-write-" + Guid.NewGuid().ToString("N"));
+            var probe = CombineUnderRoot(root, ".m3u-editor-write-" + Guid.NewGuid().ToString("N"));
             File.WriteAllText(probe, string.Empty);
             File.Delete(probe);
         }
@@ -1546,7 +1569,7 @@ namespace Emby.M3uEditor.Plugin.Service
             var current = root;
             foreach (var segment in relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries))
             {
-                current = Path.Combine(current, segment);
+                current = CombineUnderRoot(current, segment);
                 if ((Directory.Exists(current) || File.Exists(current)) &&
                     (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 {
@@ -1557,11 +1580,11 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static string CombineUnderRoot(string root, string relativePath)
         {
-            var combined = Path.GetFullPath(Path.Combine(
+            string combined;
+            if (!ManagedOutputPolicy.TryJoinUnderRoot(
                 root,
-                relativePath.Replace('/', Path.DirectorySeparatorChar)));
-            var prefix = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!combined.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                relativePath.Replace('/', Path.DirectorySeparatorChar),
+                out combined))
             {
                 throw new InvalidOperationException("Managed publication path is outside the output root.");
             }
@@ -1662,21 +1685,28 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             var expectedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var path in expectedFiles)
-            {
-                var directory = Path.GetDirectoryName(path);
-                while (!string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
-                {
-                    expectedDirectories.Add(directory);
-                    directory = Path.GetDirectoryName(directory);
-                }
-            }
+            expectedFiles
+                .Select(Path.GetDirectoryName)
+                .ToList()
+                .ForEach(directory => AddExpectedParentDirectories(expectedDirectories, directory, root));
 
             var actualDirectories = new HashSet<string>(
                 Directory.GetDirectories(root, "*", SearchOption.AllDirectories).Select(Path.GetFullPath),
                 StringComparer.OrdinalIgnoreCase);
             return expectedDirectories.SetEquals(actualDirectories) &&
                 actualDirectories.All(path => (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0);
+        }
+
+        private static void AddExpectedParentDirectories(
+            HashSet<string> expectedDirectories,
+            string directory,
+            string root)
+        {
+            while (!string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
+            {
+                expectedDirectories.Add(directory);
+                directory = Path.GetDirectoryName(directory);
+            }
         }
 
         private static bool IsManagedHash(string value)
@@ -1753,9 +1783,9 @@ namespace Emby.M3uEditor.Plugin.Service
                 Directory.Move(previousBackupRoot, previousFilesRoot);
             }
 
-            var metadataRoot = Path.Combine(root, ManagedMetadataDirectoryName);
-            var activeManifestPath = Path.Combine(metadataRoot, "active.json");
-            var previousManifestPath = Path.Combine(metadataRoot, "previous.json");
+            var metadataRoot = CombineUnderRoot(root, ManagedMetadataDirectoryName);
+            var activeManifestPath = CombineUnderRoot(metadataRoot, "active.json");
+            var previousManifestPath = CombineUnderRoot(metadataRoot, "previous.json");
             if (active == null)
             {
                 File.Delete(activeManifestPath);
@@ -1778,12 +1808,10 @@ namespace Emby.M3uEditor.Plugin.Service
         private static void DeleteEmptyDirectoryTree(string root)
         {
             foreach (var directory in Directory.GetDirectories(root, "*", SearchOption.AllDirectories)
+                .Where(directory => !Directory.EnumerateFileSystemEntries(directory).Any())
                 .OrderByDescending(path => path.Length))
             {
-                if (!Directory.EnumerateFileSystemEntries(directory).Any())
-                {
-                    Directory.Delete(directory);
-                }
+                Directory.Delete(directory);
             }
 
             if (Directory.EnumerateFileSystemEntries(root).Any())
@@ -1807,9 +1835,11 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (IOException)
             {
+                return;
             }
             catch (UnauthorizedAccessException)
             {
+                return;
             }
         }
 

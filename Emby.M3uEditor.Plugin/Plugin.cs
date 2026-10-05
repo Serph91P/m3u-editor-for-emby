@@ -22,13 +22,13 @@ namespace Emby.M3uEditor.Plugin
         private readonly IApplicationHost _applicationHost;
         private readonly IApplicationPaths _applicationPaths;
         private readonly ILogger _reconcileLogger;
-        private LiveTvService _liveTvService;
-        private StrmSyncService _strmSyncService;
+        private readonly LiveTvService _liveTvService;
+        private readonly StrmSyncService _strmSyncService;
 
         public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer, ILogManager logManager, IApplicationHost applicationHost)
             : base(applicationPaths, xmlSerializer)
         {
-            _instance = this;
+            SetInstance(this);
             _applicationHost = applicationHost;
             _applicationPaths = applicationPaths;
             _reconcileLogger = logManager.GetLogger("M3uEditor.Reconcile");
@@ -50,6 +50,11 @@ namespace Emby.M3uEditor.Plugin
         public override Guid Id => Guid.Parse("b7e3c4a1-9f2d-4e8b-a5c6-d1f0e2b3c4a5");
 
         public static Plugin Instance => _instance ?? throw new InvalidOperationException("Plugin not initialized");
+
+        private static void SetInstance(Plugin instance)
+        {
+            _instance = instance;
+        }
 
         /// <summary>Returns the current instance, or null if the plugin has not been initialised (e.g. during unit tests).</summary>
         internal static Plugin InstanceOrNull => _instance;
@@ -89,6 +94,15 @@ namespace Emby.M3uEditor.Plugin
                     configuration,
                     integrationId,
                     () => UpdateConfiguration(configuration));
+            }
+        }
+
+        internal ManagedLibraryOperationResult UpdateManagedLibrary(
+            Func<PluginConfiguration, ManagedLibraryOperationResult> operation)
+        {
+            lock (ConfigurationTransactionGate)
+            {
+                return operation(Configuration);
             }
         }
 
