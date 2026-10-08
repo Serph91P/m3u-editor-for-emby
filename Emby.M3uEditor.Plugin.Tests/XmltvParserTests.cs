@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
+using System.Text.Json;
 using Emby.M3uEditor.Plugin.Client;
 using Emby.M3uEditor.Plugin.Client.Models;
 using Emby.M3uEditor.Plugin.Service;
@@ -95,6 +97,44 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("https://image.tmdb.org/backdrop.jpg", prog.BackdropImageUrl);
             Assert.Equal("https://image.tmdb.org/still.jpg", prog.ThumbImageUrl);
             Assert.Equal("https://image.tmdb.org/logo.png", prog.LogoImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_ExactCoreExportFromSerializedEnricherOutput_ReachesPrimaryProgramInfo()
+        {
+            var xmlPath = System.Environment.GetEnvironmentVariable("CROSS_REPO_CORE_XML");
+            var enricherOutputPath = System.Environment.GetEnvironmentVariable("CROSS_REPO_ENRICHER_OUTPUT");
+            if (string.IsNullOrWhiteSpace(xmlPath) || string.IsNullOrWhiteSpace(enricherOutputPath))
+                return;
+
+            using var enricherOutput = JsonDocument.Parse(File.ReadAllBytes(enricherOutputPath));
+            var root = enricherOutput.RootElement;
+            var expectedTitle = root.GetProperty("programme_before").GetProperty("title").GetString();
+            var expectedPoster = root.GetProperty("host_changes").GetProperty("images")[0];
+            var expectedUrl = expectedPoster.GetProperty("url").GetString();
+            var expectedWidth = expectedPoster.GetProperty("width").GetInt32();
+            var expectedHeight = expectedPoster.GetProperty("height").GetInt32();
+
+            using var stream = File.OpenRead(xmlPath);
+            var programmes = XmltvParser.Parse(stream, null, null);
+            var program = Assert.Single(programmes.Values.SelectMany(value => value).Where(value => value.Title == expectedTitle));
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
+
+            if (string.Equals(System.Environment.GetEnvironmentVariable("CROSS_REPO_EXPECT_EMBY_PRIMARY"), "false", System.StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.Null(program.ImageUrl);
+                Assert.Equal(0, program.ImageWidth);
+                Assert.Equal(0, program.ImageHeight);
+                Assert.Null(info.ImageUrl);
+                return;
+            }
+
+            Assert.Equal(expectedUrl, program.ImageUrl);
+            Assert.Equal(expectedWidth, program.ImageWidth);
+            Assert.Equal(expectedHeight, program.ImageHeight);
+            Assert.Equal(expectedUrl, info.ImageUrl);
+            Assert.Equal(expectedWidth, info.ImageWidth);
+            Assert.Equal(expectedHeight, info.ImageHeight);
         }
 
         [Fact]
@@ -221,6 +261,41 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ParseProgramme_OrderedTypedBackdrops_SelectsFirstSuitableCandidateForProgramInfo()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""ordered""><icon src=""https://example.com/canonical-backdrop.jpg"" type=""backdrop"" width=""1920"" height=""1080"" orient=""L"" /><icon src=""https://example.com/alternate-backdrop.jpg"" type=""backdrop"" width=""1280"" height=""720"" orient=""L"" /></programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["ordered"]);
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "ordered", program.Title, program.Description);
+
+            Assert.Equal("https://example.com/canonical-backdrop.jpg", program.BackdropImageUrl);
+            Assert.Equal("https://example.com/canonical-backdrop.jpg", info.BackdropImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_OrderedTypedBackdrops_SkipsConflictsAndKeepsOtherRolePriority()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""conflict-first""><icon src=""https://example.com/rejected.jpg"" type=""backdrop"" width=""1920"" height=""1080"" orient=""L"" /><icon src=""https://example.com/rejected.jpg"" type=""poster"" width=""500"" height=""750"" orient=""P"" /><icon src=""https://example.com/eligible.jpg"" type=""backdrop"" width=""1280"" height=""720"" orient=""L"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""all-conflicting""><icon src=""https://example.com/rejected-only.jpg"" type=""backdrop"" width=""1920"" height=""1080"" orient=""L"" /><icon src=""https://example.com/rejected-only.jpg"" type=""poster"" width=""500"" height=""750"" orient=""P"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""duplicate""><icon src=""https://example.com/canonical.jpg"" type=""backdrop"" width=""1920"" height=""1080"" orient=""L"" /><icon src=""https://example.com/canonical.jpg"" type=""backdrop"" width=""1920"" height=""1080"" orient=""L"" /><icon src=""https://example.com/alternate.jpg"" type=""backdrop"" width=""1280"" height=""720"" orient=""L"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""other-roles""><image type=""backdrop"" orient=""L"">https://example.com/standard-first.jpg</image><image type=""backdrop"" orient=""L"">https://example.com/standard-last.jpg</image><image type=""still"" orient=""L"">https://example.com/still-first.jpg</image><image type=""still"" orient=""L"">https://example.com/still-last.jpg</image><icon src=""https://example.com/logo-first.png"" type=""logo"" /><icon src=""https://example.com/logo-last.png"" type=""logo"" /></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            Assert.Equal("https://example.com/eligible.jpg", Assert.Single(programs["conflict-first"]).BackdropImageUrl);
+            Assert.Null(Assert.Single(programs["all-conflicting"]).BackdropImageUrl);
+            Assert.Equal("https://example.com/canonical.jpg", Assert.Single(programs["duplicate"]).BackdropImageUrl);
+
+            var otherRoles = Assert.Single(programs["other-roles"]);
+            Assert.Equal("https://example.com/standard-first.jpg", otherRoles.BackdropImageUrl);
+            Assert.Equal("https://example.com/still-last.jpg", otherRoles.ThumbImageUrl);
+            Assert.Equal("https://example.com/logo-last.png", otherRoles.LogoImageUrl);
+        }
+
+        [Fact]
         public void ParseProgramme_DimensionlessStandardPosterDoesNotUseUntypedFallback()
         {
             const string xml = @"<tv>
@@ -300,15 +375,16 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ParseProgramme_KnownWideOrSquareUntypedIcons_DoNotReachProgramInfoPrimary()
+        public void ParseProgramme_Non16By9OrSquareUntypedIcons_DoNotReachProgramInfoPrimary()
         {
             const string xml = @"<tv>
-  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""wide""><icon src=""https://example.com/wide.jpg"" width=""1280"" height=""720"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""non16by9""><icon src=""https://example.com/non16by9.jpg"" width=""1280"" height=""800"" /></programme>
   <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""square""><icon src=""https://example.com/square.jpg"" width=""750"" height=""750"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""portrait""><icon src=""https://example.com/portrait.jpg"" width=""500"" height=""750"" /></programme>
 </tv>";
 
             var programs = Parse(xml);
-            foreach (var channelId in new[] { "wide", "square" })
+            foreach (var channelId in new[] { "non16by9", "square", "portrait" })
             {
                 var program = Assert.Single(programs[channelId]);
                 var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, channelId, program.Title, program.Description);
@@ -316,6 +392,84 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.Null(program.ImageUrl);
                 Assert.Null(info.ImageUrl);
             }
+        }
+
+        [Fact]
+        public void ParseProgramme_Legacy16By9IconAfterSquares_ReachesPrimaryAndBackdropForAllFrozenShapes()
+        {
+            var cases = new[]
+            {
+                new { Id = "case_02", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 1400, 1400 }, new[] { 960, 540 } } },
+                new { Id = "case_04", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 1400, 1400 }, new[] { 1400, 1400 }, new[] { 960, 540 } } },
+                new { Id = "case_06", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 2000, 2000 }, new[] { 1400, 1400 }, new[] { 960, 540 } } },
+                new { Id = "case_07", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 1400, 1400 }, new[] { 960, 540 } } },
+                new { Id = "case_08", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 1400, 1400 }, new[] { 2000, 2000 }, new[] { 960, 540 } } },
+                new { Id = "case_09", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 960, 540 } } },
+                new { Id = "case_10", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 1400, 1400 }, new[] { 1400, 1400 }, new[] { 960, 540 } } },
+                new { Id = "case_11", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 960, 540 } } },
+                new { Id = "case_13", Dimensions = new[] { new[] { 1400, 1400 }, new[] { 960, 540 } } },
+            };
+
+            foreach (var testCase in cases)
+            {
+                var xml = new StringBuilder();
+                xml.Append("<tv><programme start=\"20250101120000 +0000\" stop=\"20250101130000 +0000\" channel=\"");
+                xml.Append(testCase.Id);
+                xml.Append("\">");
+                xml.Append("<icon src=\"https://fixture.invalid/");
+                xml.Append(testCase.Id);
+                xml.Append("-square-0.jpg\" />");
+                for (var index = 0; index < testCase.Dimensions.Length; index++)
+                {
+                    var dimensions = testCase.Dimensions[index];
+                    var isLandscape = dimensions[0] == 960 && dimensions[1] == 540;
+                    xml.Append("<icon src=\"https://fixture.invalid/");
+                    xml.Append(testCase.Id);
+                    xml.Append(isLandscape ? "-landscape.jpg\"" : "-square-" + index + ".jpg\"");
+                    xml.Append(" width=\"");
+                    xml.Append(dimensions[0]);
+                    xml.Append("\" height=\"");
+                    xml.Append(dimensions[1]);
+                    xml.Append("\" />");
+                }
+                xml.Append("</programme></tv>");
+
+                var program = Assert.Single(Parse(xml.ToString())[testCase.Id]);
+                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, testCase.Id, program.Title, program.Description);
+                var expectedUrl = "https://fixture.invalid/" + testCase.Id + "-landscape.jpg";
+
+                Assert.Equal(expectedUrl, program.ImageUrl);
+                Assert.Equal(960, program.ImageWidth);
+                Assert.Equal(540, program.ImageHeight);
+                Assert.Equal(expectedUrl, program.BackdropImageUrl);
+                Assert.Equal(expectedUrl, info.ImageUrl);
+                Assert.Equal(960, info.ImageWidth);
+                Assert.Equal(540, info.ImageHeight);
+                Assert.Equal(expectedUrl, info.BackdropImageUrl);
+            }
+        }
+
+        [Fact]
+        public void ParseProgramme_LegacyLandscapeFallback_AbstainsOnAlternativesAndConflicts()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""duplicate""><icon src=""https://example.com/duplicate.jpg"" width=""960"" height=""540"" orient=""L"" /><icon src=""https://example.com/duplicate.jpg"" width=""960"" height=""540"" orient=""L"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""alternatives""><icon src=""https://example.com/one.jpg"" width=""960"" height=""540"" /><icon src=""https://example.com/two.jpg"" width=""1280"" height=""720"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""conflict""><icon src=""https://example.com/conflict.jpg"" width=""960"" height=""540"" orient=""L"" /><icon src=""https://example.com/conflict.jpg"" width=""960"" height=""540"" orient=""P"" /></programme>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""typed""><icon src=""https://example.com/wide.jpg"" width=""960"" height=""540"" /><icon src=""https://example.com/backdrop.jpg"" type=""backdrop"" width=""1920"" height=""1080"" orient=""L"" /></programme>
+</tv>";
+
+            var programs = Parse(xml);
+            var duplicate = Assert.Single(programs["duplicate"]);
+            Assert.Equal("https://example.com/duplicate.jpg", duplicate.ImageUrl);
+            Assert.Equal("https://example.com/duplicate.jpg", duplicate.BackdropImageUrl);
+
+            foreach (var channelId in new[] { "alternatives", "conflict", "typed" })
+            {
+                var program = Assert.Single(programs[channelId]);
+                Assert.Null(program.ImageUrl);
+            }
+            Assert.Equal("https://example.com/backdrop.jpg", Assert.Single(programs["typed"]).BackdropImageUrl);
         }
 
         [Fact]

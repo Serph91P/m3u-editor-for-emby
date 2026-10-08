@@ -244,6 +244,7 @@ namespace Emby.M3uEditor.Plugin.Client
                             Url = sanitized,
                             Width = legacyImageWidth,
                             Height = legacyImageHeight,
+                            Orient = reader.GetAttribute("orient"),
                         });
                     }
                 }
@@ -328,30 +329,85 @@ namespace Emby.M3uEditor.Plugin.Client
                     program.ImageHeight = legacyPoster.Height;
                 }
             }
-            program.BackdropImageUrl = SelectLastNonConflictingArtwork(
+            // Enrichers emit ordered backdrop candidates with the canonical image first.
+            // Preserve that priority only for the backdrop contract; thumbnails and logos
+            // retain their historical last-candidate behavior below.
+            program.BackdropImageUrl = SelectFirstNonConflictingArtwork(
                 standardBackdropCandidates,
                 conflictingArtworkUrls)
-                ?? SelectLastNonConflictingArtwork(legacyBackdropCandidates, conflictingArtworkUrls);
+                ?? SelectFirstNonConflictingArtwork(legacyBackdropCandidates, conflictingArtworkUrls);
             program.ThumbImageUrl = SelectLastNonConflictingArtwork(
                 standardThumbCandidates,
                 conflictingArtworkUrls)
                 ?? SelectLastNonConflictingArtwork(legacyThumbCandidates, conflictingArtworkUrls);
             program.LogoImageUrl = SelectLastNonConflictingArtwork(legacyLogoCandidates, conflictingArtworkUrls);
 
-            if (!hasTypedArtworkRole && legacyImageUrl != null
-                && (legacyImageWidth == 0 || legacyImageHeight == 0))
+            if (!hasTypedArtworkRole)
             {
-                // Preserve the historical fallback only for feeds that offer no
-                // recognized artwork role and incomplete geometry. Without both
-                // dimensions, the icon's aspect ratio is unknown, so it is not a
-                // positive portrait classification. Known wide or square batch
-                // icons cannot occupy the portrait slot.
-                program.ImageUrl = legacyImageUrl;
-                program.ImageWidth = legacyImageWidth;
-                program.ImageHeight = legacyImageHeight;
+                var legacyLandscape = FindSingleValidLegacyLandscape(untypedIcons, conflictingArtworkUrls);
+                if (legacyLandscape != null)
+                {
+                    // Some legacy XMLTV producers provide only direct, untyped icons.
+                    // A unique 16:9 candidate with complete geometry is a usable
+                    // programme image rather than an unclassified generic icon.
+                    program.ImageUrl = legacyLandscape.Url;
+                    program.ImageWidth = legacyLandscape.Width;
+                    program.ImageHeight = legacyLandscape.Height;
+                    if (program.BackdropImageUrl == null)
+                        program.BackdropImageUrl = legacyLandscape.Url;
+                }
+                else if (legacyImageUrl != null
+                    && (legacyImageWidth == 0 || legacyImageHeight == 0))
+                {
+                    // Preserve the historical fallback only for feeds that offer no
+                    // recognized artwork role and incomplete geometry. Without both
+                    // dimensions, the icon's aspect ratio is unknown, so it is not a
+                    // positive landscape classification.
+                    program.ImageUrl = legacyImageUrl;
+                    program.ImageWidth = legacyImageWidth;
+                    program.ImageHeight = legacyImageHeight;
+                }
             }
 
             return program;
+        }
+
+        private static bool IsLegacyLandscape(int width, int height, string orient)
+        {
+            if (width <= 0 || height <= 0 || (long)width * 9 != (long)height * 16)
+                return false;
+
+            var normalizedOrient = (orient ?? string.Empty).Trim();
+            return normalizedOrient.Length == 0
+                || string.Equals(normalizedOrient, "L", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static ArtworkCandidate FindSingleValidLegacyLandscape(
+            List<ArtworkCandidate> untypedIcons,
+            HashSet<string> conflictingArtworkUrls)
+        {
+            ArtworkCandidate candidate = null;
+            foreach (var icon in untypedIcons)
+            {
+                if (conflictingArtworkUrls.Contains(icon.Url)
+                    || !IsLegacyLandscape(icon.Width, icon.Height, icon.Orient))
+                    continue;
+
+                if (candidate == null)
+                {
+                    candidate = icon;
+                }
+                else if (!string.Equals(candidate.Url, icon.Url, StringComparison.Ordinal)
+                    || candidate.Width != icon.Width
+                    || candidate.Height != icon.Height)
+                {
+                    // Multiple distinct direct landscape icons are alternatives with
+                    // no role signal, so abstain rather than relying on element order.
+                    return null;
+                }
+            }
+
+            return candidate;
         }
 
         private static bool IsPortraitPoster(int width, int height, string orient)
@@ -468,6 +524,19 @@ namespace Emby.M3uEditor.Plugin.Client
             return null;
         }
 
+        private static string SelectFirstNonConflictingArtwork(
+            List<string> candidates,
+            HashSet<string> conflictingArtworkUrls)
+        {
+            foreach (var candidate in candidates)
+            {
+                if (!conflictingArtworkUrls.Contains(candidate))
+                    return candidate;
+            }
+
+            return null;
+        }
+
         private static void AddArtworkEvidence(
             Dictionary<string, ArtworkEvidence> artworkByUrl,
             string url,
@@ -521,7 +590,7 @@ namespace Emby.M3uEditor.Plugin.Client
         private sealed class ArtworkEvidence
         {
             private string _role;
-            private string _posterOrient;
+            private string _orient;
             private int _width;
             private int _height;
             private bool _hasCompleteGeometry;
@@ -536,18 +605,15 @@ namespace Emby.M3uEditor.Plugin.Client
                         _role = role;
                     else if (!string.Equals(_role, role, StringComparison.OrdinalIgnoreCase))
                         IsConflicting = true;
+                }
 
-                    if (string.Equals(role, "poster", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var normalizedOrient = (orient ?? string.Empty).Trim();
-                        if (normalizedOrient.Length > 0)
-                        {
-                            if (_posterOrient == null)
-                                _posterOrient = normalizedOrient;
-                            else if (!string.Equals(_posterOrient, normalizedOrient, StringComparison.OrdinalIgnoreCase))
-                                IsConflicting = true;
-                        }
-                    }
+                var normalizedOrient = (orient ?? string.Empty).Trim();
+                if (normalizedOrient.Length > 0)
+                {
+                    if (_orient == null)
+                        _orient = normalizedOrient;
+                    else if (!string.Equals(_orient, normalizedOrient, StringComparison.OrdinalIgnoreCase))
+                        IsConflicting = true;
                 }
 
                 if (width > 0 && height > 0)
