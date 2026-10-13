@@ -11,6 +11,17 @@ namespace Emby.M3uEditor.Plugin.Tests
     public class ManagedPlaybackCacheAbiTests
     {
         [Fact]
+        public void PlaybackCacheEntryPoint_ImplementsServerLifecycleWithoutConstructorConfigurationAccess()
+        {
+            var entryPoint = typeof(Plugin).Assembly.GetType(
+                "Emby.M3uEditor.Plugin.Service.ManagedPlaybackCacheEntryPoint");
+            Assert.NotNull(entryPoint);
+            Assert.Contains(typeof(IServerEntryPoint), entryPoint.GetInterfaces());
+            Assert.Contains(typeof(IDisposable), entryPoint.GetInterfaces());
+            Assert.NotNull(entryPoint.GetMethod("Run", Type.EmptyTypes));
+        }
+
+        [Fact]
         public void SupportedSdk_ExposesPlaybackAndWatchedLifecycleContract()
         {
             AssertEvent(typeof(ISessionManager), "PlaybackStart", "MediaBrowser.Controller.Library.PlaybackProgressEventArgs");
