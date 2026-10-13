@@ -450,11 +450,45 @@ namespace Emby.M3uEditor.Plugin.Client
             }
         }
 
-        public async Task<M3uEditorCacheControlResponse> SendCachePrefetchAsync(
+        public Task<M3uEditorCacheControlResponse> SendCachePrefetchAsync(
             string baseUrl,
             string username,
             string password,
             M3uEditorCacheControlRequest cacheRequest,
+            CancellationToken cancellationToken)
+        {
+            return SendCacheControlAsync(
+                baseUrl, username, password, cacheRequest, "m3u_editor_cache_prefetch", cancellationToken);
+        }
+
+        public Task<M3uEditorCacheControlResponse> SendCachePlaybackAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            CancellationToken cancellationToken)
+        {
+            return SendCacheControlAsync(
+                baseUrl, username, password, cacheRequest, "m3u_editor_cache_playback", cancellationToken);
+        }
+
+        public Task<M3uEditorCacheControlResponse> SendCacheReleaseAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            CancellationToken cancellationToken)
+        {
+            return SendCacheControlAsync(
+                baseUrl, username, password, cacheRequest, "m3u_editor_cache_release", cancellationToken);
+        }
+
+        private async Task<M3uEditorCacheControlResponse> SendCacheControlAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            string action,
             CancellationToken cancellationToken)
         {
             Guid mappingUuid;
@@ -474,7 +508,7 @@ namespace Emby.M3uEditor.Plugin.Client
             {
                 ["username"] = username ?? string.Empty,
                 ["password"] = password ?? string.Empty,
-                ["action"] = "m3u_editor_cache_prefetch",
+                ["action"] = action,
                 ["api_version"] = "1",
                 ["integration_id"] = cacheRequest.IntegrationId.ToString(CultureInfo.InvariantCulture),
                 ["mapping_uuid"] = cacheRequest.MappingUuid,
@@ -489,7 +523,7 @@ namespace Emby.M3uEditor.Plugin.Client
             }
 
             var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
-            var requestUrl = endpoint.RequestBaseUrl + "/player_api.php?action=m3u_editor_cache_prefetch";
+            var requestUrl = endpoint.RequestBaseUrl + "/player_api.php?action=" + Uri.EscapeDataString(action);
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(15));
