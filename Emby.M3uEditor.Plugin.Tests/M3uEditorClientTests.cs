@@ -57,6 +57,34 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task SendCachePrefetchAsync_TransientFailureRetriesWithSameRequestId()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_prefetch", "{}", HttpStatusCode.ServiceUnavailable);
+            handler.RespondWith("action=m3u_editor_cache_prefetch", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":true,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var result = await client.SendCachePrefetchAsync("https://editor.example", "account", "credential", new M3uEditorCacheControlRequest
+                {
+                    IntegrationId = 7,
+                    MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
+                    Revision = Revision,
+                    RequestId = "c15d9b25-7536-4c7f-8f5f-7b08a1989b8a",
+                    ConsumerId = new string('b', 64),
+                    Targets = new List<M3uEditorCacheControlTarget>
+                    {
+                        new M3uEditorCacheControlTarget { CanonicalId = "movie:tmdb:603", VariantKey = "1080p" }
+                    }
+                }, CancellationToken.None);
+
+                Assert.True(result.Duplicate);
+                Assert.Equal(2, handler.ReceivedBodies.Count);
+                Assert.Equal(handler.ReceivedBodies[0], handler.ReceivedBodies[1]);
+            }
+        }
+
+        [Fact]
         public async Task GetCatalogAsync_ExactVersionOnePayload_DeserializesVariantsAndFailover()
         {
             var handler = new FakeHttpHandler();
