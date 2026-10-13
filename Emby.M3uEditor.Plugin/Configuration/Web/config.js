@@ -171,6 +171,12 @@ function (BaseView, loading) {
 
             instance.selectedCategoryIds = config.SelectedLiveCategoryIds || [];
             view.querySelector('.chkUseBetaChannel').checked = !!config.UseBetaChannel;
+            view.querySelector('.chkManagedPlaybackCacheEnabled').checked = !!config.ManagedPlaybackCacheEnabled;
+            view.querySelector('.selManagedPlaybackCacheMode').value = config.ManagedPlaybackCacheMode || 'off';
+            view.querySelector('.txtManagedPlaybackCacheNextCount').value = config.ManagedPlaybackCacheNextCount || 1;
+            view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').checked = !!config.ManagedPlaybackCacheDeleteAfterWatched;
+            view.querySelector('.txtManagedPlaybackCacheDeleteGraceHours').value = config.ManagedPlaybackCacheDeleteGraceHours || 0;
+            view.querySelector('.txtManagedPlaybackCacheUserIds').value = (config.ManagedPlaybackCacheUserIds || []).join('\n');
 
             updateUrlSecurityWarning(view);
             updateEpgVisibility(view);
@@ -225,6 +231,14 @@ function (BaseView, loading) {
             config.M3UCacheMinutes = parseInt(view.querySelector('.txtM3UCacheMinutes').value, 10) || 15;
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
             config.UseBetaChannel = view.querySelector('.chkUseBetaChannel').checked;
+            config.ManagedPlaybackCacheEnabled = view.querySelector('.chkManagedPlaybackCacheEnabled').checked;
+            config.ManagedPlaybackCacheMode = view.querySelector('.selManagedPlaybackCacheMode').value;
+            config.ManagedPlaybackCacheNextCount = parseInt(view.querySelector('.txtManagedPlaybackCacheNextCount').value, 10) || 1;
+            config.ManagedPlaybackCacheDeleteAfterWatched = view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').checked;
+            config.ManagedPlaybackCacheDeleteGraceHours = parseInt(view.querySelector('.txtManagedPlaybackCacheDeleteGraceHours').value, 10) || 0;
+            config.ManagedPlaybackCacheUserIds = view.querySelector('.txtManagedPlaybackCacheUserIds').value.split('\n').map(function (value) {
+                return value.trim();
+            }).filter(Boolean);
             config.LiveTvTunerCount = configuredCount;
 
             if (tunerValidationElement) tunerValidationElement.innerHTML = '';

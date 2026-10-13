@@ -299,6 +299,22 @@
                         </div>
                         <div class="managedPublishingWarning" style="display:none; margin-top:0.7em; color:#e6a23c;"></div>
                         <div class="managedPublishingError" style="display:none; margin-top:0.7em; color:#cc4444;"></div>
+                        <details class="settings-collapsible" data-collapse-key="managed.playback-cache" style="margin-top:1em;">
+                            <summary>Playback cache (advanced)</summary>
+                            <div class="fieldDescription">Optional cache prefetch for managed media only. It remains off until explicitly enabled.</div>
+                            <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:0.7em;">
+                                <label><input class="chkManagedPlaybackCacheEnabled" type="checkbox" is="emby-checkbox" /> <span>Enable managed playback cache</span></label>
+                            </div>
+                            <div class="selectContainer">
+                                <select class="selManagedPlaybackCacheMode" is="emby-select" label="Prefetch mode">
+                                    <option value="off">Off</option><option value="next">Next episode</option><option value="next_n">Next episodes</option><option value="remaining_season">Remaining season</option><option value="whole_season">Whole season</option>
+                                </select>
+                            </div>
+                            <div class="inputContainer"><input class="txtManagedPlaybackCacheNextCount" type="number" min="1" max="10" is="emby-input" label="Next episode count" /></div>
+                            <div class="checkboxContainer"><label><input class="chkManagedPlaybackCacheDeleteAfterWatched" type="checkbox" is="emby-checkbox" /> <span>Release after watched by selected profiles</span></label></div>
+                            <div class="inputContainer"><input class="txtManagedPlaybackCacheDeleteGraceHours" type="number" min="0" max="168" is="emby-input" label="Release grace period (hours)" /></div>
+                            <div class="inputContainer"><textarea class="txtManagedPlaybackCacheUserIds" is="emby-input" rows="3" label="Selected Emby profile IDs (one per line)"></textarea></div>
+                        </details>
                         <div style="display:flex; align-items:center; gap:0.5em; flex-wrap:wrap; margin-top:0.9em;">
                             <button class="btnManagedReconcile raised button-submit" is="emby-button" type="button" disabled>Reconcile Now</button>
                             <select is="emby-select" class="managedRollbackMapping" style="min-width:14em;"></select>

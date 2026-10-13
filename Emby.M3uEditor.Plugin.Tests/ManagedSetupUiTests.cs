@@ -24,6 +24,21 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ManagedPlaybackCacheUi_IsOptInAndRoundsTripConfiguration()
+        {
+            var root = FindRepositoryRoot();
+            var html = File.ReadAllText(Path.Join(root, "Emby.M3uEditor.Plugin", "Configuration", "Web", "config.html"));
+            var javascript = File.ReadAllText(Path.Join(root, "Emby.M3uEditor.Plugin", "Configuration", "Web", "config.js"));
+
+            Assert.Contains("chkManagedPlaybackCacheEnabled", html);
+            Assert.Contains("selManagedPlaybackCacheMode", html);
+            Assert.Contains("txtManagedPlaybackCacheUserIds", html);
+            Assert.Contains("ManagedPlaybackCacheEnabled", javascript);
+            Assert.Contains("ManagedPlaybackCacheMode", javascript);
+            Assert.Contains("ManagedPlaybackCacheUserIds", javascript);
+        }
+
+        [Fact]
         public void LiveTvTunerLimitUi_RunsSaveAndAuthenticatedImportRegressionHarness()
         {
             var root = FindRepositoryRoot();
