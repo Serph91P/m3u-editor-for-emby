@@ -19,6 +19,16 @@ namespace Emby.M3uEditor.Plugin.Service
             string mode,
             int count)
         {
+            return Select(episodes, currentId, mode, count, null);
+        }
+
+        public static string[] Select(
+            IEnumerable<ManagedEpisodePosition> episodes,
+            string currentId,
+            string mode,
+            int count,
+            IEnumerable<string> watchedIds)
+        {
             var all = (episodes ?? Enumerable.Empty<ManagedEpisodePosition>())
                 .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id) && x.Season > 0 && x.Episode > 0)
                 .ToList();
@@ -34,28 +44,29 @@ namespace Emby.M3uEditor.Plugin.Service
                 return new string[0];
             }
 
+            var watched = new HashSet<string>(watchedIds ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
             var ordered = all.OrderBy(x => x.Season).ThenBy(x => x.Episode);
             Func<ManagedEpisodePosition, bool> later = x => x.Season > current.Season ||
                 (x.Season == current.Season && x.Episode > current.Episode);
             if (string.Equals(mode, "next", StringComparison.Ordinal))
             {
-                return ordered.Where(later).Take(1).Select(x => x.Id).ToArray();
+                return ordered.Where(later).Where(x => !watched.Contains(x.Id)).Take(1).Select(x => x.Id).ToArray();
             }
 
             if (string.Equals(mode, "next_n", StringComparison.Ordinal) && count >= 1 && count <= 10)
             {
-                return ordered.Where(later).Take(count).Select(x => x.Id).ToArray();
+                return ordered.Where(later).Where(x => !watched.Contains(x.Id)).Take(count).Select(x => x.Id).ToArray();
             }
 
             if (string.Equals(mode, "remaining_season", StringComparison.Ordinal))
             {
-                return ordered.Where(x => x.Season == current.Season && x.Episode > current.Episode)
+                return ordered.Where(x => x.Season == current.Season && x.Episode > current.Episode && !watched.Contains(x.Id))
                     .Take(100).Select(x => x.Id).ToArray();
             }
 
             if (string.Equals(mode, "whole_season", StringComparison.Ordinal))
             {
-                return ordered.Where(x => x.Season == current.Season && x.Id != current.Id)
+                return ordered.Where(x => x.Season == current.Season && x.Id != current.Id && !watched.Contains(x.Id))
                     .Take(100).Select(x => x.Id).ToArray();
             }
 
