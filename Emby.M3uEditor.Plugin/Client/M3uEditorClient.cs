@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.Http;
@@ -446,6 +447,67 @@ namespace Emby.M3uEditor.Plugin.Client
             catch (JsonException)
             {
                 return false;
+            }
+        }
+
+        public async Task<M3uEditorCacheControlResponse> SendCachePrefetchAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            CancellationToken cancellationToken)
+        {
+            Guid mappingUuid;
+            Guid requestId;
+            if (cacheRequest == null || cacheRequest.IntegrationId < 1 ||
+                !Guid.TryParse(cacheRequest.MappingUuid, out mappingUuid) ||
+                !Guid.TryParse(cacheRequest.RequestId, out requestId) ||
+                string.IsNullOrEmpty(cacheRequest.Revision) || !RevisionPattern.IsMatch(cacheRequest.Revision) ||
+                string.IsNullOrEmpty(cacheRequest.ConsumerId) || !Regex.IsMatch(cacheRequest.ConsumerId, "^[a-f0-9]{64}$") ||
+                cacheRequest.Targets == null || cacheRequest.Targets.Count == 0 || cacheRequest.Targets.Count > 100 ||
+                cacheRequest.Targets.Any(target => target == null || string.IsNullOrWhiteSpace(target.CanonicalId) || string.IsNullOrWhiteSpace(target.VariantKey)))
+            {
+                throw new InvalidOperationException("Managed cache prefetch identity is invalid.");
+            }
+
+            var fields = new Dictionary<string, string>
+            {
+                ["username"] = username ?? string.Empty,
+                ["password"] = password ?? string.Empty,
+                ["action"] = "m3u_editor_cache_prefetch",
+                ["api_version"] = "1",
+                ["integration_id"] = cacheRequest.IntegrationId.ToString(CultureInfo.InvariantCulture),
+                ["mapping_uuid"] = cacheRequest.MappingUuid,
+                ["revision"] = cacheRequest.Revision,
+                ["request_id"] = cacheRequest.RequestId,
+                ["consumer_id"] = cacheRequest.ConsumerId
+            };
+            for (var index = 0; index < cacheRequest.Targets.Count; index++)
+            {
+                fields["targets[" + index + "][canonical_id]"] = cacheRequest.Targets[index].CanonicalId;
+                fields["targets[" + index + "][variant_key]"] = cacheRequest.Targets[index].VariantKey;
+            }
+
+            var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+            var requestUrl = endpoint.RequestBaseUrl + "/player_api.php?action=m3u_editor_cache_prefetch";
+            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            using (var content = new FormUrlEncodedContent(fields))
+            using (var request = CreateRequest(HttpMethod.Post, requestUrl, endpoint.HostHeader))
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                request.Content = content;
+                using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
+                {
+                    if (!response.IsSuccessStatusCode)
+                        throw new InvalidOperationException("Managed cache prefetch request failed with HTTP " + (int)response.StatusCode + ".");
+                    EnsureConfinedResponse(response, requestUrl);
+                    var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
+                    var envelope = JsonSerializer.Deserialize<M3uEditorResponse<M3uEditorCacheControlResponse>>(body, JsonOptions);
+                    if (envelope == null || envelope.ApiVersion != 1 || envelope.Data == null ||
+                        !string.Equals(envelope.Data.RequestId, cacheRequest.RequestId, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("Managed cache prefetch response identity is invalid.");
+                    return envelope.Data;
+                }
             }
         }
 

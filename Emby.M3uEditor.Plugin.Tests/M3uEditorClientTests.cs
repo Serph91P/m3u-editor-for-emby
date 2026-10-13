@@ -25,6 +25,38 @@ namespace Emby.M3uEditor.Plugin.Tests
     public class M3uEditorClientTests
     {
         [Fact]
+        public async Task SendCachePrefetchAsync_PostsCredentialsAndIdentityInBodyOnly()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_prefetch", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":false,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var result = await client.SendCachePrefetchAsync(
+                    "https://editor.example", "account", "credential", new M3uEditorCacheControlRequest
+                    {
+                        IntegrationId = 7,
+                        MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
+                        Revision = Revision,
+                        RequestId = "c15d9b25-7536-4c7f-8f5f-7b08a1989b8a",
+                        ConsumerId = new string('b', 64),
+                        Targets = new List<M3uEditorCacheControlTarget>
+                        {
+                            new M3uEditorCacheControlTarget { CanonicalId = "movie:tmdb:603", VariantKey = "1080p" }
+                        }
+                    }, CancellationToken.None);
+
+                Assert.False(result.Duplicate);
+                Assert.DoesNotContain("credential", Assert.Single(handler.ReceivedUrls));
+                var body = Assert.Single(handler.ReceivedBodies);
+                Assert.Contains("username=account", body);
+                Assert.Contains("password=credential", body);
+                Assert.Contains("action=m3u_editor_cache_prefetch", body);
+                Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=movie%3Atmdb%3A603", body);
+            }
+        }
+
+        [Fact]
         public async Task GetCatalogAsync_ExactVersionOnePayload_DeserializesVariantsAndFailover()
         {
             var handler = new FakeHttpHandler();
