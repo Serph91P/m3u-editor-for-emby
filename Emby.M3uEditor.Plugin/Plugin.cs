@@ -70,6 +70,12 @@ namespace Emby.M3uEditor.Plugin
                 throw new ArgumentOutOfRangeException(nameof(requestedConfig.LiveTvTunerCount));
             }
 
+            if (configuration is PluginConfiguration cacheConfig &&
+                !ManagedPlaybackCacheConfiguration.IsValid(cacheConfig))
+            {
+                throw new ArgumentException("Managed playback cache configuration is invalid.", nameof(configuration));
+            }
+
             lock (ConfigurationTransactionGate)
             {
                 base.UpdateConfiguration(configuration);
