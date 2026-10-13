@@ -98,6 +98,11 @@ namespace Emby.RuntimeCompatibility
                 throw new InvalidOperationException(runtimeName + " PlaybackProgressEventArgs.PlaybackPositionTicks must be nullable Int64.");
             AssertMember(progress, "Session", runtimeName);
             AssertMember(progress, "Users", runtimeName);
+            var mediaSource = progress.GetProperty("MediaSource");
+            if (runtimeName == "SDK 4.8.0.80" && mediaSource != null)
+                throw new InvalidOperationException(runtimeName + " unexpectedly exposes PlaybackProgressEventArgs.MediaSource; update the compatibility bridge deliberately.");
+            if (runtimeName != "SDK 4.8.0.80" && mediaSource == null)
+                throw new InvalidOperationException(runtimeName + " requires PlaybackProgressEventArgs.MediaSource for exact selected-source binding.");
             AssertMember(stopped, "PlayedToCompletion", runtimeName);
             AssertMember(userDataSaved, "Item", runtimeName);
             AssertMember(userDataSaved, "User", runtimeName);

@@ -4,7 +4,7 @@
      data-forcescrollbar="true"
      data-centerfocus="true"
      data-bindheader="true"
-     data-controller="__plugin/m3ueditorconfigjsr4"
+     data-controller="__plugin/m3ueditorconfigjsr5"
      data-title="m3u-editor for Emby">
 
   <div class="scrollSlider flex-grow flex-direction-column padded-left padded-left-page padded-right padded-top-page padded-bottom-page">
@@ -302,6 +302,7 @@
                         <details class="settings-collapsible" data-collapse-key="managed.playback-cache" style="margin-top:1em;">
                             <summary>Playback cache (advanced)</summary>
                             <div class="fieldDescription">Optional cache prefetch for managed media only. It remains off until explicitly enabled.</div>
+                            <div class="managedPlaybackCacheStatus fieldDescription" style="margin-top:0.7em;">Capability, active identity, and provider budget are checked fail-closed before cache work is accepted.</div>
                             <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:0.7em;">
                                 <label><input class="chkManagedPlaybackCacheEnabled" type="checkbox" is="emby-checkbox" /> <span>Enable managed playback cache</span></label>
                             </div>
@@ -310,10 +311,12 @@
                                     <option value="off">Off</option><option value="next">Next episode</option><option value="next_n">Next episodes</option><option value="remaining_season">Remaining season</option><option value="whole_season">Whole season</option>
                                 </select>
                             </div>
-                            <div class="inputContainer"><input class="txtManagedPlaybackCacheNextCount" type="number" min="1" max="10" is="emby-input" label="Next episode count" /></div>
+                            <div class="inputContainer managedPlaybackCacheNextCount"><input class="txtManagedPlaybackCacheNextCount" type="number" min="1" max="10" is="emby-input" label="Next episode count" /></div>
                             <div class="checkboxContainer"><label><input class="chkManagedPlaybackCacheDeleteAfterWatched" type="checkbox" is="emby-checkbox" /> <span>Release after watched by selected profiles</span></label></div>
-                            <div class="inputContainer"><input class="txtManagedPlaybackCacheDeleteGraceHours" type="number" min="0" max="168" is="emby-input" label="Release grace period (hours)" /></div>
-                            <div class="inputContainer"><textarea class="txtManagedPlaybackCacheUserIds" is="emby-input" rows="3" label="Selected Emby profile IDs (one per line)"></textarea></div>
+                            <div class="managedPlaybackCacheRetention">
+                                <div class="inputContainer"><input class="txtManagedPlaybackCacheDeleteGraceHours" type="number" min="0" max="168" is="emby-input" label="Release grace period (hours)" /></div>
+                                <div class="inputContainer"><textarea class="txtManagedPlaybackCacheUserIds" is="emby-input" rows="3" label="Selected Emby profile IDs (one per line)"></textarea></div>
+                            </div>
                         </details>
                         <div style="display:flex; align-items:center; gap:0.5em; flex-wrap:wrap; margin-top:0.9em;">
                             <button class="btnManagedReconcile raised button-submit" is="emby-button" type="button" disabled>Reconcile Now</button>

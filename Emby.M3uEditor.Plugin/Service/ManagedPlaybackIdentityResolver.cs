@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -13,6 +14,10 @@ namespace Emby.M3uEditor.Plugin.Service
         public string VariantKey { get; set; }
         public int? SourceId { get; set; }
         public int? PlaylistId { get; set; }
+        public string SeriesCanonicalId { get; set; }
+        public int? SeasonNumber { get; set; }
+        public int? EpisodeNumber { get; set; }
+        public string ManagedRoot { get; set; }
     }
 
     public sealed class ManagedPlaybackIdentityResolver
@@ -38,7 +43,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 string selectedRelativePath;
                 string selectedPath;
                 if (!TryGetConfinedRelativePath(managedRoot, selectedMediaSourcePath, out selectedRelativePath, out selectedPath) ||
-                    !selectedRelativePath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+                    !selectedRelativePath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(selectedPath) || HasReparsePoint(managedRoot, selectedPath))
                 {
                     return false;
                 }
@@ -84,7 +90,11 @@ namespace Emby.M3uEditor.Plugin.Service
                         CanonicalId = canonicalId,
                         VariantKey = variantKey,
                         SourceId = GetOptionalInt32(selectedFile, "SourceId"),
-                        PlaylistId = GetOptionalInt32(selectedFile, "PlaylistId")
+                        PlaylistId = GetOptionalInt32(selectedFile, "PlaylistId"),
+                        SeriesCanonicalId = GetOptionalString(selectedFile, "SeriesCanonicalId"),
+                        SeasonNumber = GetOptionalInt32(selectedFile, "SeasonNumber"),
+                        EpisodeNumber = GetOptionalInt32(selectedFile, "EpisodeNumber"),
+                        ManagedRoot = Path.GetFullPath(managedRoot)
                     };
                     return true;
                 }
@@ -105,6 +115,152 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 return false;
             }
+        }
+
+        public bool TryResolveActive(
+            IEnumerable<string> approvedRoots,
+            string selectedMediaSourcePath,
+            bool selectedMediaSourceIsConcrete,
+            out ManagedPlaybackIdentity identity)
+        {
+            identity = null;
+            if (!selectedMediaSourceIsConcrete || approvedRoots == null)
+            {
+                return false;
+            }
+
+            var matches = new List<ManagedPlaybackIdentity>();
+            foreach (var root in approvedRoots.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(PathComparer))
+            {
+                try
+                {
+                    var manifestPath = Path.Combine(root, MetadataDirectoryName, "active.json");
+                    if (!File.Exists(manifestPath))
+                    {
+                        continue;
+                    }
+
+                    using (var document = JsonDocument.Parse(File.ReadAllText(manifestPath)))
+                    {
+                        if (!IsActiveManifest(document.RootElement) ||
+                            !TryGetConfinedRelativePath(root, selectedMediaSourcePath, out var relativePath, out _))
+                        {
+                            continue;
+                        }
+
+                        var fileMatches = document.RootElement.GetProperty("Files").EnumerateArray()
+                            .Where(file => file.ValueKind == JsonValueKind.Object &&
+                                TryGetNonBlankString(file, "RelativePath", out var path) &&
+                                string.Equals(path, relativePath, PathComparison) &&
+                                TryGetNonBlankString(file, "Sha256", out var hash) && IsHash(hash))
+                            .ToList();
+                        if (fileMatches.Count != 1 ||
+                            !TryGetNonBlankString(fileMatches[0], "Sha256", out var selectedHash))
+                        {
+                            continue;
+                        }
+
+                        if (TryResolve(root, selectedMediaSourcePath, selectedHash, true, out var candidate))
+                        {
+                            matches.Add(candidate);
+                        }
+                    }
+                }
+                catch (ArgumentException)
+                {
+                }
+                catch (IOException)
+                {
+                }
+                catch (JsonException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            if (matches.Count != 1)
+            {
+                return false;
+            }
+
+            identity = matches[0];
+            return true;
+        }
+
+        public IReadOnlyList<ManagedPlaybackIdentity> GetSeriesCandidates(ManagedPlaybackIdentity current)
+        {
+            var result = new List<ManagedPlaybackIdentity>();
+            if (current == null || string.IsNullOrWhiteSpace(current.ManagedRoot) ||
+                string.IsNullOrWhiteSpace(current.SeriesCanonicalId) ||
+                !current.SeasonNumber.HasValue || !current.EpisodeNumber.HasValue)
+            {
+                return result;
+            }
+
+            try
+            {
+                var manifestPath = Path.Combine(current.ManagedRoot, MetadataDirectoryName, "active.json");
+                using (var document = JsonDocument.Parse(File.ReadAllText(manifestPath)))
+                {
+                    var manifest = document.RootElement;
+                    if (!IsActiveManifest(manifest) ||
+                        !string.Equals(manifest.GetProperty("MappingUuid").GetString(), current.MappingUuid, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(manifest.GetProperty("Revision").GetString(), current.Revision, StringComparison.Ordinal))
+                    {
+                        return result;
+                    }
+
+                    foreach (var file in manifest.GetProperty("Files").EnumerateArray())
+                    {
+                        var season = GetOptionalInt32(file, "SeasonNumber");
+                        var episode = GetOptionalInt32(file, "EpisodeNumber");
+                        if (!TryGetNonBlankString(file, "CanonicalId", out var canonicalId) ||
+                            !TryGetNonBlankString(file, "VariantKey", out var variantKey) ||
+                            !string.Equals(GetOptionalString(file, "SeriesCanonicalId"), current.SeriesCanonicalId, StringComparison.Ordinal) ||
+                            !string.Equals(variantKey, current.VariantKey, StringComparison.Ordinal) ||
+                            !season.HasValue || !episode.HasValue)
+                        {
+                            continue;
+                        }
+
+                        result.Add(new ManagedPlaybackIdentity
+                        {
+                            MappingUuid = current.MappingUuid,
+                            Revision = current.Revision,
+                            CanonicalId = canonicalId,
+                            VariantKey = variantKey,
+                            SourceId = GetOptionalInt32(file, "SourceId"),
+                            PlaylistId = GetOptionalInt32(file, "PlaylistId"),
+                            SeriesCanonicalId = current.SeriesCanonicalId,
+                            SeasonNumber = season,
+                            EpisodeNumber = episode,
+                            ManagedRoot = current.ManagedRoot
+                        });
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                return new List<ManagedPlaybackIdentity>();
+            }
+            catch (JsonException)
+            {
+                return new List<ManagedPlaybackIdentity>();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return new List<ManagedPlaybackIdentity>();
+            }
+
+            if (result.GroupBy(value => value.CanonicalId, StringComparer.Ordinal).Any(group => group.Count() > 1) ||
+                result.GroupBy(value => new { value.SeasonNumber, value.EpisodeNumber }).Any(group => group.Count() > 1))
+            {
+                return new List<ManagedPlaybackIdentity>();
+            }
+
+            return result;
         }
 
         private static bool TryGetConfinedRelativePath(
@@ -138,6 +294,35 @@ namespace Emby.M3uEditor.Plugin.Service
 
             relativePath = candidateRelativePath;
             return true;
+        }
+
+        private static bool HasReparsePoint(string root, string target)
+        {
+            var fullRoot = Path.GetFullPath(root)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var fullTarget = Path.GetFullPath(target);
+            var relative = fullTarget.Substring(fullRoot.Length)
+                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var current = fullRoot;
+            if (Directory.Exists(current) &&
+                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            {
+                return true;
+            }
+
+            foreach (var segment in relative.Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, segment);
+                if ((File.Exists(current) || Directory.Exists(current)) &&
+                    (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool IsActiveManifest(JsonElement manifest)
@@ -175,6 +360,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 : (int?)null;
         }
 
+        private static string GetOptionalString(JsonElement element, string name)
+        {
+            return element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+        }
+
         private static bool TryGetNonBlankString(JsonElement element, string name, out string value)
         {
             value = null;
@@ -196,5 +388,9 @@ namespace Emby.M3uEditor.Plugin.Service
         private static StringComparison PathComparison => Path.DirectorySeparatorChar == '\\'
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
+
+        private static StringComparer PathComparer => Path.DirectorySeparatorChar == '\\'
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
     }
 }

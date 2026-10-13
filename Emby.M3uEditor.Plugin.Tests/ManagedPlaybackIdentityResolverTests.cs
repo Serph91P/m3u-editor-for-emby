@@ -54,6 +54,36 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Null(Resolve(path, hash, !ambiguousSelection));
         }
 
+        [Fact]
+        public async Task Resolve_SymbolicLinkInsideManagedRoot_FailsClosedWithoutReadingTarget()
+        {
+            var source = await PublishSingleManagedSourceAsync();
+            var outside = Path.Join(Path.GetTempPath(), "managed-playback-escape-" + Guid.NewGuid().ToString("N") + ".strm");
+            File.WriteAllText(outside, "https://foreign.example/stream\n");
+            try
+            {
+                File.Delete(source.Path);
+                try
+                {
+                    File.CreateSymbolicLink(source.Path, outside);
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    return;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return;
+                }
+
+                Assert.Null(Resolve(source.Path, source.Hash, true));
+            }
+            finally
+            {
+                File.Delete(outside);
+            }
+        }
+
         private Task<PublishedSource> PublishSingleManagedSourceAsync()
         {
             const string relativePath = "Movie/Movie - v00.strm";

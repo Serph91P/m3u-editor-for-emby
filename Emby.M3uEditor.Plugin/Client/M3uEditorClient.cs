@@ -76,6 +76,35 @@ namespace Emby.M3uEditor.Plugin.Client
             }
         }
 
+        public async Task<M3uEditorCacheControlCapability> DiscoverCacheControlCapabilityAsync(
+            string baseUrl,
+            string username,
+            string password,
+            CancellationToken cancellationToken)
+        {
+            var body = await GetPanelResponseAsync(baseUrl, username, password, cancellationToken)
+                .ConfigureAwait(false);
+            if (body == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                using (var document = JsonDocument.Parse(body))
+                {
+                    return M3uEditorPublishingCapabilityParser.TryGetCacheControlCapability(
+                        document.RootElement, out var capability)
+                        ? capability
+                        : null;
+                }
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
         public async Task<bool> TestConnectionAsync(
             string baseUrl,
             string username,

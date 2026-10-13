@@ -39,6 +39,15 @@ function (BaseView, loading) {
         view.querySelector('.chkEnableChannelNameCleaning').addEventListener('change', function () {
             updateChannelNameCleaningVisibility(view);
         });
+        view.querySelector('.chkManagedPlaybackCacheEnabled').addEventListener('change', function () {
+            updateManagedPlaybackCacheVisibility(view);
+        });
+        view.querySelector('.selManagedPlaybackCacheMode').addEventListener('change', function () {
+            updateManagedPlaybackCacheVisibility(view);
+        });
+        view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').addEventListener('change', function () {
+            updateManagedPlaybackCacheVisibility(view);
+        });
         view.querySelector('.btnLoadCategories').addEventListener('click', function () {
             loadCategories(self);
         });
@@ -181,6 +190,7 @@ function (BaseView, loading) {
             updateUrlSecurityWarning(view);
             updateEpgVisibility(view);
             updateChannelNameCleaningVisibility(view);
+            updateManagedPlaybackCacheVisibility(view);
             renderHealthBar(view, config);
             updateDashboardEmptyState(view, config);
             loadCachedCategories(instance, config);
@@ -305,6 +315,16 @@ function (BaseView, loading) {
     function updateChannelNameCleaningVisibility(view) {
         var enabled = view.querySelector('.chkEnableChannelNameCleaning').checked;
         view.querySelector('.channelNameCleaningSettings').style.display = enabled ? '' : 'none';
+    }
+
+    function updateManagedPlaybackCacheVisibility(view) {
+        var enabled = view.querySelector('.chkManagedPlaybackCacheEnabled').checked;
+        var mode = view.querySelector('.selManagedPlaybackCacheMode').value;
+        var deleteAfterWatched = view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').checked;
+        view.querySelector('.managedPlaybackCacheNextCount').style.display =
+            enabled && mode === 'next_n' ? '' : 'none';
+        view.querySelector('.managedPlaybackCacheRetention').style.display =
+            enabled && deleteAfterWatched ? '' : 'none';
     }
 
     function updateUrlSecurityWarning(view) {
@@ -593,8 +613,8 @@ function (BaseView, loading) {
             sessionStorage.setItem('m3u-editor-for-emby-cache-bust', '1');
             var appVersion = document.documentElement.getAttribute('data-appversion') || '';
             Promise.all([
-                fetch('configurationpage?name=m3ueditorconfigr4&v=' + appVersion, { cache: 'reload' }),
-                fetch('configurationpage?name=m3ueditorconfigjsr4&v=' + appVersion, { cache: 'reload' })
+                fetch('configurationpage?name=m3ueditorconfigr5&v=' + appVersion, { cache: 'reload' }),
+                fetch('configurationpage?name=m3ueditorconfigjsr5&v=' + appVersion, { cache: 'reload' })
             ]).then(function () { location.reload(); });
             return;
         }
@@ -622,6 +642,12 @@ function (BaseView, loading) {
         var job = managed.Job || {};
         var jobRunning = job.State === 'running';
         var available = !!managed.SetupReady && !!managed.ConfigurationValid;
+        var cacheToggle = view.querySelector('.chkManagedPlaybackCacheEnabled');
+        var cacheStatus = view.querySelector('.managedPlaybackCacheStatus');
+        cacheToggle.disabled = !available;
+        cacheStatus.textContent = available && managed.ActiveGeneration
+            ? 'Active managed identity is ready. Cache-control capability and provider budget are verified fail-closed for every request.'
+            : 'Playback cache is unavailable until managed setup and an active generation are ready.';
 
         if (!available) {
             summaryElement.innerHTML = '<span class="status-badge idle">Awaiting managed setup</span>' +

@@ -90,6 +90,9 @@ namespace Emby.M3uEditor.Plugin.Service
         public string VariantKey { get; set; }
         public int? SourceId { get; set; }
         public int? PlaylistId { get; set; }
+        public string SeriesCanonicalId { get; set; }
+        public int? SeasonNumber { get; set; }
+        public int? EpisodeNumber { get; set; }
     }
 
     internal sealed class ManagedPlannedFile
@@ -102,6 +105,9 @@ namespace Emby.M3uEditor.Plugin.Service
         public string VariantKey { get; set; }
         public int? SourceId { get; set; }
         public int? PlaylistId { get; set; }
+        public string SeriesCanonicalId { get; set; }
+        public int? SeasonNumber { get; set; }
+        public int? EpisodeNumber { get; set; }
     }
 
     public partial class StrmSyncService
@@ -1153,7 +1159,10 @@ namespace Emby.M3uEditor.Plugin.Service
                         CanonicalId = file.IsNfo ? null : file.CanonicalId,
                         VariantKey = file.IsNfo ? null : file.VariantKey,
                         SourceId = file.IsNfo ? null : file.SourceId,
-                        PlaylistId = file.IsNfo ? null : file.PlaylistId
+                        PlaylistId = file.IsNfo ? null : file.PlaylistId,
+                        SeriesCanonicalId = file.IsNfo ? null : file.SeriesCanonicalId,
+                        SeasonNumber = file.IsNfo ? null : file.SeasonNumber,
+                        EpisodeNumber = file.IsNfo ? null : file.EpisodeNumber
                     }).ToList()
                 };
                 InvokeManagedPhase("before-manifest");
@@ -1321,7 +1330,10 @@ namespace Emby.M3uEditor.Plugin.Service
                     item.CanonicalId,
                     variant.Key,
                     variant.Preferred.SourceId,
-                    variant.Preferred.PlaylistId);
+                    variant.Preferred.PlaylistId,
+                    item.SeriesCanonicalId,
+                    item.SeasonNumber,
+                    item.EpisodeNumber);
             }
         }
 
@@ -1333,7 +1345,10 @@ namespace Emby.M3uEditor.Plugin.Service
             string canonicalId = null,
             string variantKey = null,
             int? sourceId = null,
-            int? playlistId = null)
+            int? playlistId = null,
+            string seriesCanonicalId = null,
+            int? seasonNumber = null,
+            int? episodeNumber = null)
         {
             plan.Add(new ManagedPlannedFile
             {
@@ -1344,7 +1359,10 @@ namespace Emby.M3uEditor.Plugin.Service
                 CanonicalId = canonicalId,
                 VariantKey = variantKey,
                 SourceId = sourceId,
-                PlaylistId = playlistId
+                PlaylistId = playlistId,
+                SeriesCanonicalId = seriesCanonicalId,
+                SeasonNumber = seasonNumber,
+                EpisodeNumber = episodeNumber
             });
         }
 
@@ -1487,7 +1505,10 @@ namespace Emby.M3uEditor.Plugin.Service
                     CanonicalId = staleFile.CanonicalId,
                     VariantKey = staleFile.VariantKey,
                     SourceId = staleFile.SourceId,
-                    PlaylistId = staleFile.PlaylistId
+                    PlaylistId = staleFile.PlaylistId,
+                    SeriesCanonicalId = staleFile.SeriesCanonicalId,
+                    SeasonNumber = staleFile.SeasonNumber,
+                    EpisodeNumber = staleFile.EpisodeNumber
                 });
             }
 

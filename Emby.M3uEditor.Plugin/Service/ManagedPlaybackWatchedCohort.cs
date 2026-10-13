@@ -27,16 +27,23 @@ namespace Emby.M3uEditor.Plugin.Service
 
         public bool Record(string itemId, string userId, bool played)
         {
-            if (string.IsNullOrWhiteSpace(itemId) || string.IsNullOrWhiteSpace(userId))
+            return Record(itemId, userId, played, "legacy");
+        }
+
+        public bool Record(string itemId, string userId, bool played, string cohortId)
+        {
+            if (string.IsNullOrWhiteSpace(itemId) || string.IsNullOrWhiteSpace(userId) ||
+                string.IsNullOrWhiteSpace(cohortId))
             {
                 return false;
             }
 
+            var key = itemId + "\n" + cohortId;
             CohortState state;
-            if (!_items.TryGetValue(itemId, out state))
+            if (!_items.TryGetValue(key, out state))
             {
                 state = new CohortState(_users);
-                _items.Add(itemId, state);
+                _items.Add(key, state);
             }
 
             if (!state.Required.Contains(userId))
@@ -58,8 +65,15 @@ namespace Emby.M3uEditor.Plugin.Service
 
         public bool IsComplete(string itemId)
         {
+            return IsComplete(itemId, "legacy");
+        }
+
+        public bool IsComplete(string itemId, string cohortId)
+        {
             CohortState state;
-            return !string.IsNullOrWhiteSpace(itemId) && _items.TryGetValue(itemId, out state) && state.IsComplete;
+            var key = itemId + "\n" + cohortId;
+            return !string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(cohortId) &&
+                _items.TryGetValue(key, out state) && state.IsComplete;
         }
 
         private static HashSet<string> Normalize(IEnumerable<string> users)
