@@ -94,22 +94,26 @@ namespace Emby.M3uEditor.Plugin.Tests
             using (var httpClient = new HttpClient(handler))
             {
                 var client = new M3uEditorClient(httpClient);
+                var cacheRequest = CreateCacheRequest(request =>
+                {
+                    if (action == "m3u_editor_cache_playback")
+                    {
+                        request.SessionId = "e2fef6ac-3dc8-4dd8-a8f7-ae0606ba3b4e";
+                        request.Sequence = 1;
+                        request.State = "start";
+                    }
+                    else
+                    {
+                        request.Watched = true;
+                        request.DeleteAfterHours = 24;
+                        request.CohortComplete = true;
+                    }
+                });
                 var method = typeof(M3uEditorClient).GetMethod(methodName);
                 Assert.NotNull(method);
                 var operation = (Task)method.Invoke(client, new object[]
                 {
-                    "https://editor.example", "account", "credential", new M3uEditorCacheControlRequest
-                    {
-                        IntegrationId = 7,
-                        MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
-                        Revision = Revision,
-                        RequestId = "c15d9b25-7536-4c7f-8f5f-7b08a1989b8a",
-                        ConsumerId = new string('b', 64),
-                        Targets = new List<M3uEditorCacheControlTarget>
-                        {
-                            new M3uEditorCacheControlTarget { CanonicalId = "movie:tmdb:603", VariantKey = "1080p" }
-                        }
-                    },
+                    "https://editor.example", "account", "credential", cacheRequest,
                     CancellationToken.None
                 });
 
@@ -118,6 +122,66 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.Contains("action=" + action, body);
                 Assert.Contains("username=account", body);
                 Assert.DoesNotContain("credential", Assert.Single(handler.ReceivedUrls));
+            }
+        }
+
+        [Theory]
+        [InlineData("start", 1)]
+        [InlineData("heartbeat", 2)]
+        [InlineData("stop", 3)]
+        public async Task SendCachePlaybackAsync_PostsCompleteSequencedSessionBody(string state, long sequence)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_playback", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":false,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                await client.SendCachePlaybackAsync(
+                    "https://editor.example", "account", "credential", CreateCacheRequest(request =>
+                    {
+                        request.SessionId = "e2fef6ac-3dc8-4dd8-a8f7-ae0606ba3b4e";
+                        request.Sequence = sequence;
+                        request.State = state;
+                    }), CancellationToken.None);
+
+                var body = Assert.Single(handler.ReceivedBodies);
+                Assert.Contains("api_version=1", body);
+                Assert.Contains("integration_id=7", body);
+                Assert.Contains("mapping_uuid=123e4567-e89b-12d3-a456-426614174000", body);
+                Assert.Contains("revision=" + Revision, body);
+                Assert.Contains("request_id=c15d9b25-7536-4c7f-8f5f-7b08a1989b8a", body);
+                Assert.Contains("consumer_id=" + new string('b', 64), body);
+                Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=movie%3Atmdb%3A603", body);
+                Assert.Contains("session_id=e2fef6ac-3dc8-4dd8-a8f7-ae0606ba3b4e", body);
+                Assert.Contains("sequence=" + sequence, body);
+                Assert.Contains("state=" + state, body);
+                Assert.DoesNotContain("action=m3u_editor_cache_release", body);
+            }
+        }
+
+        [Fact]
+        public async Task SendCacheReleaseAsync_PostsWatchedCohortBodySeparateFromPlaybackStop()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_release", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":false,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                await client.SendCacheReleaseAsync(
+                    "https://editor.example", "account", "credential", CreateCacheRequest(request =>
+                    {
+                        request.Watched = true;
+                        request.DeleteAfterHours = 24;
+                        request.CohortComplete = true;
+                    }), CancellationToken.None);
+
+                var body = Assert.Single(handler.ReceivedBodies);
+                Assert.Contains("action=m3u_editor_cache_release", body);
+                Assert.Contains("watched=1", body);
+                Assert.Contains("delete_after_hours=24", body);
+                Assert.Contains("cohort_complete=1", body);
+                Assert.DoesNotContain("session_id", body);
+                Assert.DoesNotContain("state=stop", body);
             }
         }
 
@@ -1295,6 +1359,24 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         private const string Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        private static M3uEditorCacheControlRequest CreateCacheRequest(Action<M3uEditorCacheControlRequest> configure)
+        {
+            var request = new M3uEditorCacheControlRequest
+            {
+                IntegrationId = 7,
+                MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
+                Revision = Revision,
+                RequestId = "c15d9b25-7536-4c7f-8f5f-7b08a1989b8a",
+                ConsumerId = new string('b', 64),
+                Targets = new List<M3uEditorCacheControlTarget>
+                {
+                    new M3uEditorCacheControlTarget { CanonicalId = "movie:tmdb:603", VariantKey = "1080p" }
+                }
+            };
+            configure(request);
+            return request;
+        }
 
         private const string CapabilityJson = @"{
   ""user_info"": { ""auth"": 1 },

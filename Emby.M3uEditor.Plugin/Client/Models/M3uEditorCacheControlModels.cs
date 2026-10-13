@@ -11,6 +11,12 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         public string RequestId { get; set; }
         public string ConsumerId { get; set; }
         public List<M3uEditorCacheControlTarget> Targets { get; set; } = new List<M3uEditorCacheControlTarget>();
+        public string SessionId { get; set; }
+        public long? Sequence { get; set; }
+        public string State { get; set; }
+        public bool? Watched { get; set; }
+        public int? DeleteAfterHours { get; set; }
+        public bool? CohortComplete { get; set; }
     }
 
     internal sealed class M3uEditorCacheControlTarget

@@ -499,9 +499,10 @@ namespace Emby.M3uEditor.Plugin.Client
                 string.IsNullOrEmpty(cacheRequest.Revision) || !RevisionPattern.IsMatch(cacheRequest.Revision) ||
                 string.IsNullOrEmpty(cacheRequest.ConsumerId) || !Regex.IsMatch(cacheRequest.ConsumerId, "^[a-f0-9]{64}$") ||
                 cacheRequest.Targets == null || cacheRequest.Targets.Count == 0 || cacheRequest.Targets.Count > 100 ||
-                cacheRequest.Targets.Any(target => target == null || string.IsNullOrWhiteSpace(target.CanonicalId) || string.IsNullOrWhiteSpace(target.VariantKey)))
+                cacheRequest.Targets.Any(target => target == null || string.IsNullOrWhiteSpace(target.CanonicalId) || string.IsNullOrWhiteSpace(target.VariantKey)) ||
+                !IsValidCacheActionPayload(cacheRequest, action))
             {
-                throw new InvalidOperationException("Managed cache prefetch identity is invalid.");
+                throw new InvalidOperationException("Managed cache-control identity is invalid.");
             }
 
             var fields = new Dictionary<string, string>
@@ -516,6 +517,18 @@ namespace Emby.M3uEditor.Plugin.Client
                 ["request_id"] = cacheRequest.RequestId,
                 ["consumer_id"] = cacheRequest.ConsumerId
             };
+            if (string.Equals(action, "m3u_editor_cache_playback", StringComparison.Ordinal))
+            {
+                fields["session_id"] = cacheRequest.SessionId;
+                fields["sequence"] = cacheRequest.Sequence.Value.ToString(CultureInfo.InvariantCulture);
+                fields["state"] = cacheRequest.State;
+            }
+            else if (string.Equals(action, "m3u_editor_cache_release", StringComparison.Ordinal))
+            {
+                fields["watched"] = cacheRequest.Watched.Value ? "1" : "0";
+                fields["delete_after_hours"] = cacheRequest.DeleteAfterHours.Value.ToString(CultureInfo.InvariantCulture);
+                fields["cohort_complete"] = cacheRequest.CohortComplete.Value ? "1" : "0";
+            }
             for (var index = 0; index < cacheRequest.Targets.Count; index++)
             {
                 fields["targets[" + index + "][canonical_id]"] = cacheRequest.Targets[index].CanonicalId;
@@ -554,6 +567,43 @@ namespace Emby.M3uEditor.Plugin.Client
             }
 
             throw new InvalidOperationException("Managed cache prefetch request failed.");
+        }
+
+        private static bool IsValidCacheActionPayload(
+            M3uEditorCacheControlRequest cacheRequest,
+            string action)
+        {
+            if (string.Equals(action, "m3u_editor_cache_prefetch", StringComparison.Ordinal))
+            {
+                return string.IsNullOrEmpty(cacheRequest.SessionId) &&
+                    !cacheRequest.Sequence.HasValue && string.IsNullOrEmpty(cacheRequest.State) &&
+                    !cacheRequest.Watched.HasValue && !cacheRequest.DeleteAfterHours.HasValue &&
+                    !cacheRequest.CohortComplete.HasValue;
+            }
+
+            if (string.Equals(action, "m3u_editor_cache_playback", StringComparison.Ordinal))
+            {
+                Guid sessionId;
+                return cacheRequest.Targets.Count == 1 &&
+                    Guid.TryParse(cacheRequest.SessionId, out sessionId) &&
+                    cacheRequest.Sequence.HasValue && cacheRequest.Sequence.Value > 0 &&
+                    (string.Equals(cacheRequest.State, "start", StringComparison.Ordinal) ||
+                     string.Equals(cacheRequest.State, "heartbeat", StringComparison.Ordinal) ||
+                     string.Equals(cacheRequest.State, "stop", StringComparison.Ordinal)) &&
+                    !cacheRequest.Watched.HasValue && !cacheRequest.DeleteAfterHours.HasValue &&
+                    !cacheRequest.CohortComplete.HasValue;
+            }
+
+            if (string.Equals(action, "m3u_editor_cache_release", StringComparison.Ordinal))
+            {
+                return cacheRequest.Targets.Count == 1 &&
+                    cacheRequest.Watched.HasValue && cacheRequest.DeleteAfterHours.HasValue &&
+                    cacheRequest.DeleteAfterHours.Value >= 0 && cacheRequest.DeleteAfterHours.Value <= 168 &&
+                    cacheRequest.CohortComplete.HasValue && string.IsNullOrEmpty(cacheRequest.SessionId) &&
+                    !cacheRequest.Sequence.HasValue && string.IsNullOrEmpty(cacheRequest.State);
+            }
+
+            return false;
         }
 
         public async Task<M3uEditorSyncResult> ReportSyncResultAsync(
