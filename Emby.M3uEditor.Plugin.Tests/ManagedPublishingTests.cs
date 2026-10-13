@@ -17,6 +17,26 @@ namespace Emby.M3uEditor.Plugin.Tests
     public class ManagedPublishingTests : SyncTestBase
     {
         [Fact]
+        public async Task PublishManagedMappingAsync_StrmManifestStoresIdentityWithoutPlaybackUrl()
+        {
+            var mapping = MovieMapping(1);
+
+            var result = await MakeService().PublishManagedMappingAsync(mapping, None);
+
+            Assert.True(result.Success, result.Error);
+            using (var manifest = JsonDocument.Parse(File.ReadAllText(Path.Join(
+                TempDir.Path, ".m3u-editor-for-emby", "active.json"))))
+            {
+                var strm = manifest.RootElement.GetProperty("Files")
+                    .EnumerateArray().Single(file => file.GetProperty("RelativePath").GetString().EndsWith(".strm"));
+                Assert.Equal("movie:tmdb:603", strm.GetProperty("CanonicalId").GetString());
+                Assert.Equal("v00", strm.GetProperty("VariantKey").GetString());
+                Assert.Equal(1, strm.GetProperty("SourceId").GetInt32());
+                Assert.False(strm.TryGetProperty("PlaybackUrl", out _));
+            }
+        }
+
+        [Fact]
         public async Task PublishManagedMappingAsync_UnapprovedOutputRoot_FailsBeforeWriting()
         {
             var mapping = MovieMapping(1);

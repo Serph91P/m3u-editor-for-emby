@@ -86,6 +86,10 @@ namespace Emby.M3uEditor.Plugin.Service
         public string RelativePath { get; set; }
         public string Sha256 { get; set; }
         public long Length { get; set; }
+        public string CanonicalId { get; set; }
+        public string VariantKey { get; set; }
+        public int? SourceId { get; set; }
+        public int? PlaylistId { get; set; }
     }
 
     internal sealed class ManagedPlannedFile
@@ -94,6 +98,10 @@ namespace Emby.M3uEditor.Plugin.Service
         public string Content { get; set; }
         public string Sha256 { get; set; }
         public bool IsNfo { get; set; }
+        public string CanonicalId { get; set; }
+        public string VariantKey { get; set; }
+        public int? SourceId { get; set; }
+        public int? PlaylistId { get; set; }
     }
 
     public partial class StrmSyncService
@@ -1141,7 +1149,11 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         RelativePath = file.RelativePath,
                         Sha256 = file.Sha256,
-                        Length = Encoding.UTF8.GetByteCount(file.Content)
+                        Length = Encoding.UTF8.GetByteCount(file.Content),
+                        CanonicalId = file.IsNfo ? null : file.CanonicalId,
+                        VariantKey = file.IsNfo ? null : file.VariantKey,
+                        SourceId = file.IsNfo ? null : file.SourceId,
+                        PlaylistId = file.IsNfo ? null : file.PlaylistId
                     }).ToList()
                 };
                 InvokeManagedPhase("before-manifest");
@@ -1301,7 +1313,15 @@ namespace Emby.M3uEditor.Plugin.Service
                 var filename = versionsEnabled
                     ? item.BaseFilename + " - " + variant.Key + ".strm"
                     : item.BaseFilename + ".strm";
-                AddPlanFile(plan, CombineRelative(folder, filename), variant.Preferred.PlaybackUrl.Trim() + "\n", false);
+                AddPlanFile(
+                    plan,
+                    CombineRelative(folder, filename),
+                    variant.Preferred.PlaybackUrl.Trim() + "\n",
+                    false,
+                    item.CanonicalId,
+                    variant.Key,
+                    variant.Preferred.SourceId,
+                    variant.Preferred.PlaylistId);
             }
         }
 
@@ -1309,14 +1329,22 @@ namespace Emby.M3uEditor.Plugin.Service
             List<ManagedPlannedFile> plan,
             string relativePath,
             string content,
-            bool isNfo)
+            bool isNfo,
+            string canonicalId = null,
+            string variantKey = null,
+            int? sourceId = null,
+            int? playlistId = null)
         {
             plan.Add(new ManagedPlannedFile
             {
                 RelativePath = relativePath,
                 Content = content,
                 Sha256 = ComputeManagedHash(content),
-                IsNfo = isNfo
+                IsNfo = isNfo,
+                CanonicalId = canonicalId,
+                VariantKey = variantKey,
+                SourceId = sourceId,
+                PlaylistId = playlistId
             });
         }
 
@@ -1455,7 +1483,11 @@ namespace Emby.M3uEditor.Plugin.Service
                     RelativePath = staleFile.RelativePath,
                     Content = content,
                     Sha256 = staleFile.Sha256,
-                    IsNfo = staleFile.RelativePath.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase)
+                    IsNfo = staleFile.RelativePath.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase),
+                    CanonicalId = staleFile.CanonicalId,
+                    VariantKey = staleFile.VariantKey,
+                    SourceId = staleFile.SourceId,
+                    PlaylistId = staleFile.PlaylistId
                 });
             }
 
