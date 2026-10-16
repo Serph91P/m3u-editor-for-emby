@@ -21,6 +21,7 @@ using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class ManagedPlaybackCacheEntryPointLifecycleTests : SyncTestBase
     {
         [Fact]
