@@ -70,6 +70,47 @@ namespace Emby.M3uEditor.Plugin.Tests
             AssertStartPrefetchTarget(watchSecondEpisode: false, expectedCanonicalId: "episode-2");
         }
 
+        [Theory]
+        [InlineData("next_n", 3)]
+        [InlineData("remaining_season", 1)]
+        [InlineData("whole_season", 1)]
+        public void PrefetchModes_Start_PostTargetsInNumericPolicyOrderWhenManifestOrderIsLexicographic(string mode, int nextCount)
+        {
+            var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
+            var mappingUuid = "123e4567-e89b-12d3-a456-426614174004";
+            var revision = new string('a', 64);
+            var paths = WriteManifest(root, mappingUuid, revision, 9, 10, 100, 11);
+            var episodes = paths.Select((path, index) => new Episode { Id = Guid.NewGuid(), Path = path, Name = "Episode " + index }).ToArray();
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php", CapabilityJson);
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+            ((LifecycleProxy)(object)library).Items = episodes.ToDictionary(item => item.Path, item => (BaseItem)item, StringComparer.Ordinal);
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = true;
+            config.ManagedPlaybackCacheMode = mode;
+            config.ManagedPlaybackCacheNextCount = nextCount;
+            config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } });
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "numeric-order", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Any(body => body.Contains("action=m3u_editor_cache_prefetch", StringComparison.Ordinal)), TimeSpan.FromSeconds(2)));
+                handler.AssertNoUnhandledRequests();
+            }
+
+            var prefetch = Assert.Single(handler.ReceivedBodySnapshot().Where(body => body.Contains("action=m3u_editor_cache_prefetch", StringComparison.Ordinal))).ToString();
+            var form = ParseForm(prefetch);
+            Assert.Equal("episode-10", form["targets[0][canonical_id]"]);
+            Assert.Equal("episode-11", form["targets[1][canonical_id]"]);
+            Assert.Equal("episode-100", form["targets[2][canonical_id]"]);
+        }
+
         [Fact]
         public void ReconcileDuringIdentityLookup_RejectsOldStartAndAdmitsFreshGeneration()
         {
@@ -318,12 +359,12 @@ namespace Emby.M3uEditor.Plugin.Tests
                     StringComparer.Ordinal);
         }
 
-        private static string[] WriteManifest(string root, string mappingUuid, string revision)
+        private static string[] WriteManifest(string root, string mappingUuid, string revision, params int[] episodeNumbers)
         {
             Directory.CreateDirectory(Path.Combine(root, ".m3u-editor-for-emby"));
-            var files = Enumerable.Range(1, 3).Select(number =>
+            var files = (episodeNumbers == null || episodeNumbers.Length == 0 ? Enumerable.Range(1, 3) : episodeNumbers).Select(number =>
             {
-                var relative = "Season 1/Episode " + number + ".strm";
+                var relative = "Season 1/Episode " + number.ToString("D2") + ".strm";
                 var path = Path.Combine(root, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 var text = "synthetic fixture " + number + "\n";

@@ -514,13 +514,16 @@ namespace Emby.M3uEditor.Plugin.Service
                 Season = candidate.SeasonNumber ?? 0,
                 Episode = candidate.EpisodeNumber ?? 0
             });
-            var selected = new HashSet<string>(ManagedPlaybackCachePolicy.Select(
+            var selected = ManagedPlaybackCachePolicy.Select(
                 positions,
                 current.CanonicalId,
                 config.ManagedPlaybackCacheMode,
                 config.ManagedPlaybackCacheNextCount,
-                FindFullyWatchedCandidateIds(candidates, users, cohortId)), StringComparer.Ordinal);
-            return candidates.Where(candidate => selected.Contains(candidate.CanonicalId)).ToList();
+                FindFullyWatchedCandidateIds(candidates, users, cohortId));
+            return selected
+                .Select(id => candidates.FirstOrDefault(candidate => string.Equals(candidate.CanonicalId, id, StringComparison.Ordinal)))
+                .Where(candidate => candidate != null)
+                .ToList();
         }
 
         private IReadOnlyCollection<string> FindFullyWatchedCandidateIds(
