@@ -33,5 +33,26 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             Assert.NotNull(constructor);
         }
+
+        [Fact]
+        public void LifecycleFixture_EntryPointCanCreateTheRealClientWithControlledDns()
+        {
+            var constructor = typeof(ManagedPlaybackCacheEntryPoint).GetConstructor(
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                new[]
+                {
+                    typeof(ISessionManager),
+                    typeof(IUserDataManager),
+                    typeof(ILibraryManager),
+                    typeof(Func<PluginConfiguration>),
+                    typeof(Func<HttpClient>),
+                    typeof(Func<DateTime>),
+                    typeof(Func<HttpClient, Emby.M3uEditor.Plugin.Client.M3uEditorClient>)
+                },
+                null);
+
+            Assert.NotNull(constructor);
+        }
     }
 }

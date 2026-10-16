@@ -32,6 +32,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private readonly Func<PluginConfiguration> _configurationProvider;
         private readonly Func<HttpClient> _httpClientFactory;
         private readonly Func<DateTime> _utcNow;
+        private readonly Func<HttpClient, M3uEditorClient> _clientFactory;
         private readonly BlockingCollection<InputEvent> _inputs = new BlockingCollection<InputEvent>(100);
         private readonly CancellationTokenSource _cancellation = new CancellationTokenSource();
         private readonly ManagedPlaybackIdentityResolver _resolver = new ManagedPlaybackIdentityResolver();
@@ -62,6 +63,25 @@ namespace Emby.M3uEditor.Plugin.Service
             Func<PluginConfiguration> configurationProvider,
             Func<HttpClient> httpClientFactory,
             Func<DateTime> utcNow)
+            : this(
+                sessionManager,
+                userDataManager,
+                libraryManager,
+                configurationProvider,
+                httpClientFactory,
+                utcNow,
+                null)
+        {
+        }
+
+        internal ManagedPlaybackCacheEntryPoint(
+            ISessionManager sessionManager,
+            IUserDataManager userDataManager,
+            ILibraryManager libraryManager,
+            Func<PluginConfiguration> configurationProvider,
+            Func<HttpClient> httpClientFactory,
+            Func<DateTime> utcNow,
+            Func<HttpClient, M3uEditorClient> clientFactory)
         {
             _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
             _userDataManager = userDataManager ?? throw new ArgumentNullException(nameof(userDataManager));
@@ -69,6 +89,7 @@ namespace Emby.M3uEditor.Plugin.Service
             _configurationProvider = configurationProvider ?? (() => Plugin.InstanceOrNull?.Configuration);
             _httpClientFactory = httpClientFactory ?? CreateDefaultHttpClient;
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
+            _clientFactory = clientFactory ?? (client => new M3uEditorClient(client));
         }
 
         public void Run()
@@ -79,7 +100,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             _httpClient = _httpClientFactory();
-            _client = new M3uEditorClient(_httpClient);
+            _client = _clientFactory(_httpClient);
             _cache = new ManagedPlaybackCacheService(DispatchAsync, TimeSpan.FromSeconds(30), _utcNow);
             _cohort = new ManagedPlaybackWatchedCohort(new string[0]);
             _inputConsumer = Task.Factory.StartNew(
