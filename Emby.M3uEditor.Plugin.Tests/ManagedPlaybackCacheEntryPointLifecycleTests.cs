@@ -71,6 +71,17 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
+        [InlineData("null")]
+        [InlineData("throw")]
+        public void WatchedCohort_SelectedOtherProfileUnavailable_ProtectsReleaseUntilRecoveryAndUndo(string unavailableMode)
+        {
+            AssertStartPrefetchTarget(
+                watchSecondEpisode: false,
+                expectedCanonicalId: "episode-2",
+                selectedOtherUserDataMode: unavailableMode);
+        }
+
+        [Theory]
         [InlineData("next_n", 3)]
         [InlineData("remaining_season", 1)]
         [InlineData("whole_season", 1)]
@@ -265,7 +276,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
-        private void AssertStartPrefetchTarget(bool watchSecondEpisode, string expectedCanonicalId)
+        private void AssertStartPrefetchTarget(bool watchSecondEpisode, string expectedCanonicalId, string selectedOtherUserDataMode = null)
         {
             var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
             var mappingUuid = "123e4567-e89b-12d3-a456-426614174000";
@@ -297,6 +308,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var secondUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
             config.ManagedPlaybackCacheUserIds = new[] { firstUserId.ToString("D"), secondUserId.ToString("D") };
             config.ManagedPlaybackCacheDeleteAfterWatched = true;
+            config.ManagedPlaybackCacheDeleteGraceHours = 37;
             config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } });
             string[] requests;
             var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
@@ -310,9 +322,12 @@ namespace Emby.M3uEditor.Plugin.Tests
                 sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 sessionProxy.Raise("PlaybackStopped", new PlaybackStopEventArgs { PlaySessionId = "emby-session-1" });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 6, TimeSpan.FromSeconds(2)));
+                userProxy.FailedUserId = secondUserId.ToString("D");
+                userProxy.UserDataFailureMode = selectedOtherUserDataMode;
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = firstUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 7, TimeSpan.FromSeconds(2)));
                 userProxy.WatchedUserPaths.Add(firstUserId.ToString("D") + "\n" + episodes[0].Path);
+                userProxy.UserDataFailureMode = null;
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = secondUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 8, TimeSpan.FromSeconds(2)));
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = secondUserId }, Item = episodes[0], UserData = new UserItemData { Played = false } });
@@ -344,6 +359,18 @@ namespace Emby.M3uEditor.Plugin.Tests
             var releases = requests.Where(body => body.Contains("action=m3u_editor_cache_release", StringComparison.Ordinal)).Select(ParseForm).ToArray();
             Assert.Equal(new[] { "0", "0", "1", "0" }, releases.Select(form => form["watched"]).ToArray());
             Assert.Equal(new[] { "0", "0", "1", "0" }, releases.Select(form => form["cohort_complete"]).ToArray());
+            var expectedConsumerId = Hash("7\n" + firstUserId.ToString("D") + "\n" + secondUserId.ToString("D"));
+            Assert.All(releases, form =>
+            {
+                Assert.Equal("7", form["integration_id"]);
+                Assert.Equal(mappingUuid, form["mapping_uuid"]);
+                Assert.Equal(revision, form["revision"]);
+                Assert.Equal(expectedConsumerId, form["consumer_id"]);
+                Assert.Equal("episode-1", form["targets[0][canonical_id]"]);
+                Assert.Equal("variant-A", form["targets[0][variant_key]"]);
+                Assert.Equal("37", form["delete_after_hours"]);
+                Assert.True(Guid.TryParse(form["request_id"], out _));
+            });
             Assert.Equal(6, libraryProxy.FindByPathCalls);
             Assert.Equal(17, userProxy.UserDataReads);
         }
@@ -393,6 +420,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             public int RemovedEvents { get; private set; }
             public int FindByPathCalls { get; private set; }
             public int UserDataReads { get; private set; }
+            public string FailedUserId { get; set; }
+            public string UserDataFailureMode { get; set; }
             public bool BlockFindByPath { get; set; }
             public ManualResetEventSlim FindByPathEntered { get; } = new ManualResetEventSlim(false);
             public ManualResetEventSlim ContinueFindByPath { get; } = new ManualResetEventSlim(false);
@@ -425,6 +454,11 @@ namespace Emby.M3uEditor.Plugin.Tests
                     UserDataReads++;
                     var userId = args != null && args.Length > 0 ? args[0] as string : null;
                     var item = args != null && args.Length > 1 ? args[1] as BaseItem : null;
+                    if (string.Equals(userId, FailedUserId, StringComparison.Ordinal))
+                    {
+                        if (string.Equals(UserDataFailureMode, "null", StringComparison.Ordinal)) return null;
+                        if (string.Equals(UserDataFailureMode, "throw", StringComparison.Ordinal)) throw new InvalidOperationException("synthetic user data failure");
+                    }
                     return new UserItemData { Played = item != null && (WatchedPaths.Contains(item.Path) || WatchedUserPaths.Contains((userId ?? string.Empty) + "\n" + item.Path)) };
                 }
                 return targetMethod.ReturnType == typeof(void) ? null : targetMethod.ReturnType.IsValueType ? Activator.CreateInstance(targetMethod.ReturnType) : null;
