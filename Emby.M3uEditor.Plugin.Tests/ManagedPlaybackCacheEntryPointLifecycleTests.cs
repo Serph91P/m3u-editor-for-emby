@@ -99,19 +99,24 @@ namespace Emby.M3uEditor.Plugin.Tests
             config.ManagedPlaybackCacheUserIds = new[] { "user-a" };
             config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } });
             string[] requests;
+            var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
             using (var client = new HttpClient(handler))
-            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => now, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
             {
                 entryPoint.Run();
                 sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodies.Count == 3, TimeSpan.FromSeconds(2)));
+                now = now.AddSeconds(30);
+                sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                sessionProxy.Raise("PlaybackStopped", new PlaybackStopEventArgs { PlaySessionId = "emby-session-1" });
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodies.Count == 5, TimeSpan.FromSeconds(2)));
                 requests = handler.ReceivedBodies.ToArray();
             }
-            var playback = Assert.Single(requests.Where(body => body.Contains("action=m3u_editor_cache_playback", StringComparison.Ordinal)));
+            var playback = requests.Where(body => body.Contains("action=m3u_editor_cache_playback", StringComparison.Ordinal)).ToArray();
             var prefetch = Assert.Single(requests.Where(body => body.Contains("action=m3u_editor_cache_prefetch", StringComparison.Ordinal)));
-            Assert.Contains("mapping_uuid=" + mappingUuid, playback);
-            Assert.Contains("revision=" + revision, playback);
-            Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=episode-1", playback);
+            Assert.Contains(playback, body => body.Contains("mapping_uuid=" + mappingUuid, StringComparison.Ordinal));
+            Assert.Contains(playback, body => body.Contains("revision=" + revision, StringComparison.Ordinal));
+            Assert.Contains(playback, body => body.Contains("targets%5B0%5D%5Bcanonical_id%5D=episode-1", StringComparison.Ordinal));
             Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=" + expectedCanonicalId, prefetch);
             Assert.DoesNotContain("targets%5B0%5D%5Bcanonical_id%5D=" + (watchSecondEpisode ? "episode-2" : "episode-3"), prefetch);
             Assert.Equal(3, libraryProxy.FindByPathCalls);
