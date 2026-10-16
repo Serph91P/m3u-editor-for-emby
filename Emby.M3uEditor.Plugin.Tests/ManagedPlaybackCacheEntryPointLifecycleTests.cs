@@ -156,6 +156,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 Thread.Sleep(100);
                 requests = handler.ReceivedBodySnapshot().ToArray();
+                handler.AssertNoUnhandledRequests();
             }
             var playback = requests.Where(body => body.Contains("action=m3u_editor_cache_playback", StringComparison.Ordinal)).ToArray();
             var prefetch = Assert.Single(requests.Where(body => body.Contains("action=m3u_editor_cache_prefetch", StringComparison.Ordinal)));

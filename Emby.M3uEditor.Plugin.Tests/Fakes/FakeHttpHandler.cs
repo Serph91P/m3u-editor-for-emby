@@ -19,6 +19,7 @@ namespace Emby.M3uEditor.Plugin.Tests.Fakes
         private readonly List<(string UrlSubstring, Queue<(string Body, HttpStatusCode Status)> Responses)> _rules
             = new List<(string, Queue<(string, HttpStatusCode)>)>();
         private readonly HashSet<string> _requestIdEchoUrls = new HashSet<string>(StringComparer.Ordinal);
+        private readonly List<string> _unhandledRequests = new List<string>();
         private readonly object _gate = new object();
 
         public List<string> ReceivedUrls { get; } = new List<string>();
@@ -30,6 +31,19 @@ namespace Emby.M3uEditor.Plugin.Tests.Fakes
             lock (_gate)
             {
                 return ReceivedBodies.ToArray();
+            }
+        }
+
+        /// <summary>Fails test teardown when a background request had no response rule.</summary>
+        public void AssertNoUnhandledRequests()
+        {
+            lock (_gate)
+            {
+                if (_unhandledRequests.Count != 0)
+                {
+                    throw new InvalidOperationException(
+                        "FakeHttpHandler: unhandled requests: " + string.Join(", ", _unhandledRequests));
+                }
             }
         }
 
@@ -96,6 +110,8 @@ namespace Emby.M3uEditor.Plugin.Tests.Fakes
                         return Task.FromResult(CreateResponse(responseBody, status));
                     }
                 }
+
+                _unhandledRequests.Add(url);
             }
 
             throw new InvalidOperationException(
