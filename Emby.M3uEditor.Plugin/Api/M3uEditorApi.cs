@@ -606,6 +606,8 @@ namespace Emby.M3uEditor.Plugin.Api
             {
                 config.ManagedLastError = rollback.Error ?? "Managed rollback failed.";
             }
+            ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(
+                config.ManagedPlaybackCacheEnabled);
             plugin.SaveConfiguration();
 
             return new ManagedActionResult

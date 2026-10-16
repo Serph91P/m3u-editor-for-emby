@@ -120,6 +120,109 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public void ConfigurationChangeDuringBlockedProvider_DropsStaleEnabledSnapshot()
+        {
+            var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
+            var mappingUuid = "123e4567-e89b-12d3-a456-426614174002";
+            var revision = new string('a', 64);
+            var paths = WriteManifest(root, mappingUuid, revision);
+            var episode = new Episode { Id = Guid.NewGuid(), Path = paths[0], Name = "Episode 1" };
+            var enabled = DefaultConfig();
+            enabled.ManagedPublishingEnabled = true;
+            enabled.ManagedPlaybackCacheEnabled = true;
+            enabled.ManagedPlaybackCacheMode = "next";
+            enabled.ManagedPlaybackCacheUserIds = new[] { "user-a" };
+            enabled.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } });
+            var disabled = DefaultConfig();
+            disabled.ManagedPublishingEnabled = true;
+            disabled.ManagedPlaybackCacheEnabled = false;
+            using (var providerEntered = new ManualResetEventSlim(false))
+            using (var releaseProvider = new ManualResetEventSlim(false))
+            {
+                var handler = new FakeHttpHandler();
+                handler.RespondWith("player_api.php", CapabilityJson);
+                handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
+                handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
+                handler.RespondWithRequestIdEcho("action=m3u_editor_cache_release");
+                var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+                var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+                var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+                ((LifecycleProxy)(object)library).Items = new Dictionary<string, BaseItem>(StringComparer.Ordinal) { [paths[0]] = episode };
+                var firstRead = true;
+                using (var client = new HttpClient(handler))
+                using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () =>
+                {
+                    if (firstRead)
+                    {
+                        firstRead = false;
+                        providerEntered.Set();
+                        releaseProvider.Wait(TimeSpan.FromSeconds(2));
+                        return enabled;
+                    }
+
+                    return disabled;
+                }, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+                {
+                    entryPoint.Run();
+                    ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episode, PlaySessionId = "stale-session", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                    Assert.True(providerEntered.Wait(TimeSpan.FromSeconds(2)));
+                    ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                    releaseProvider.Set();
+                    Thread.Sleep(150);
+                    Assert.Empty(handler.ReceivedBodySnapshot());
+                    handler.AssertNoUnhandledRequests();
+                }
+            }
+        }
+
+        [Fact]
+        public void ReconcileAfterQueuedStart_DropsOldInputAndAdmitsFreshInput()
+        {
+            var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
+            var mappingUuid = "123e4567-e89b-12d3-a456-426614174003";
+            var revisionA = new string('a', 64);
+            var revisionB = new string('b', 64);
+            var paths = WriteManifest(root, mappingUuid, revisionA);
+            var episodes = paths.Select((path, index) => new Episode { Id = Guid.NewGuid(), Path = path, Name = "Episode " + (index + 1) }).ToArray();
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php", CapabilityJson);
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_release");
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+            var libraryProxy = (LifecycleProxy)(object)library;
+            libraryProxy.Items = episodes.ToDictionary(item => item.Path, item => (BaseItem)item, StringComparer.Ordinal);
+            libraryProxy.BlockFindByPath = true;
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = true;
+            config.ManagedPlaybackCacheMode = "next";
+            config.ManagedPlaybackCacheUserIds = new[] { "user-a" };
+            config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revisionA, Success = true } });
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                var sessionProxy = (LifecycleProxy)(object)sessions;
+                sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "alpha", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Assert.True(libraryProxy.FindByPathEntered.Wait(TimeSpan.FromSeconds(2)));
+                sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[1], PlaySessionId = "beta", MediaSource = new RuntimeMediaSource { Path = paths[1] } });
+                WriteManifest(root, mappingUuid, revisionB);
+                config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revisionB, Success = true } });
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(true);
+                libraryProxy.ContinueFindByPath.Set();
+                Thread.Sleep(150);
+                Assert.Empty(handler.ReceivedBodySnapshot());
+                sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "gamma", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 3, TimeSpan.FromSeconds(2)));
+                Assert.All(handler.ReceivedBodySnapshot().Where(body => !string.IsNullOrEmpty(body)), body => Assert.Contains("revision=" + revisionB, body));
+                handler.AssertNoUnhandledRequests();
+            }
+        }
+
         private void AssertStartPrefetchTarget(bool watchSecondEpisode, string expectedCanonicalId)
         {
             var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");

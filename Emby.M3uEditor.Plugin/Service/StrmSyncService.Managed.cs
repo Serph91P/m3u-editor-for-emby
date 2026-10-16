@@ -255,7 +255,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     config.ManagedPublishingEnabled = false;
                     config.ManagedPublishingApiVersion = 0;
                     config.ManagedLastError = string.Empty;
-                    saveConfig?.Invoke();
+                    PersistManagedConfiguration(config, saveConfig);
                     progress?.Report(100);
                     return result;
                 }
@@ -512,7 +512,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     config.ManagedLastSuccessTicks = DateTime.UtcNow.Ticks;
                 }
 
-                saveConfig?.Invoke();
+                PersistManagedConfiguration(config, saveConfig);
                 progress?.Report(100);
                 return result;
             }
@@ -723,8 +723,18 @@ namespace Emby.M3uEditor.Plugin.Service
             result.Error = error;
             config.ManagedPublishingEnabled = false;
             config.ManagedLastError = error;
-            saveConfig?.Invoke();
+            PersistManagedConfiguration(config, saveConfig);
             return result;
+        }
+
+        private static void PersistManagedConfiguration(PluginConfiguration config, Action saveConfig)
+        {
+            // SaveConfiguration does not invoke Plugin.UpdateConfiguration on Emby.
+            // Publish the final mapping snapshot to the running lifecycle before the
+            // persisted state can be observed by a later user-data callback.
+            ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(
+                config != null && config.ManagedPlaybackCacheEnabled);
+            saveConfig?.Invoke();
         }
 
         private void RemoveOnlyManagedGeneration(

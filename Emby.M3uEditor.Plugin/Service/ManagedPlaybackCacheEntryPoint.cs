@@ -185,17 +185,18 @@ namespace Emby.M3uEditor.Plugin.Service
                 FormatEntityId(args?.Item?.Id),
                 selectedMediaSourcePath,
                 !string.IsNullOrWhiteSpace(selectedMediaSourcePath),
-                args?.Item));
+                args?.Item,
+                CaptureConfigurationGeneration()));
         }
 
         private void OnPlaybackProgress(object sender, PlaybackProgressEventArgs args)
         {
-            TryEnqueue(InputEvent.Progress(args?.PlaySessionId));
+            TryEnqueue(InputEvent.Progress(args?.PlaySessionId, CaptureConfigurationGeneration()));
         }
 
         private void OnPlaybackStopped(object sender, PlaybackStopEventArgs args)
         {
-            TryEnqueue(InputEvent.Stop(args?.PlaySessionId));
+            TryEnqueue(InputEvent.Stop(args?.PlaySessionId, CaptureConfigurationGeneration()));
         }
 
         private void OnUserDataSaved(object sender, UserDataSaveEventArgs args)
@@ -205,7 +206,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 args?.Item?.Path,
                 FormatEntityId(args?.User?.Id),
                 args?.UserData?.Played == true,
-                args?.Item));
+                args?.Item,
+                CaptureConfigurationGeneration()));
         }
 
         private void TryEnqueue(InputEvent input)
@@ -251,22 +253,22 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private void ProcessInput(InputEvent input)
         {
-            var config = _configurationProvider();
-            if (config == null || _cache == null)
-            {
-                return;
-            }
-
-            _cache.SetEnabled(config.ManagedPlaybackCacheEnabled);
             if (input.Kind == "progress")
             {
-                _cache.PlaybackProgress(input.SessionId);
+                _cache?.PlaybackProgress(input.SessionId);
                 return;
             }
 
             if (input.Kind == "stop")
             {
-                _cache.PlaybackStopped(input.SessionId);
+                // Stops are best-effort lease cleanup even after a reconciliation.
+                _cache?.PlaybackStopped(input.SessionId);
+                return;
+            }
+
+            var config = _configurationProvider();
+            if (config == null || !TryApplyConfiguration(input.ConfigurationGeneration, config))
+            {
                 return;
             }
 
@@ -286,28 +288,27 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (input.Kind == "start")
             {
-                var generation = CaptureConfigurationGeneration();
                 if (!TryResolveConfiguredIdentity(config, input.Path, input.ConcreteMediaSource, out var identity))
                 {
                     return;
                 }
 
                 var targets = SelectPrefetchTargets(config, identity, users, context.ConsumerId);
-                if (!TryAdmitPlaybackStarted(generation, input.SessionId, identity, targets, context))
+                if (!TryAdmitPlaybackStarted(input.ConfigurationGeneration, input.SessionId, identity, targets, context))
                 {
                     return;
                 }
 
                 if (!string.IsNullOrWhiteSpace(input.ItemId))
                 {
-                    _identityByItem[input.ItemId] = identity;
+                    TryCacheIdentity(input.ConfigurationGeneration, input.ItemId, identity);
                 }
                 if (config.ManagedPlaybackCacheDeleteAfterWatched && users.Count > 0 && input.Item != null)
                 {
                     var startCohortComplete = RecordWatchedSnapshot(
                         input.ItemId, input.Item, users, context.ConsumerId, null, null);
                     TryAdmitWatchedChanged(
-                        generation,
+                        input.ConfigurationGeneration,
                         identity,
                         startCohortComplete,
                         config.ManagedPlaybackCacheDeleteGraceHours,
@@ -323,13 +324,12 @@ namespace Emby.M3uEditor.Plugin.Service
                 return;
             }
 
-            if (!_identityByItem.TryGetValue(input.ItemId ?? string.Empty, out var watchedIdentity) &&
+            if (!TryGetCachedIdentity(input.ConfigurationGeneration, input.ItemId, out var watchedIdentity) &&
                 !TryResolveConfiguredIdentity(config, input.Path, true, out watchedIdentity))
             {
                 return;
             }
 
-            var watchedGeneration = CaptureConfigurationGeneration();
             var complete = RecordWatchedSnapshot(
                 input.ItemId,
                 input.Item,
@@ -338,7 +338,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 input.UserId,
                 input.Played);
             TryAdmitWatchedChanged(
-                watchedGeneration,
+                input.ConfigurationGeneration,
                 watchedIdentity,
                 complete,
                 config.ManagedPlaybackCacheDeleteGraceHours,
@@ -351,6 +351,45 @@ namespace Emby.M3uEditor.Plugin.Service
             lock (RuntimeGate)
             {
                 return _configurationGeneration;
+            }
+        }
+
+        private bool TryApplyConfiguration(long generation, PluginConfiguration config)
+        {
+            lock (RuntimeGate)
+            {
+                if (_disposed || !ReferenceEquals(_current, this) || generation != _configurationGeneration || _cache == null)
+                {
+                    return false;
+                }
+
+                _cache.SetEnabled(config.ManagedPlaybackCacheEnabled);
+                return true;
+            }
+        }
+
+        private void TryCacheIdentity(long generation, string itemId, ManagedPlaybackIdentity identity)
+        {
+            lock (RuntimeGate)
+            {
+                if (!_disposed && ReferenceEquals(_current, this) && generation == _configurationGeneration)
+                {
+                    _identityByItem[itemId] = identity;
+                }
+            }
+        }
+
+        private bool TryGetCachedIdentity(
+            long generation,
+            string itemId,
+            out ManagedPlaybackIdentity identity)
+        {
+            lock (RuntimeGate)
+            {
+                identity = null;
+                return !_disposed && ReferenceEquals(_current, this) &&
+                    generation == _configurationGeneration &&
+                    _identityByItem.TryGetValue(itemId ?? string.Empty, out identity);
             }
         }
 
@@ -702,13 +741,15 @@ namespace Emby.M3uEditor.Plugin.Service
             public string UserId { get; private set; }
             public bool Played { get; private set; }
             public BaseItem Item { get; private set; }
+            public long ConfigurationGeneration { get; private set; }
 
             public static InputEvent Start(
                 string sessionId,
                 string itemId,
                 string path,
                 bool concrete,
-                BaseItem item)
+                BaseItem item,
+                long configurationGeneration)
             {
                 return string.IsNullOrWhiteSpace(sessionId) ? null : new InputEvent
                 {
@@ -717,25 +758,28 @@ namespace Emby.M3uEditor.Plugin.Service
                     ItemId = itemId,
                     Path = path,
                     ConcreteMediaSource = concrete,
-                    Item = item
+                    Item = item,
+                    ConfigurationGeneration = configurationGeneration
                 };
             }
 
-            public static InputEvent Progress(string sessionId)
+            public static InputEvent Progress(string sessionId, long configurationGeneration)
             {
                 return string.IsNullOrWhiteSpace(sessionId) ? null : new InputEvent
                 {
                     Kind = "progress",
-                    SessionId = sessionId
+                    SessionId = sessionId,
+                    ConfigurationGeneration = configurationGeneration
                 };
             }
 
-            public static InputEvent Stop(string sessionId)
+            public static InputEvent Stop(string sessionId, long configurationGeneration)
             {
                 return string.IsNullOrWhiteSpace(sessionId) ? null : new InputEvent
                 {
                     Kind = "stop",
-                    SessionId = sessionId
+                    SessionId = sessionId,
+                    ConfigurationGeneration = configurationGeneration
                 };
             }
 
@@ -744,7 +788,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 string path,
                 string userId,
                 bool played,
-                BaseItem item)
+                BaseItem item,
+                long configurationGeneration)
             {
                 return string.IsNullOrWhiteSpace(itemId) || string.IsNullOrWhiteSpace(userId) ? null : new InputEvent
                 {
@@ -753,7 +798,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     Path = path,
                     UserId = userId,
                     Played = played,
-                    Item = item
+                    Item = item,
+                    ConfigurationGeneration = configurationGeneration
                 };
             }
         }
