@@ -60,6 +60,17 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public void ThreeEpisodes_Start_UsesActiveManifestAndPostsUnwatchedPrefetch()
         {
+            AssertStartPrefetchTarget(watchSecondEpisode: true, expectedCanonicalId: "episode-3");
+        }
+
+        [Fact]
+        public void ThreeEpisodes_Start_PrefetchesUnwatchedNextEpisode()
+        {
+            AssertStartPrefetchTarget(watchSecondEpisode: false, expectedCanonicalId: "episode-2");
+        }
+
+        private void AssertStartPrefetchTarget(bool watchSecondEpisode, string expectedCanonicalId)
+        {
             var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
             var mappingUuid = "123e4567-e89b-12d3-a456-426614174000";
             var revision = new string('a', 64);
@@ -76,7 +87,10 @@ namespace Emby.M3uEditor.Plugin.Tests
             var userProxy = (LifecycleProxy)(object)users;
             var libraryProxy = (LifecycleProxy)(object)library;
             libraryProxy.Items = episodes.ToDictionary(item => item.Path, item => (BaseItem)item, StringComparer.Ordinal);
-            userProxy.WatchedPaths.Add(paths[1]);
+            if (watchSecondEpisode)
+            {
+                userProxy.WatchedPaths.Add(paths[1]);
+            }
             var config = DefaultConfig();
             config.ManagedPublishingEnabled = true;
             config.ManagedPlaybackCacheEnabled = true;
@@ -98,8 +112,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("mapping_uuid=" + mappingUuid, playback);
             Assert.Contains("revision=" + revision, playback);
             Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=episode-1", playback);
-            Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=episode-3", prefetch);
-            Assert.DoesNotContain("episode-2", prefetch);
+            Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=" + expectedCanonicalId, prefetch);
+            Assert.DoesNotContain("targets%5B0%5D%5Bcanonical_id%5D=" + (watchSecondEpisode ? "episode-2" : "episode-3"), prefetch);
             Assert.Equal(3, libraryProxy.FindByPathCalls);
             Assert.Equal(3, userProxy.UserDataReads);
         }
