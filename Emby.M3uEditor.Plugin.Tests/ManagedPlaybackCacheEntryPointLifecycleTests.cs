@@ -167,6 +167,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 6, TimeSpan.FromSeconds(2)));
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = firstUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 7, TimeSpan.FromSeconds(2)));
+                userProxy.WatchedUserPaths.Add(firstUserId.ToString("D") + "\n" + episodes[0].Path);
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = secondUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 8, TimeSpan.FromSeconds(2)));
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = secondUserId }, Item = episodes[0], UserData = new UserItemData { Played = false } });
@@ -191,6 +192,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.All(playbackForms, form => Assert.Equal(protocolSession, form["session_id"]));
             Assert.Equal(new[] { "1", "2", "3" }, playbackForms.Select(form => form["sequence"]).ToArray());
             Assert.Equal(9, requests.Length);
+            var releases = requests.Where(body => body.Contains("action=m3u_editor_cache_release", StringComparison.Ordinal)).Select(ParseForm).ToArray();
+            Assert.Equal(new[] { "0", "0", "1", "0" }, releases.Select(form => form["watched"]).ToArray());
+            Assert.Equal(new[] { "0", "0", "1", "0" }, releases.Select(form => form["cohort_complete"]).ToArray());
             Assert.Equal(6, libraryProxy.FindByPathCalls);
             Assert.Equal(17, userProxy.UserDataReads);
         }
@@ -245,6 +249,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             public ManualResetEventSlim ContinueFindByPath { get; } = new ManualResetEventSlim(false);
             public IDictionary<string, BaseItem> Items { get; set; } = new Dictionary<string, BaseItem>(StringComparer.Ordinal);
             public ISet<string> WatchedPaths { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public ISet<string> WatchedUserPaths { get; } = new HashSet<string>(StringComparer.Ordinal);
             public void Raise(string eventName, object args) { if (_handlers.TryGetValue(eventName, out var handler)) handler.DynamicInvoke(this, args); }
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -260,7 +265,13 @@ namespace Emby.M3uEditor.Plugin.Tests
                     }
                     return args != null && args.Length > 0 && args[0] is string path && Items.TryGetValue(path, out var item) ? item : null;
                 }
-                if (targetMethod.Name == "GetUserData") { UserDataReads++; var item = args != null && args.Length > 1 ? args[1] as BaseItem : null; return new UserItemData { Played = item != null && WatchedPaths.Contains(item.Path) }; }
+                if (targetMethod.Name == "GetUserData")
+                {
+                    UserDataReads++;
+                    var userId = args != null && args.Length > 0 ? args[0] as string : null;
+                    var item = args != null && args.Length > 1 ? args[1] as BaseItem : null;
+                    return new UserItemData { Played = item != null && (WatchedPaths.Contains(item.Path) || WatchedUserPaths.Contains((userId ?? string.Empty) + "\n" + item.Path)) };
+                }
                 return targetMethod.ReturnType == typeof(void) ? null : targetMethod.ReturnType.IsValueType ? Activator.CreateInstance(targetMethod.ReturnType) : null;
             }
         }
