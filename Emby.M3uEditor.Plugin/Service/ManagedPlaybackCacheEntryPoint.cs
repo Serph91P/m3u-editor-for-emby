@@ -368,8 +368,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     return false;
                 }
 
-                _cache?.PlaybackStarted(sessionId, identity, targets, context);
-                return true;
+                return _cache != null && _cache.PlaybackStarted(sessionId, identity, targets, context);
             }
         }
 

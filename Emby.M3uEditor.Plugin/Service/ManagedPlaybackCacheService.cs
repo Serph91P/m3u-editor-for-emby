@@ -112,7 +112,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        public void PlaybackStarted(
+        public bool PlaybackStarted(
             string embySessionId,
             ManagedPlaybackIdentity current,
             IEnumerable<ManagedPlaybackIdentity> prefetchTargets,
@@ -120,7 +120,7 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             if (!IsValidSessionInput(embySessionId, current, context))
             {
-                return;
+                return false;
             }
 
             lock (_gate)
@@ -130,7 +130,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 if (_disposed || !_enabled || _activeSessions.ContainsKey(embySessionId) ||
                     _terminalSessions.ContainsKey(embySessionId))
                 {
-                    return;
+                    return false;
                 }
 
                 var state = new SessionState
@@ -144,7 +144,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 var start = CreatePlaybackCommand(state, "start", _generation);
                 if (!TryEnqueue(start))
                 {
-                    return;
+                    return false;
                 }
 
                 _activeSessions.Add(embySessionId, state);
@@ -161,6 +161,8 @@ namespace Emby.M3uEditor.Plugin.Service
                         Generation = _generation
                     });
                 }
+
+                return true;
             }
         }
 

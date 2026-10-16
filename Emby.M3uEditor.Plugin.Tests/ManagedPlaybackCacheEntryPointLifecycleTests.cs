@@ -82,6 +82,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             handler.RespondWith("player_api.php", CapabilityJson);
             handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
             handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_release");
             var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
             var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
             var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
@@ -130,6 +131,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             handler.RespondWith("player_api.php", CapabilityJson);
             handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
             handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_release");
             var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
             var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
             var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
@@ -146,7 +148,10 @@ namespace Emby.M3uEditor.Plugin.Tests
             config.ManagedPlaybackCacheEnabled = true;
             config.ManagedPlaybackCacheMode = "next_n";
             config.ManagedPlaybackCacheNextCount = 1;
-            config.ManagedPlaybackCacheUserIds = new[] { "user-a" };
+            var firstUserId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+            var secondUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+            config.ManagedPlaybackCacheUserIds = new[] { firstUserId.ToString("D"), secondUserId.ToString("D") };
+            config.ManagedPlaybackCacheDeleteAfterWatched = true;
             config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } });
             string[] requests;
             var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
@@ -155,11 +160,17 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 entryPoint.Run();
                 sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
-                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodies.Count == 3, TimeSpan.FromSeconds(2)));
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 4, TimeSpan.FromSeconds(2)));
                 now = now.AddSeconds(30);
                 sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 sessionProxy.Raise("PlaybackStopped", new PlaybackStopEventArgs { PlaySessionId = "emby-session-1" });
-                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 5, TimeSpan.FromSeconds(2)));
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 6, TimeSpan.FromSeconds(2)));
+                userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = firstUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 7, TimeSpan.FromSeconds(2)));
+                userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = secondUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 8, TimeSpan.FromSeconds(2)));
+                userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = secondUserId }, Item = episodes[0], UserData = new UserItemData { Played = false } });
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 9, TimeSpan.FromSeconds(2)));
                 sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 Thread.Sleep(100);
@@ -179,9 +190,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.False(string.IsNullOrWhiteSpace(protocolSession));
             Assert.All(playbackForms, form => Assert.Equal(protocolSession, form["session_id"]));
             Assert.Equal(new[] { "1", "2", "3" }, playbackForms.Select(form => form["sequence"]).ToArray());
-            Assert.Equal(5, requests.Length);
+            Assert.Equal(9, requests.Length);
             Assert.Equal(6, libraryProxy.FindByPathCalls);
-            Assert.Equal(6, userProxy.UserDataReads);
+            Assert.Equal(17, userProxy.UserDataReads);
         }
 
         private static IDictionary<string, string> ParseForm(string body)
