@@ -108,6 +108,14 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.Empty(handler.ReceivedBodySnapshot());
                 ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "fresh-session", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 3, TimeSpan.FromSeconds(2)));
+                config.ManagedPlaybackCacheEnabled = false;
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 4, TimeSpan.FromSeconds(2)));
+                ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "late-session", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                ((LifecycleProxy)(object)sessions).Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "fresh-session", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Thread.Sleep(100);
+                Assert.Equal(4, handler.ReceivedBodySnapshot().Count);
+                handler.AssertNoUnhandledRequests();
             }
         }
 
