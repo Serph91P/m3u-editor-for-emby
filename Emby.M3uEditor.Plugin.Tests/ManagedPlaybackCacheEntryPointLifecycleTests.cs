@@ -178,6 +178,10 @@ namespace Emby.M3uEditor.Plugin.Tests
                 requests = handler.ReceivedBodySnapshot().ToArray();
                 handler.AssertNoUnhandledRequests();
             }
+            sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "disposed-session", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+            userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = firstUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
+            Thread.Sleep(100);
+            Assert.Equal(9, handler.ReceivedBodySnapshot().Count);
             var playback = requests.Where(body => body.Contains("action=m3u_editor_cache_playback", StringComparison.Ordinal)).ToArray();
             var prefetch = Assert.Single(requests.Where(body => body.Contains("action=m3u_editor_cache_prefetch", StringComparison.Ordinal)));
             Assert.Contains(playback, body => body.Contains("mapping_uuid=" + mappingUuid, StringComparison.Ordinal));
@@ -250,7 +254,13 @@ namespace Emby.M3uEditor.Plugin.Tests
             public IDictionary<string, BaseItem> Items { get; set; } = new Dictionary<string, BaseItem>(StringComparer.Ordinal);
             public ISet<string> WatchedPaths { get; } = new HashSet<string>(StringComparer.Ordinal);
             public ISet<string> WatchedUserPaths { get; } = new HashSet<string>(StringComparer.Ordinal);
-            public void Raise(string eventName, object args) { if (_handlers.TryGetValue(eventName, out var handler)) handler.DynamicInvoke(this, args); }
+            public void Raise(string eventName, object args)
+            {
+                if (_handlers.TryGetValue(eventName, out var handler) && handler != null)
+                {
+                    handler.DynamicInvoke(this, args);
+                }
+            }
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod.Name.StartsWith("add_", StringComparison.Ordinal)) { AddedEvents++; var name = targetMethod.Name.Substring(4); _handlers[name] = Delegate.Combine(_handlers.TryGetValue(name, out var existing) ? existing : null, (Delegate)args[0]); return null; }
