@@ -23,9 +23,9 @@ namespace Emby.RuntimeCompatibility
 
             Console.WriteLine("Runtime ABI harness executing on .NET " + runtimeVersion + ".");
 
-            if (args.Length != 5)
+            if (args.Length != 6)
             {
-                Console.Error.WriteLine("Usage: RuntimeAbiHarness <candidate> <released> <sdk> <server-4.9> <server-4.10>");
+                Console.Error.WriteLine("Usage: RuntimeAbiHarness <candidate> <released> <sdk> <server-4.9> <server-4.10.0.40> <server-4.10.1.0>");
                 return 2;
             }
 
@@ -34,6 +34,7 @@ namespace Emby.RuntimeCompatibility
                 VerifyCandidate(args[0], "SDK 4.8.0.80", args[2]);
                 VerifyCandidate(args[0], "Emby Server 4.9.5.0", args[3]);
                 VerifyCandidate(args[0], "Emby Server 4.10.0.40", args[4]);
+                VerifyCandidate(args[0], "Emby Server 4.10.1.0", args[5]);
                 VerifyHistoricalFailure(args[1], args[4]);
                 Console.WriteLine("Runtime ABI compatibility checks passed.");
                 return 0;
