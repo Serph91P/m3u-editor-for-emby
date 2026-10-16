@@ -74,6 +74,39 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Reconcile_StopsOldLeaseAndDropsQueuedPrefetchBeforeReenabling()
+        {
+            var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
+            var startEntered = new ManualResetEventSlim(false);
+            var releaseStart = new ManualResetEventSlim(false);
+            using (var service = new ManagedPlaybackCacheService(
+                (command, cancellationToken) =>
+                {
+                    if (command.Action == "playback" && command.State == "start")
+                    {
+                        startEntered.Set();
+                        releaseStart.Wait(cancellationToken);
+                    }
+
+                    calls.Enqueue(command);
+                    return Task.CompletedTask;
+                }, TimeSpan.FromSeconds(30)))
+            {
+                service.PlaybackStarted("session-1", Identity("episode-1", 1),
+                    new[] { Identity("episode-2", 2) }, Context());
+                Assert.True(startEntered.Wait(TimeSpan.FromSeconds(2)));
+
+                service.Reconcile(true);
+                releaseStart.Set();
+                Assert.True(SpinWait.SpinUntil(() => calls.Count >= 2, TimeSpan.FromSeconds(2)));
+
+                var delivered = calls.ToArray();
+                Assert.Equal(new[] { "start", "stop" }, delivered.Select(command => command.State));
+                Assert.DoesNotContain(delivered, command => command.Action == "prefetch");
+            }
+        }
+
+        [Fact]
         public void WatchedRelease_IsSeparateAndUndoRemainsProtective()
         {
             var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();

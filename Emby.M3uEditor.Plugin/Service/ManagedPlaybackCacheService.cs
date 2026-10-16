@@ -29,6 +29,7 @@ namespace Emby.M3uEditor.Plugin.Service
         public bool? Watched { get; set; }
         public int? DeleteAfterHours { get; set; }
         public bool? CohortComplete { get; set; }
+        internal long Generation { get; set; }
     }
 
     /// <summary>
@@ -50,6 +51,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private readonly CancellationTokenSource _cancellation = new CancellationTokenSource();
         private readonly Task _consumer;
         private bool _enabled = true;
+        private long _generation;
         private bool _disposed;
 
         public ManagedPlaybackCacheService(
@@ -83,9 +85,29 @@ namespace Emby.M3uEditor.Plugin.Service
 
                 if (!enabled)
                 {
+                    _generation++;
                     StopAllSessions(_utcNow());
                 }
 
+                _enabled = enabled;
+            }
+        }
+
+        /// <summary>
+        /// Invalidates queued work bound to the old configuration or manifest,
+        /// while preserving best-effort stops for already granted leases.
+        /// </summary>
+        public void Reconcile(bool enabled)
+        {
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _generation++;
+                StopAllSessions(_utcNow());
                 _enabled = enabled;
             }
         }
@@ -119,7 +141,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     Sequence = 1,
                     LastHeartbeatUtc = now
                 };
-                var start = CreatePlaybackCommand(state, "start");
+                var start = CreatePlaybackCommand(state, "start", _generation);
                 if (!TryEnqueue(start))
                 {
                     return;
@@ -135,7 +157,8 @@ namespace Emby.M3uEditor.Plugin.Service
                         RequestId = Guid.NewGuid().ToString("D"),
                         Context = context,
                         Identity = current,
-                        Targets = targets
+                        Targets = targets,
+                        Generation = _generation
                     });
                 }
             }
@@ -163,7 +186,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
                 session.Sequence++;
                 session.LastHeartbeatUtc = now;
-                TryEnqueue(CreatePlaybackCommand(session, "heartbeat"));
+                TryEnqueue(CreatePlaybackCommand(session, "heartbeat", _generation));
             }
         }
 
@@ -185,7 +208,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 var now = _utcNow();
                 _terminalSessions[embySessionId] = now.AddSeconds(120);
                 session.Sequence++;
-                TryEnqueue(CreatePlaybackCommand(session, "stop"));
+                TryEnqueue(CreatePlaybackCommand(session, "stop", _generation));
             }
         }
 
@@ -217,7 +240,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     Targets = new[] { identity },
                     Watched = watched,
                     DeleteAfterHours = deleteAfterHours,
-                    CohortComplete = cohortComplete
+                    CohortComplete = cohortComplete,
+                    Generation = _generation
                 });
             }
         }
@@ -261,14 +285,14 @@ namespace Emby.M3uEditor.Plugin.Service
             foreach (var pair in _activeSessions.ToList())
             {
                 pair.Value.Sequence++;
-                TryEnqueue(CreatePlaybackCommand(pair.Value, "stop"));
+                TryEnqueue(CreatePlaybackCommand(pair.Value, "stop", _generation));
                 _terminalSessions[pair.Key] = now.AddSeconds(120);
             }
 
             _activeSessions.Clear();
         }
 
-        private static ManagedPlaybackCacheCommand CreatePlaybackCommand(SessionState session, string state)
+        private static ManagedPlaybackCacheCommand CreatePlaybackCommand(SessionState session, string state, long generation)
         {
             return new ManagedPlaybackCacheCommand
             {
@@ -279,7 +303,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 Targets = new[] { session.Identity },
                 SessionId = session.ProtocolSessionId,
                 Sequence = session.Sequence,
-                State = state
+                State = state,
+                Generation = generation
             };
         }
 
@@ -357,7 +382,8 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             lock (_gate)
             {
-                return _enabled || IsLeaseStop(command);
+                return IsLeaseStop(command) ||
+                    (_enabled && command != null && command.Generation == _generation);
             }
         }
 

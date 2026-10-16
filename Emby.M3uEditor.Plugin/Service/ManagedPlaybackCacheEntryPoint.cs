@@ -165,8 +165,14 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             lock (RuntimeGate)
             {
-                _current?._cache?.SetEnabled(enabled);
+                _current?.ReconcileConfiguration(enabled);
             }
+        }
+
+        private void ReconcileConfiguration(bool enabled)
+        {
+            _identityByItem.Clear();
+            _cache?.Reconcile(enabled);
         }
 
         private void OnPlaybackStart(object sender, PlaybackProgressEventArgs args)
