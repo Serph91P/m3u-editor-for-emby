@@ -306,7 +306,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     var startCohortComplete = RecordWatchedSnapshot(
                         input.ItemId, input.Item, users, context.ConsumerId, null, null);
-                    _cache.WatchedChanged(
+                    TryAdmitWatchedChanged(
+                        generation,
                         identity,
                         startCohortComplete,
                         config.ManagedPlaybackCacheDeleteGraceHours,
@@ -328,6 +329,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 return;
             }
 
+            var watchedGeneration = CaptureConfigurationGeneration();
             var complete = RecordWatchedSnapshot(
                 input.ItemId,
                 input.Item,
@@ -335,7 +337,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 context.ConsumerId,
                 input.UserId,
                 input.Played);
-            _cache.WatchedChanged(
+            TryAdmitWatchedChanged(
+                watchedGeneration,
                 watchedIdentity,
                 complete,
                 config.ManagedPlaybackCacheDeleteGraceHours,
@@ -366,6 +369,26 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 _cache?.PlaybackStarted(sessionId, identity, targets, context);
+                return true;
+            }
+        }
+
+        private bool TryAdmitWatchedChanged(
+            long generation,
+            ManagedPlaybackIdentity identity,
+            bool watched,
+            int deleteAfterHours,
+            bool cohortComplete,
+            ManagedPlaybackDispatchContext context)
+        {
+            lock (RuntimeGate)
+            {
+                if (_disposed || !ReferenceEquals(_current, this) || generation != _configurationGeneration)
+                {
+                    return false;
+                }
+
+                _cache?.WatchedChanged(identity, watched, deleteAfterHours, cohortComplete, context);
                 return true;
             }
         }
