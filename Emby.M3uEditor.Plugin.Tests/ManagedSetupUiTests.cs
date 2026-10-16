@@ -39,6 +39,50 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ManagedPlaybackCacheUi_LoadsAndSavesEmbeddedResourcesThroughSyntheticBrowserFixture()
+        {
+            var root = FindRepositoryRoot();
+            var harnessPath = Path.Join(root, "Emby.M3uEditor.Plugin.Tests", "Issue85UiHarness.js");
+            var temporaryDirectory = Path.Combine(Path.GetTempPath(), "m3u-editor-managed-cache-ui-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(temporaryDirectory);
+            try
+            {
+                var assembly = typeof(Plugin).Assembly;
+                var htmlPath = Path.Combine(temporaryDirectory, "config.html");
+                var javascriptPath = Path.Combine(temporaryDirectory, "config.js");
+                CopyEmbeddedResource(assembly, "Emby.M3uEditor.Plugin.Configuration.Web.config.html", htmlPath);
+                CopyEmbeddedResource(assembly, "Emby.M3uEditor.Plugin.Configuration.Web.config.js", javascriptPath);
+
+                var startInfo = new ProcessStartInfo("node")
+                {
+                    WorkingDirectory = root,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                startInfo.ArgumentList.Add(harnessPath);
+                startInfo.ArgumentList.Add(javascriptPath);
+                startInfo.ArgumentList.Add(htmlPath);
+
+                using (var process = Process.Start(startInfo))
+                {
+                    Assert.NotNull(process);
+                    var standardOutput = process.StandardOutput.ReadToEnd();
+                    var standardError = process.StandardError.ReadToEnd();
+                    Assert.True(process.WaitForExit(30000), "Managed playback cache UI fixture timed out.");
+                    Assert.True(process.ExitCode == 0,
+                        "Managed playback cache UI fixture failed." + Environment.NewLine + standardOutput + standardError);
+                    Assert.Contains("Managed playback cache load/save scenario passed", standardOutput);
+                }
+            }
+            finally
+            {
+                Directory.Delete(temporaryDirectory, true);
+            }
+        }
+
+        [Fact]
         public void LiveTvTunerLimitUi_RunsSaveAndAuthenticatedImportRegressionHarness()
         {
             var root = FindRepositoryRoot();
@@ -87,6 +131,16 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
 
             return current == null ? Directory.GetCurrentDirectory() : current.FullName;
+        }
+
+        private static void CopyEmbeddedResource(System.Reflection.Assembly assembly, string resourceName, string destinationPath)
+        {
+            using (var resource = assembly.GetManifestResourceStream(resourceName))
+            using (var file = File.Create(destinationPath))
+            {
+                Assert.NotNull(resource);
+                resource.CopyTo(file);
+            }
         }
     }
 }
