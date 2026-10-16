@@ -69,6 +69,48 @@ namespace Emby.M3uEditor.Plugin.Tests
             AssertStartPrefetchTarget(watchSecondEpisode: false, expectedCanonicalId: "episode-2");
         }
 
+        [Fact]
+        public void ReconcileDuringIdentityLookup_RejectsOldStartAndAdmitsFreshGeneration()
+        {
+            var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
+            var mappingUuid = "123e4567-e89b-12d3-a456-426614174001";
+            var revisionA = new string('a', 64);
+            var revisionB = new string('b', 64);
+            var paths = WriteManifest(root, mappingUuid, revisionA);
+            var episodes = paths.Select((path, index) => new Episode { Id = Guid.NewGuid(), Path = path, Name = "Episode " + (index + 1) }).ToArray();
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php", CapabilityJson);
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+            var libraryProxy = (LifecycleProxy)(object)library;
+            libraryProxy.Items = episodes.ToDictionary(item => item.Path, item => (BaseItem)item, StringComparer.Ordinal);
+            libraryProxy.BlockFindByPath = true;
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = true;
+            config.ManagedPlaybackCacheMode = "next";
+            config.ManagedPlaybackCacheUserIds = new[] { "user-a" };
+            config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revisionA, Success = true } });
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "old-session", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Assert.True(libraryProxy.FindByPathEntered.Wait(TimeSpan.FromSeconds(2)));
+                WriteManifest(root, mappingUuid, revisionB);
+                config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revisionB, Success = true } });
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(true);
+                libraryProxy.ContinueFindByPath.Set();
+                Thread.Sleep(150);
+                Assert.Empty(handler.ReceivedBodySnapshot());
+                ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "fresh-session", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 3, TimeSpan.FromSeconds(2)));
+            }
+        }
+
         private void AssertStartPrefetchTarget(bool watchSecondEpisode, string expectedCanonicalId)
         {
             var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
@@ -178,6 +220,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             public int RemovedEvents { get; private set; }
             public int FindByPathCalls { get; private set; }
             public int UserDataReads { get; private set; }
+            public bool BlockFindByPath { get; set; }
+            public ManualResetEventSlim FindByPathEntered { get; } = new ManualResetEventSlim(false);
+            public ManualResetEventSlim ContinueFindByPath { get; } = new ManualResetEventSlim(false);
             public IDictionary<string, BaseItem> Items { get; set; } = new Dictionary<string, BaseItem>(StringComparer.Ordinal);
             public ISet<string> WatchedPaths { get; } = new HashSet<string>(StringComparer.Ordinal);
             public void Raise(string eventName, object args) { if (_handlers.TryGetValue(eventName, out var handler)) handler.DynamicInvoke(this, args); }
@@ -185,7 +230,16 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 if (targetMethod.Name.StartsWith("add_", StringComparison.Ordinal)) { AddedEvents++; var name = targetMethod.Name.Substring(4); _handlers[name] = Delegate.Combine(_handlers.TryGetValue(name, out var existing) ? existing : null, (Delegate)args[0]); return null; }
                 if (targetMethod.Name.StartsWith("remove_", StringComparison.Ordinal)) { RemovedEvents++; var name = targetMethod.Name.Substring(7); if (_handlers.TryGetValue(name, out var existing)) _handlers[name] = Delegate.Remove(existing, (Delegate)args[0]); return null; }
-                if (targetMethod.Name == "FindByPath") { FindByPathCalls++; return args != null && args.Length > 0 && args[0] is string path && Items.TryGetValue(path, out var item) ? item : null; }
+                if (targetMethod.Name == "FindByPath")
+                {
+                    FindByPathCalls++;
+                    if (BlockFindByPath)
+                    {
+                        FindByPathEntered.Set();
+                        ContinueFindByPath.Wait(TimeSpan.FromSeconds(2));
+                    }
+                    return args != null && args.Length > 0 && args[0] is string path && Items.TryGetValue(path, out var item) ? item : null;
+                }
                 if (targetMethod.Name == "GetUserData") { UserDataReads++; var item = args != null && args.Length > 1 ? args[1] as BaseItem : null; return new UserItemData { Played = item != null && WatchedPaths.Contains(item.Path) }; }
                 return targetMethod.ReturnType == typeof(void) ? null : targetMethod.ReturnType.IsValueType ? Activator.CreateInstance(targetMethod.ReturnType) : null;
             }

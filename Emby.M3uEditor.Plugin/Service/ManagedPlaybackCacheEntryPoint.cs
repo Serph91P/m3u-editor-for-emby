@@ -45,6 +45,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private M3uEditorClient _client;
         private string _capabilityKey;
         private M3uEditorCacheControlCapability _cacheCapability;
+        private long _configurationGeneration;
         private bool _running;
         private bool _disposed;
 
@@ -171,6 +172,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private void ReconcileConfiguration(bool enabled)
         {
+            _configurationGeneration++;
             _identityByItem.Clear();
             _cache?.Reconcile(enabled);
         }
@@ -284,7 +286,14 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (input.Kind == "start")
             {
+                var generation = CaptureConfigurationGeneration();
                 if (!TryResolveConfiguredIdentity(config, input.Path, input.ConcreteMediaSource, out var identity))
+                {
+                    return;
+                }
+
+                var targets = SelectPrefetchTargets(config, identity, users, context.ConsumerId);
+                if (!TryAdmitPlaybackStarted(generation, input.SessionId, identity, targets, context))
                 {
                     return;
                 }
@@ -293,9 +302,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     _identityByItem[input.ItemId] = identity;
                 }
-
-                var targets = SelectPrefetchTargets(config, identity, users, context.ConsumerId);
-                _cache.PlaybackStarted(input.SessionId, identity, targets, context);
                 if (config.ManagedPlaybackCacheDeleteAfterWatched && users.Count > 0 && input.Item != null)
                 {
                     var startCohortComplete = RecordWatchedSnapshot(
@@ -335,6 +341,33 @@ namespace Emby.M3uEditor.Plugin.Service
                 config.ManagedPlaybackCacheDeleteGraceHours,
                 complete,
                 context);
+        }
+
+        private long CaptureConfigurationGeneration()
+        {
+            lock (RuntimeGate)
+            {
+                return _configurationGeneration;
+            }
+        }
+
+        private bool TryAdmitPlaybackStarted(
+            long generation,
+            string sessionId,
+            ManagedPlaybackIdentity identity,
+            IReadOnlyList<ManagedPlaybackIdentity> targets,
+            ManagedPlaybackDispatchContext context)
+        {
+            lock (RuntimeGate)
+            {
+                if (_disposed || !ReferenceEquals(_current, this) || generation != _configurationGeneration)
+                {
+                    return false;
+                }
+
+                _cache?.PlaybackStarted(sessionId, identity, targets, context);
+                return true;
+            }
         }
 
         private bool RecordWatchedSnapshot(
