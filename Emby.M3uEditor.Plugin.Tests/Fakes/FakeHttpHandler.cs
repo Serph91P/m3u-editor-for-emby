@@ -24,6 +24,15 @@ namespace Emby.M3uEditor.Plugin.Tests.Fakes
         public List<string> ReceivedUrls { get; } = new List<string>();
         public List<string> ReceivedBodies { get; } = new List<string>();
 
+        /// <summary>Returns a consistent copy of recorded request bodies.</summary>
+        public IReadOnlyList<string> ReceivedBodySnapshot()
+        {
+            lock (_gate)
+            {
+                return ReceivedBodies.ToArray();
+            }
+        }
+
         /// <summary>Register a single response for URLs containing <paramref name="urlSubstring"/>.</summary>
         public void RespondWith(string urlSubstring, string body, HttpStatusCode status = HttpStatusCode.OK)
         {

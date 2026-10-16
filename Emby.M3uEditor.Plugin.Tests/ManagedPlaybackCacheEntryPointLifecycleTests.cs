@@ -109,8 +109,11 @@ namespace Emby.M3uEditor.Plugin.Tests
                 now = now.AddSeconds(30);
                 sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
                 sessionProxy.Raise("PlaybackStopped", new PlaybackStopEventArgs { PlaySessionId = "emby-session-1" });
-                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodies.Count == 5, TimeSpan.FromSeconds(2)));
-                requests = handler.ReceivedBodies.ToArray();
+                Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 5, TimeSpan.FromSeconds(2)));
+                sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Thread.Sleep(100);
+                requests = handler.ReceivedBodySnapshot().ToArray();
             }
             var playback = requests.Where(body => body.Contains("action=m3u_editor_cache_playback", StringComparison.Ordinal)).ToArray();
             var prefetch = Assert.Single(requests.Where(body => body.Contains("action=m3u_editor_cache_prefetch", StringComparison.Ordinal)));
@@ -119,8 +122,26 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains(playback, body => body.Contains("targets%5B0%5D%5Bcanonical_id%5D=episode-1", StringComparison.Ordinal));
             Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=" + expectedCanonicalId, prefetch);
             Assert.DoesNotContain("targets%5B0%5D%5Bcanonical_id%5D=" + (watchSecondEpisode ? "episode-2" : "episode-3"), prefetch);
-            Assert.Equal(3, libraryProxy.FindByPathCalls);
-            Assert.Equal(3, userProxy.UserDataReads);
+            var playbackForms = playback.Select(ParseForm).ToArray();
+            Assert.Equal(new[] { "start", "heartbeat", "stop" }, playbackForms.Select(form => form["state"]).ToArray());
+            var protocolSession = playbackForms[0]["session_id"];
+            Assert.False(string.IsNullOrWhiteSpace(protocolSession));
+            Assert.All(playbackForms, form => Assert.Equal(protocolSession, form["session_id"]));
+            Assert.Equal(new[] { "1", "2", "3" }, playbackForms.Select(form => form["sequence"]).ToArray());
+            Assert.Equal(5, requests.Length);
+            Assert.Equal(6, libraryProxy.FindByPathCalls);
+            Assert.Equal(6, userProxy.UserDataReads);
+        }
+
+        private static IDictionary<string, string> ParseForm(string body)
+        {
+            return body.Split('&')
+                .Select(part => part.Split(new[] { '=' }, 2))
+                .Where(pair => pair.Length == 2)
+                .ToDictionary(
+                    pair => Uri.UnescapeDataString(pair[0].Replace('+', ' ')),
+                    pair => Uri.UnescapeDataString(pair[1].Replace('+', ' ')),
+                    StringComparer.Ordinal);
         }
 
         private static string[] WriteManifest(string root, string mappingUuid, string revision)
