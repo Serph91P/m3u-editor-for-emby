@@ -67,8 +67,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             var episodes = paths.Select((path, index) => new Episode { Id = Guid.NewGuid(), Path = path, Name = "Episode " + (index + 1) }).ToArray();
             var handler = new FakeHttpHandler();
             handler.RespondWith("player_api.php", CapabilityJson);
-            handler.RespondWith("action=m3u_editor_cache_playback", ResponseJson);
-            handler.RespondWith("action=m3u_editor_cache_prefetch", ResponseJson);
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
             var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
             var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
             var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
