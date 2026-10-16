@@ -329,6 +329,11 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 foreach (var command in _commands.GetConsumingEnumerable(_cancellation.Token))
                 {
+                    if (!CanDispatch(command))
+                    {
+                        continue;
+                    }
+
                     try
                     {
                         _send(command, _cancellation.Token).GetAwaiter().GetResult();
@@ -346,6 +351,21 @@ namespace Emby.M3uEditor.Plugin.Service
             catch (OperationCanceledException)
             {
             }
+        }
+
+        private bool CanDispatch(ManagedPlaybackCacheCommand command)
+        {
+            lock (_gate)
+            {
+                return _enabled || IsLeaseStop(command);
+            }
+        }
+
+        private static bool IsLeaseStop(ManagedPlaybackCacheCommand command)
+        {
+            return command != null &&
+                string.Equals(command.Action, "playback", StringComparison.Ordinal) &&
+                string.Equals(command.State, "stop", StringComparison.Ordinal);
         }
 
         private sealed class SessionState

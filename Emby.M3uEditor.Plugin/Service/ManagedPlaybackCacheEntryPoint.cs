@@ -28,6 +28,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private static ManagedPlaybackCacheEntryPoint _current;
         private readonly ISessionManager _sessionManager;
         private readonly IUserDataManager _userDataManager;
+        private readonly ILibraryManager _libraryManager;
         private readonly BlockingCollection<InputEvent> _inputs = new BlockingCollection<InputEvent>(100);
         private readonly CancellationTokenSource _cancellation = new CancellationTokenSource();
         private readonly ManagedPlaybackIdentityResolver _resolver = new ManagedPlaybackIdentityResolver();
@@ -45,10 +46,12 @@ namespace Emby.M3uEditor.Plugin.Service
 
         public ManagedPlaybackCacheEntryPoint(
             ISessionManager sessionManager,
-            IUserDataManager userDataManager)
+            IUserDataManager userDataManager,
+            ILibraryManager libraryManager)
         {
             _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
             _userDataManager = userDataManager ?? throw new ArgumentNullException(nameof(userDataManager));
+            _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
         }
 
         public void Run()
@@ -137,11 +140,12 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private void OnPlaybackStart(object sender, PlaybackProgressEventArgs args)
         {
+            var selectedMediaSourcePath = GetSelectedMediaSourcePath(args, args?.Item?.Path);
             TryEnqueue(InputEvent.Start(
                 args?.PlaySessionId,
                 FormatEntityId(args?.Item?.Id),
-                GetSelectedMediaSourcePath(args, args?.Item?.Path),
-                !string.IsNullOrWhiteSpace(args?.MediaSourceId),
+                selectedMediaSourcePath,
+                !string.IsNullOrWhiteSpace(selectedMediaSourcePath),
                 args?.Item));
         }
 
@@ -254,7 +258,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     _identityByItem[input.ItemId] = identity;
                 }
 
-                var targets = SelectPrefetchTargets(config, identity);
+                var targets = SelectPrefetchTargets(config, identity, users, context.ConsumerId);
                 _cache.PlaybackStarted(input.SessionId, identity, targets, context);
                 if (config.ManagedPlaybackCacheDeleteAfterWatched && users.Count > 0 && input.Item != null)
                 {
@@ -344,12 +348,14 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             identity = null;
             var mappings = ReadMappings(config);
-            var approvedRoots = ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots);
             var roots = mappings
                 .Where(mapping => mapping != null && mapping.Success &&
                     mapping.IntegrationId == config.ManagedPublishingIntegrationId &&
                     !string.IsNullOrWhiteSpace(mapping.OutputPath) &&
-                    approvedRoots.Contains(System.IO.Path.GetFullPath(mapping.OutputPath), PathComparer))
+                    ManagedOutputPolicy.IsApproved(
+                        mapping.OutputPath,
+                        config.ManagedApprovedOutputRoots,
+                        out _))
                 .Select(mapping => mapping.OutputPath)
                 .ToList();
             if (!_resolver.TryResolveActive(roots, selectedPath, concrete, out identity))
@@ -367,9 +373,11 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private IReadOnlyList<ManagedPlaybackIdentity> SelectPrefetchTargets(
             PluginConfiguration config,
-            ManagedPlaybackIdentity current)
+            ManagedPlaybackIdentity current,
+            IReadOnlyCollection<string> users,
+            string cohortId)
         {
-            var candidates = _resolver.GetSeriesCandidates(current);
+            var candidates = _resolver.GetSeriesCandidates(current).ToList();
             var positions = candidates.Select(candidate => new ManagedEpisodePosition
             {
                 Id = candidate.CanonicalId,
@@ -380,8 +388,51 @@ namespace Emby.M3uEditor.Plugin.Service
                 positions,
                 current.CanonicalId,
                 config.ManagedPlaybackCacheMode,
-                config.ManagedPlaybackCacheNextCount), StringComparer.Ordinal);
+                config.ManagedPlaybackCacheNextCount,
+                FindFullyWatchedCandidateIds(candidates, users, cohortId)), StringComparer.Ordinal);
             return candidates.Where(candidate => selected.Contains(candidate.CanonicalId)).ToList();
+        }
+
+        private IReadOnlyCollection<string> FindFullyWatchedCandidateIds(
+            IEnumerable<ManagedPlaybackIdentity> candidates,
+            IReadOnlyCollection<string> users,
+            string cohortId)
+        {
+            if (users == null || users.Count == 0 || string.IsNullOrWhiteSpace(cohortId))
+            {
+                return new string[0];
+            }
+
+            try
+            {
+                if (_libraryManager == null)
+                {
+                    return new string[0];
+                }
+
+                var watched = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var candidate in candidates ?? Enumerable.Empty<ManagedPlaybackIdentity>())
+                {
+                    if (candidate == null || string.IsNullOrWhiteSpace(candidate.ManagedPath))
+                    {
+                        continue;
+                    }
+
+                    var item = _libraryManager.FindByPath(candidate.ManagedPath, false);
+                    if (item != null && RecordWatchedSnapshot(
+                        FormatEntityId(item.Id), item, users, cohortId, null, null))
+                    {
+                        watched.Add(candidate.CanonicalId);
+                    }
+                }
+
+                return watched;
+            }
+            catch
+            {
+                // Library lookup/user data failures are unknown, never treated as watched.
+                return new string[0];
+            }
         }
 
         private async Task DispatchAsync(
@@ -508,14 +559,14 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 var mediaSource = eventArgs?.GetType().GetProperty("MediaSource")?.GetValue(eventArgs);
                 var path = mediaSource?.GetType().GetProperty("Path")?.GetValue(mediaSource) as string;
-                return string.IsNullOrWhiteSpace(path) ? fallbackItemPath : path;
+                return string.IsNullOrWhiteSpace(path) ? null : path;
             }
             catch (Exception exception) when (
                 exception is ArgumentException ||
                 exception is InvalidOperationException ||
                 exception is System.Reflection.TargetInvocationException)
             {
-                return fallbackItemPath;
+                return null;
             }
         }
 

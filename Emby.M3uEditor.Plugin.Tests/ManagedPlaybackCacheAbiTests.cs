@@ -18,6 +18,10 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.NotNull(entryPoint);
             Assert.Contains(typeof(IServerEntryPoint), entryPoint.GetInterfaces());
             Assert.Contains(typeof(IDisposable), entryPoint.GetInterfaces());
+            Assert.NotNull(entryPoint.GetConstructor(new[]
+            {
+                typeof(ISessionManager), typeof(IUserDataManager), typeof(ILibraryManager)
+            }));
             Assert.NotNull(entryPoint.GetMethod("Run", Type.EmptyTypes));
         }
 

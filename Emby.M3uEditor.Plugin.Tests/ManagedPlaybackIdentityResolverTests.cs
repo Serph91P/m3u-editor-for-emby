@@ -23,6 +23,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(source.Revision, ReadProperty(identity, "Revision"));
             Assert.Equal("movie:tmdb:603", ReadProperty(identity, "CanonicalId"));
             Assert.Equal("v00", ReadProperty(identity, "VariantKey"));
+            Assert.Equal(source.Path, ReadProperty(identity, "ManagedPath"));
         }
 
         [Theory]

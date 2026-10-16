@@ -18,6 +18,7 @@ namespace Emby.M3uEditor.Plugin.Service
         public int? SeasonNumber { get; set; }
         public int? EpisodeNumber { get; set; }
         public string ManagedRoot { get; set; }
+        public string ManagedPath { get; set; }
     }
 
     public sealed class ManagedPlaybackIdentityResolver
@@ -94,7 +95,8 @@ namespace Emby.M3uEditor.Plugin.Service
                         SeriesCanonicalId = GetOptionalString(selectedFile, "SeriesCanonicalId"),
                         SeasonNumber = GetOptionalInt32(selectedFile, "SeasonNumber"),
                         EpisodeNumber = GetOptionalInt32(selectedFile, "EpisodeNumber"),
-                        ManagedRoot = Path.GetFullPath(managedRoot)
+                        ManagedRoot = Path.GetFullPath(managedRoot),
+                        ManagedPath = selectedPath
                     };
                     return true;
                 }
@@ -218,6 +220,8 @@ namespace Emby.M3uEditor.Plugin.Service
                         var episode = GetOptionalInt32(file, "EpisodeNumber");
                         if (!TryGetNonBlankString(file, "CanonicalId", out var canonicalId) ||
                             !TryGetNonBlankString(file, "VariantKey", out var variantKey) ||
+                            !TryGetNonBlankString(file, "RelativePath", out var relativePath) ||
+                            !ManagedOutputPolicy.TryJoinUnderRoot(current.ManagedRoot, relativePath, out var managedPath) ||
                             !string.Equals(GetOptionalString(file, "SeriesCanonicalId"), current.SeriesCanonicalId, StringComparison.Ordinal) ||
                             !string.Equals(variantKey, current.VariantKey, StringComparison.Ordinal) ||
                             !season.HasValue || !episode.HasValue)
@@ -236,7 +240,8 @@ namespace Emby.M3uEditor.Plugin.Service
                             SeriesCanonicalId = current.SeriesCanonicalId,
                             SeasonNumber = season,
                             EpisodeNumber = episode,
-                            ManagedRoot = current.ManagedRoot
+                            ManagedRoot = current.ManagedRoot,
+                            ManagedPath = managedPath
                         });
                     }
                 }

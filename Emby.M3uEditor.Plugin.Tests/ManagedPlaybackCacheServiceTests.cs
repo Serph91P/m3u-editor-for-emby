@@ -115,7 +115,42 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void SelectedMediaSourcePath_PrefersRuntimeMediaSourceAndFallsBackForSdk48()
+        public void FeatureOff_DropsQueuedPrefetchAndReleaseButDeliversGrantedLeaseStop()
+        {
+            var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
+            var startEntered = new ManualResetEventSlim(false);
+            var releaseStart = new ManualResetEventSlim(false);
+            using (var service = new ManagedPlaybackCacheService(
+                (command, cancellationToken) =>
+                {
+                    if (command.Action == "playback" && command.State == "start")
+                    {
+                        startEntered.Set();
+                        releaseStart.Wait(cancellationToken);
+                    }
+
+                    calls.Enqueue(command);
+                    return Task.CompletedTask;
+                }, TimeSpan.FromSeconds(30)))
+            {
+                var current = Identity("episode-1", 1);
+                service.PlaybackStarted("session-1", current, new[] { Identity("episode-2", 2) }, Context());
+                service.WatchedChanged(current, true, 0, true, Context());
+                Assert.True(startEntered.Wait(TimeSpan.FromSeconds(2)));
+
+                service.SetEnabled(false);
+                releaseStart.Set();
+                Assert.True(SpinWait.SpinUntil(() => calls.Count >= 2, TimeSpan.FromSeconds(2)));
+
+                var delivered = calls.ToArray();
+                Assert.Equal(new[] { "playback", "playback" }, delivered.Select(command => command.Action));
+                Assert.Equal(new[] { "start", "stop" }, delivered.Select(command => command.State));
+                Assert.DoesNotContain(delivered, command => command.Action == "prefetch" || command.Action == "release");
+            }
+        }
+
+        [Fact]
+        public void SelectedMediaSourcePath_RequiresConcreteRuntimeMediaSource()
         {
             Assert.Equal(
                 "/managed/selected.strm",
@@ -125,9 +160,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                         MediaSource = new RuntimeMediaSource { Path = "/managed/selected.strm" }
                     },
                     "/managed/item.strm"));
-            Assert.Equal(
-                "/managed/item.strm",
-                ManagedPlaybackCacheEntryPoint.GetSelectedMediaSourcePath(new object(), "/managed/item.strm"));
+            Assert.Null(ManagedPlaybackCacheEntryPoint.GetSelectedMediaSourcePath(new object(), "/managed/item.strm"));
         }
 
         private static ManagedPlaybackCacheService NewService(
