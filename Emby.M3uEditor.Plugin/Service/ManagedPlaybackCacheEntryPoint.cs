@@ -633,6 +633,10 @@ namespace Emby.M3uEditor.Plugin.Service
             M3uEditorCacheControlCapability capability;
             lock (RuntimeGate)
             {
+                if (_disposed || !ReferenceEquals(_current, this) || _cache == null || !_cache.IsDispatchCurrent(command))
+                {
+                    return;
+                }
                 capability = string.Equals(_capabilityKey, capabilityKey, StringComparison.Ordinal)
                     ? _cacheCapability
                     : null;
@@ -644,15 +648,18 @@ namespace Emby.M3uEditor.Plugin.Service
                     command.Context.Username,
                     command.Context.Password,
                     cancellationToken).ConfigureAwait(false);
-                if (capability != null)
+                lock (RuntimeGate)
                 {
-                    lock (RuntimeGate)
+                    // Discovery can outlive a configuration or ownership generation.
+                    // Reject it before publishing capability state or sending old work.
+                    if (_disposed || !ReferenceEquals(_current, this) || !_cache.IsDispatchCurrent(command))
                     {
-                        if (!_disposed && ReferenceEquals(_current, this))
-                        {
-                            _capabilityKey = capabilityKey;
-                            _cacheCapability = capability;
-                        }
+                        return;
+                    }
+                    if (capability != null && command.State != "stop")
+                    {
+                        _capabilityKey = capabilityKey;
+                        _cacheCapability = capability;
                     }
                 }
             }
@@ -685,15 +692,15 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (command.Action == "playback")
             {
-                await _client.SendCachePlaybackAsync(
+                await DispatchIfCurrent(command, () => _client.SendCachePlaybackAsync(
                     command.Context.BaseUrl, command.Context.Username, command.Context.Password,
-                    request, cancellationToken).ConfigureAwait(false);
+                    request, cancellationToken)).ConfigureAwait(false);
             }
             else if (command.Action == "prefetch")
             {
-                var response = await _client.SendCachePrefetchAsync(
+                var response = await DispatchIfCurrent(command, () => _client.SendCachePrefetchAsync(
                     command.Context.BaseUrl, command.Context.Username, command.Context.Password,
-                    request, cancellationToken).ConfigureAwait(false);
+                    request, cancellationToken)).ConfigureAwait(false);
                 var deferred = (command.Targets ?? new ManagedPlaybackIdentity[0]).Where(target =>
                 {
                     if (!request.Targets.Any(sent => sent.CanonicalId == target.CanonicalId && sent.VariantKey == target.VariantKey))
@@ -706,9 +713,21 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             else if (command.Action == "release")
             {
-                await _client.SendCacheReleaseAsync(
+                await DispatchIfCurrent(command, () => _client.SendCacheReleaseAsync(
                     command.Context.BaseUrl, command.Context.Username, command.Context.Password,
-                    request, cancellationToken).ConfigureAwait(false);
+                    request, cancellationToken)).ConfigureAwait(false);
+            }
+        }
+
+        private Task<M3uEditorCacheControlResponse> DispatchIfCurrent(
+            ManagedPlaybackCacheCommand command,
+            Func<Task<M3uEditorCacheControlResponse>> send)
+        {
+            lock (RuntimeGate)
+            {
+                return _disposed || !ReferenceEquals(_current, this) || _cache == null
+                    ? Task.FromResult<M3uEditorCacheControlResponse>(null)
+                    : _cache.DispatchIfCurrent(command, send);
             }
         }
 

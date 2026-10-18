@@ -432,6 +432,32 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
+        internal bool IsDispatchCurrent(ManagedPlaybackCacheCommand command)
+        {
+            lock (_gate)
+            {
+                return IsDispatchCurrentUnderLock(command);
+            }
+        }
+
+        internal Task<T> DispatchIfCurrent<T>(ManagedPlaybackCacheCommand command, Func<Task<T>> send)
+        {
+            lock (_gate)
+            {
+                // Admission and invocation share the same lock as Reconcile/Disable.
+                // Never hold the lifecycle lock across asynchronous network work.
+                return IsDispatchCurrentUnderLock(command) ? send() : Task.FromResult(default(T));
+            }
+        }
+
+        private bool IsDispatchCurrentUnderLock(ManagedPlaybackCacheCommand command)
+        {
+            if (IsLeaseStop(command)) return true;
+            if (_disposed || !_enabled || command == null || command.Generation != _generation) return false;
+            return !command.IsDeferredRetry || _activeSessions.Values.Any(session =>
+                session.ProtocolSessionId == command.OriginatingPlaybackId);
+        }
+
         private ManagedPlaybackCacheCommand PrepareDispatch(ManagedPlaybackCacheCommand command)
         {
             lock (_gate)
