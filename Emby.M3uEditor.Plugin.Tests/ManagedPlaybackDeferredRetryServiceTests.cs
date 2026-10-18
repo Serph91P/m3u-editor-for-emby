@@ -16,6 +16,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("disable")]
         [InlineData("dispose")]
         [InlineData("watched_then_undo")]
+        [InlineData("watched_uppercase_then_undo")]
         public void DeferredRetry_RespectsLifecycleAndWatchedFences(string fence)
         {
             var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
@@ -49,10 +50,16 @@ namespace Emby.M3uEditor.Plugin.Tests
                         service.WatchedChanged(next, true, 0, true, context);
                         service.WatchedChanged(next, false, 0, false, context);
                         break;
+                    case "watched_uppercase_then_undo":
+                        var watchedIdentity = Identity("episode-2");
+                        watchedIdentity.MappingUuid = watchedIdentity.MappingUuid.ToUpperInvariant();
+                        service.WatchedChanged(watchedIdentity, true, 0, true, context);
+                        service.WatchedChanged(watchedIdentity, false, 0, false, context);
+                        break;
                 }
                 now = now.AddSeconds(120);
                 service.PlaybackProgress("native-session");
-                if (fence == "watched_then_undo")
+                if (fence == "watched_then_undo" || fence == "watched_uppercase_then_undo")
                 {
                     Assert.True(SpinWait.SpinUntil(() => calls.Count(command => command.Action == "prefetch") == 2, TimeSpan.FromSeconds(2)));
                     var retry = Assert.Single(calls.Where(command => command.IsDeferredRetry));
@@ -73,6 +80,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("reconcile")]
         [InlineData("disable")]
         [InlineData("watched")]
+        [InlineData("watched_uppercase")]
         public void QueuedDeferredRetry_RechecksFencesAfterHeartbeatUnblocks(string fence)
         {
             var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
@@ -114,6 +122,12 @@ namespace Emby.M3uEditor.Plugin.Tests
                     if (fence == "reconcile") service.Reconcile(true);
                     if (fence == "disable") service.SetEnabled(false);
                     if (fence == "watched") service.WatchedChanged(next, true, 0, true, context);
+                    if (fence == "watched_uppercase")
+                    {
+                        var watchedIdentity = Identity("episode-2");
+                        watchedIdentity.MappingUuid = watchedIdentity.MappingUuid.ToUpperInvariant();
+                        service.WatchedChanged(watchedIdentity, true, 0, true, context);
+                    }
                     if (fence == "disable") service.SetEnabled(true);
                     service.WatchedChanged(Identity("episode-1"), false, 0, false, context);
                 }

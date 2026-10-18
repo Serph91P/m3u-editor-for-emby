@@ -262,7 +262,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     foreach (var session in _activeSessions.Values.Where(value =>
                         value.Context.IntegrationId == context.IntegrationId && value.Context.ConsumerId == context.ConsumerId &&
-                        value.Identity.MappingUuid == identity.MappingUuid && value.Identity.Revision == identity.Revision &&
+                        string.Equals(value.Identity.MappingUuid, identity.MappingUuid, StringComparison.OrdinalIgnoreCase) && value.Identity.Revision == identity.Revision &&
                         value.PrefetchTargets.Any(target => TargetKey(target) == TargetKey(identity))))
                         session.SuppressedRetryTargets.Add(TargetKey(identity));
                 }
