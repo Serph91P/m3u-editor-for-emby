@@ -44,6 +44,8 @@ namespace Emby.M3uEditor.Plugin.Service
         private HttpClient _httpClient;
         private M3uEditorClient _client;
         private string _capabilityKey;
+        private string _capabilitySnapshot;
+        private string _capabilityRefreshSnapshot;
         private M3uEditorCacheControlCapability _cacheCapability;
         private Task _capabilityRefresh;
         private long _capabilityGeneration;
@@ -195,15 +197,20 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private void ReconcileConfiguration(bool enabled)
         {
-            _configurationGeneration++;
-            _identityByItem.Clear();
-            _cache?.Reconcile(enabled);
-            var capabilityKey = CreateCapabilityKey(_configurationProvider());
-            if (!string.Equals(_capabilityKey, capabilityKey, StringComparison.Ordinal))
+            var config = _configurationProvider();
+            var snapshot = CreateCapabilitySnapshot(config);
+            if (!string.Equals(_capabilitySnapshot, snapshot, StringComparison.Ordinal))
             {
-                _capabilityKey = null;
-                _cacheCapability = null;
+                _configurationGeneration++;
+                _capabilitySnapshot = snapshot;
+                _identityByItem.Clear();
+                if (!string.Equals(_capabilityKey, CreateCapabilityKey(config), StringComparison.Ordinal))
+                {
+                    _capabilityKey = null;
+                    _cacheCapability = null;
+                }
             }
+            _cache?.Reconcile(enabled);
             if (_cacheCapability == null)
             {
                 RefreshCapabilityIfNeeded();
@@ -698,11 +705,22 @@ namespace Emby.M3uEditor.Plugin.Service
 
             var generation = _configurationGeneration;
             var capabilityKey = CreateCapabilityKey(config);
+            var snapshot = CreateCapabilitySnapshot(config);
             if (string.IsNullOrEmpty(capabilityKey))
             {
                 return;
             }
+            if (_capabilitySnapshot == null)
+            {
+                _capabilitySnapshot = snapshot;
+            }
+            if (_capabilityRefresh != null && !_capabilityRefresh.IsCompleted &&
+                string.Equals(_capabilityRefreshSnapshot, snapshot, StringComparison.Ordinal))
+            {
+                return;
+            }
             _capabilityGeneration = generation;
+            _capabilityRefreshSnapshot = snapshot;
             _capabilityRefresh = RefreshCapabilityAsync(
                 generation,
                 capabilityKey,
@@ -735,6 +753,33 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (OperationCanceledException) { }
             catch (HttpRequestException) { }
+            finally
+            {
+                lock (RuntimeGate)
+                {
+                    _capabilityRefresh = null;
+                    if (!_disposed && ReferenceEquals(_current, this) &&
+                        !string.Equals(_capabilitySnapshot, _capabilityRefreshSnapshot, StringComparison.Ordinal))
+                    {
+                        RefreshCapabilityIfNeeded();
+                    }
+                }
+            }
+        }
+
+        private static string CreateCapabilitySnapshot(PluginConfiguration config)
+        {
+            if (config == null) return null;
+            return string.Join("\n", new[]
+            {
+                CreateCapabilityKey(config),
+                config.ManagedPublishingEnabled.ToString(),
+                config.ManagedPlaybackCacheEnabled.ToString(),
+                config.ManagedPublishingIntegrationId.ToString(CultureInfo.InvariantCulture),
+                config.ManagedActiveGeneration ?? string.Empty,
+                config.ManagedMappingsJson ?? string.Empty,
+                config.ManagedApprovedOutputRoots ?? string.Empty
+            });
         }
 
         private static string CreateCapabilityKey(PluginConfiguration config)

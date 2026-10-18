@@ -222,7 +222,8 @@ namespace Emby.M3uEditor.Plugin.Service
 
                     foreach (var file in manifest.GetProperty("Files").EnumerateArray())
                     {
-                        if (!TryGetNonBlankString(file, "RelativePath", out var relativePath) ||
+                        if (file.ValueKind != JsonValueKind.Object ||
+                            !TryGetNonBlankString(file, "RelativePath", out var relativePath) ||
                             !TryGetNonBlankString(file, "Sha256", out var hash) || !IsHash(hash) ||
                             !TryGetNonBlankString(file, "CanonicalId", out _) ||
                             !TryGetNonBlankString(file, "VariantKey", out _) ||
@@ -230,6 +231,14 @@ namespace Emby.M3uEditor.Plugin.Service
                             !ManagedOutputPolicy.TryJoinUnderRoot(managedRoot, relativePath, out var selectedPath) ||
                             !selectedPath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) ||
                             !File.Exists(selectedPath) || HasReparsePoint(managedRoot, selectedPath))
+                        {
+                            continue;
+                        }
+
+                        if (manifest.GetProperty("Files").EnumerateArray().Count(candidate =>
+                                candidate.ValueKind == JsonValueKind.Object &&
+                                TryGetNonBlankString(candidate, "RelativePath", out var candidatePath) &&
+                                string.Equals(candidatePath, relativePath, PathComparison)) != 1)
                         {
                             continue;
                         }

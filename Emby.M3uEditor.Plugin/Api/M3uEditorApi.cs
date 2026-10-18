@@ -328,7 +328,8 @@ namespace Emby.M3uEditor.Plugin.Api
                 .ToList();
             var libraryStats = BuildManagedLibraryStats(mappings);
             var activeManifestIdentityReady = HasValidActiveManifestIdentity(
-                config.ManagedActiveGeneration, config.ManagedApprovedOutputRoots, mappings);
+                config.ManagedActiveGeneration, config.ManagedApprovedOutputRoots,
+                config.ManagedPublishingIntegrationId, mappings);
 
             return new ManagedDashboardStatus
             {
@@ -370,6 +371,7 @@ namespace Emby.M3uEditor.Plugin.Api
         private static bool HasValidActiveManifestIdentity(
             string activeGeneration,
             string approvedRoots,
+            int integrationId,
             IEnumerable<ManagedMappingState> mappings)
         {
             if (!IsManagedRevision(activeGeneration))
@@ -379,12 +381,13 @@ namespace Emby.M3uEditor.Plugin.Api
 
             var resolver = new ManagedPlaybackIdentityResolver();
             return (mappings ?? Enumerable.Empty<ManagedMappingState>()).Any(mapping =>
-                HasValidActiveManifestIdentity(resolver, mapping, activeGeneration, approvedRoots));
+                HasValidActiveManifestIdentity(resolver, mapping, activeGeneration, approvedRoots, integrationId));
         }
 
-        private static bool HasValidActiveManifestIdentity(ManagedPlaybackIdentityResolver resolver, ManagedMappingState mapping, string activeGeneration, string approvedRoots)
+        private static bool HasValidActiveManifestIdentity(ManagedPlaybackIdentityResolver resolver, ManagedMappingState mapping, string activeGeneration, string approvedRoots, int integrationId)
         {
             if (mapping == null || !mapping.Success ||
+                (mapping.IntegrationId > 0 && mapping.IntegrationId != integrationId) ||
                 !string.Equals(mapping.ActiveRevision, activeGeneration, StringComparison.Ordinal) ||
                 string.IsNullOrWhiteSpace(mapping.OutputPath) ||
                 !ManagedOutputPolicy.IsApproved(mapping.OutputPath, approvedRoots, out _)) return false;
