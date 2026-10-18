@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace Emby.M3uEditor.Plugin.Service
@@ -189,6 +190,62 @@ namespace Emby.M3uEditor.Plugin.Service
 
             identity = matches[0];
             return true;
+        }
+
+        public bool TryResolvePlayback(
+            IEnumerable<string> approvedRoots,
+            string selectedMediaSourcePath,
+            bool selectedMediaSourceIsConcrete,
+            string itemPath,
+            out ManagedPlaybackIdentity identity)
+        {
+            var roots = approvedRoots?.ToList();
+            if (TryResolveActive(roots, selectedMediaSourcePath, selectedMediaSourceIsConcrete, out identity))
+            {
+                return true;
+            }
+
+            // Native Emby resolves a STRM media source to its HTTP playback URL.
+            // An item path alone is not selection evidence: require an exact URL
+            // match to the bytes whose hash is owned by the active manifest.
+            if (!selectedMediaSourceIsConcrete ||
+                !Uri.TryCreate(selectedMediaSourcePath, UriKind.Absolute, out var selectedUri) ||
+                (selectedUri.Scheme != Uri.UriSchemeHttp && selectedUri.Scheme != Uri.UriSchemeHttps) ||
+                !TryResolveActive(roots, itemPath, true, out var anchor))
+            {
+                return false;
+            }
+
+            try
+            {
+                var bytes = File.ReadAllBytes(anchor.ManagedPath);
+                using (var reader = new StreamReader(new MemoryStream(bytes)))
+                {
+                    if (!string.Equals(reader.ReadToEnd().Trim(), selectedMediaSourcePath, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                }
+
+                string hash;
+                using (var sha = SHA256.Create())
+                {
+                    hash = string.Concat(sha.ComputeHash(bytes).Select(value => value.ToString("x2")));
+                }
+                if (TryResolve(anchor.ManagedRoot, anchor.ManagedPath, hash, true, out var verified) &&
+                    string.Equals(verified.MappingUuid, anchor.MappingUuid, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(verified.Revision, anchor.Revision, StringComparison.Ordinal) &&
+                    string.Equals(verified.CanonicalId, anchor.CanonicalId, StringComparison.Ordinal) &&
+                    string.Equals(verified.VariantKey, anchor.VariantKey, StringComparison.Ordinal))
+                {
+                    identity = verified;
+                    return true;
+                }
+            }
+            catch (ArgumentException) { }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return false;
         }
 
         internal bool HasValidActiveManifestIdentity(string managedRoot, string mappingUuid, string revision)

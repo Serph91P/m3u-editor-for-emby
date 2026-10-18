@@ -129,6 +129,18 @@ namespace Emby.M3uEditor.Plugin.Tests
             AssertStartPrefetchTarget(watchSecondEpisode: false, expectedCanonicalId: "episode-2");
         }
 
+        [Fact]
+        public void ThreeEpisodes_Start_WithNativeHttpMediaSource_PrefetchesUnwatchedNextEpisode()
+        {
+            AssertStartPrefetchTarget(watchSecondEpisode: false, expectedCanonicalId: "episode-2", nativeHttpSource: true);
+        }
+
+        [Fact]
+        public void ThreeEpisodes_Watched_WithNativeApiProfileIds_RecognizesGuidEvents()
+        {
+            AssertStartPrefetchTarget(watchSecondEpisode: false, expectedCanonicalId: "episode-2", apiProfileIds: true);
+        }
+
         [Theory]
         [InlineData("null")]
         [InlineData("throw")]
@@ -585,7 +597,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             bool watchSecondEpisode,
             string expectedCanonicalId,
             string selectedOtherUserDataMode = null,
-            bool startWithCompleteCohort = false)
+            bool startWithCompleteCohort = false,
+            bool nativeHttpSource = false,
+            bool apiProfileIds = false)
         {
             var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
             var mappingUuid = "123e4567-e89b-12d3-a456-426614174000";
@@ -615,11 +629,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             config.ManagedPlaybackCacheNextCount = 1;
             var firstUserId = Guid.Parse("11111111-1111-1111-1111-111111111111");
             var secondUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
-            config.ManagedPlaybackCacheUserIds = new[] { firstUserId.ToString("D"), secondUserId.ToString("D") };
+            config.ManagedPlaybackCacheUserIds = new[] { firstUserId.ToString(apiProfileIds ? "N" : "D"), secondUserId.ToString(apiProfileIds ? "N" : "D") };
             if (startWithCompleteCohort)
             {
-                userProxy.WatchedUserPaths.Add(firstUserId.ToString("D") + "\n" + episodes[0].Path);
-                userProxy.WatchedUserPaths.Add(secondUserId.ToString("D") + "\n" + episodes[0].Path);
+                userProxy.WatchedUserPaths.Add(config.ManagedPlaybackCacheUserIds[0] + "\n" + episodes[0].Path);
+                userProxy.WatchedUserPaths.Add(config.ManagedPlaybackCacheUserIds[1] + "\n" + episodes[0].Path);
             }
             config.ManagedPlaybackCacheDeleteAfterWatched = true;
             config.ManagedPlaybackCacheDeleteGraceHours = 37;
@@ -630,7 +644,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => now, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
             {
                 entryPoint.Run();
-                sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                sessionProxy.Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = nativeHttpSource ? File.ReadAllText(paths[0]).Trim() : paths[0] } });
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == 4, TimeSpan.FromSeconds(2)));
                 now = now.AddSeconds(30);
                 sessionProxy.Raise("PlaybackProgress", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "emby-session-1", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
@@ -642,7 +656,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = firstUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
                 releaseCount++;
                 Assert.True(SpinWait.SpinUntil(() => handler.ReceivedBodySnapshot().Count == releaseCount, TimeSpan.FromSeconds(2)));
-                userProxy.WatchedUserPaths.Add(firstUserId.ToString("D") + "\n" + episodes[0].Path);
+                userProxy.WatchedUserPaths.Add(config.ManagedPlaybackCacheUserIds[0] + "\n" + episodes[0].Path);
                 userProxy.UserDataFailureMode = null;
                 userProxy.Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = secondUserId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
                 releaseCount++;
@@ -681,7 +695,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 : new[] { "0", "0", "1", "0" };
             Assert.Equal(expectedReleaseState, releases.Select(form => form["watched"]).ToArray());
             Assert.Equal(expectedReleaseState, releases.Select(form => form["cohort_complete"]).ToArray());
-            var expectedConsumerId = Hash("7\n" + firstUserId.ToString("D") + "\n" + secondUserId.ToString("D"));
+            var expectedConsumerId = Hash("7\n" + string.Join("\n", config.ManagedPlaybackCacheUserIds));
             Assert.All(releases, form =>
             {
                 Assert.Equal("7", form["integration_id"]);
@@ -716,7 +730,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var relative = "Season 1/Episode " + number.ToString("D2") + ".strm";
                 var path = Path.Combine(root, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
-                var text = "synthetic fixture " + number + "\n";
+                var text = "https://editor.example.test/series/synthetic-user/synthetic-password/" + number + ".mkv?proxy=true\n";
                 File.WriteAllText(path, text);
                 return new { RelativePath = relative, Sha256 = Hash(text), Length = (long)Encoding.UTF8.GetByteCount(text), CanonicalId = "episode-" + number, VariantKey = "variant-A", SourceId = number, PlaylistId = 1, SeriesCanonicalId = "series-1", SeasonNumber = 1, EpisodeNumber = number };
             }).ToArray();

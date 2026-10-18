@@ -338,7 +338,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (input.Kind == "start")
             {
-                if (!TryResolveConfiguredIdentity(config, input.Path, input.ConcreteMediaSource, out var identity))
+                if (!TryResolveConfiguredIdentity(config, input.Path, input.ConcreteMediaSource, out var identity, input.ItemPath))
                 {
                     return;
                 }
@@ -369,7 +369,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             if (input.Kind != "watched" || !config.ManagedPlaybackCacheDeleteAfterWatched ||
-                users.Count == 0 || !users.Contains(input.UserId))
+                users.Count == 0 || !users.Any(userId => UserIdsEqual(userId, input.UserId)))
             {
                 return;
             }
@@ -497,7 +497,7 @@ namespace Emby.M3uEditor.Plugin.Service
             foreach (var userId in users)
             {
                 var played = false;
-                if (eventPlayed.HasValue && string.Equals(userId, eventUserId, StringComparison.Ordinal))
+                if (eventPlayed.HasValue && UserIdsEqual(userId, eventUserId))
                 {
                     played = eventPlayed.Value;
                 }
@@ -524,7 +524,8 @@ namespace Emby.M3uEditor.Plugin.Service
             PluginConfiguration config,
             string selectedPath,
             bool concrete,
-            out ManagedPlaybackIdentity identity)
+            out ManagedPlaybackIdentity identity,
+            string itemPath = null)
         {
             identity = null;
             var mappings = ReadMappings(config);
@@ -538,7 +539,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         out _))
                 .Select(mapping => mapping.OutputPath)
                 .ToList();
-            if (!_resolver.TryResolveActive(roots, selectedPath, concrete, out identity))
+            if (!_resolver.TryResolvePlayback(roots, selectedPath, concrete, itemPath, out identity))
             {
                 return false;
             }
@@ -913,6 +914,15 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
+        private static bool UserIdsEqual(string left, string right)
+        {
+            // Emby's API emits N-format IDs while SDK events expose Guid values.
+            // Preserve configured IDs (and consumer fingerprints); compare GUID
+            // identity only where an event is joined to the selected profiles.
+            return string.Equals(left, right, StringComparison.Ordinal) ||
+                (Guid.TryParse(left, out var leftGuid) && Guid.TryParse(right, out var rightGuid) && leftGuid == rightGuid);
+        }
+
         private static HashSet<string> NormalizeUsers(IEnumerable<string> users)
         {
             return new HashSet<string>(
@@ -1001,6 +1011,7 @@ namespace Emby.M3uEditor.Plugin.Service
             public string SessionId { get; private set; }
             public string ItemId { get; private set; }
             public string Path { get; private set; }
+            public string ItemPath { get; private set; }
             public bool ConcreteMediaSource { get; private set; }
             public string UserId { get; private set; }
             public bool Played { get; private set; }
@@ -1022,6 +1033,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     ItemId = itemId,
                     Path = path,
                     ConcreteMediaSource = concrete,
+                    ItemPath = item?.Path,
                     Item = item,
                     ConfigurationGeneration = configurationGeneration
                 };
