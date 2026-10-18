@@ -274,7 +274,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 {
                     ManagedSetupReady = true, ManagedPublishingIntegrationId = 7,
                     ManagedApprovedOutputRoots = root, ManagedActiveGeneration = revision,
-                    ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, OutputPath = root, ActiveRevision = revision, Success = true } })
+                    ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } })
                 };
 
                 Assert.False(M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 10).ActiveManifestIdentityReady);
@@ -303,9 +303,13 @@ namespace Emby.M3uEditor.Plugin.Tests
                 {
                     ManagedSetupReady = true, ManagedPublishingIntegrationId = 7,
                     ManagedApprovedOutputRoots = root, ManagedActiveGeneration = revision,
-                    ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, OutputPath = root, ActiveRevision = revision, Success = true } })
+                    ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } })
                 };
                 Assert.True(M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 10).ActiveManifestIdentityReady);
+                config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 0, OutputPath = root, ActiveRevision = revision, Success = true } });
+                Assert.False(M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 10).ActiveManifestIdentityReady);
+                config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = -1, OutputPath = root, ActiveRevision = revision, Success = true } });
+                Assert.False(M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 10).ActiveManifestIdentityReady);
                 File.WriteAllText(Path.Combine(root, ".m3u-editor-for-emby", "active.json"), JsonSerializer.Serialize(new { Revision = revision, Files = new[] { new { RelativePath = "legacy.strm" } } }));
                 Assert.False(M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 10).ActiveManifestIdentityReady);
             }

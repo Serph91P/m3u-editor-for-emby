@@ -387,7 +387,7 @@ namespace Emby.M3uEditor.Plugin.Api
         private static bool HasValidActiveManifestIdentity(ManagedPlaybackIdentityResolver resolver, ManagedMappingState mapping, string activeGeneration, string approvedRoots, int integrationId)
         {
             if (mapping == null || !mapping.Success ||
-                (mapping.IntegrationId > 0 && mapping.IntegrationId != integrationId) ||
+                mapping.IntegrationId != integrationId ||
                 !string.Equals(mapping.ActiveRevision, activeGeneration, StringComparison.Ordinal) ||
                 string.IsNullOrWhiteSpace(mapping.OutputPath) ||
                 !ManagedOutputPolicy.IsApproved(mapping.OutputPath, approvedRoots, out _)) return false;
