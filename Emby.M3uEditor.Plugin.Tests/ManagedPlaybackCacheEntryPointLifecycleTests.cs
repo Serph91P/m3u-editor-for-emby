@@ -442,6 +442,34 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void CapabilityDiscovery_IdenticalNotificationDuringInitialFlight_DoesNotInvalidateTheOnlyResponse()
+        {
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = false;
+            config.ManagedPublishingIntegrationId = 7;
+            var handler = new BlockingCapabilityHandler();
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 1, TimeSpan.FromSeconds(2)));
+                for (var notification = 0; notification < 20; notification++)
+                {
+                    ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                }
+
+                Assert.Equal(1, handler.RequestCount);
+                handler.ReleaseAll();
+                Assert.True(SpinWait.SpinUntil(() => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config), TimeSpan.FromSeconds(2)));
+            }
+        }
+
+        [Fact]
         public void CapabilityDiscovery_OldCompletion_DoesNotClearNewFlightOwnership()
         {
             var config = DefaultConfig();

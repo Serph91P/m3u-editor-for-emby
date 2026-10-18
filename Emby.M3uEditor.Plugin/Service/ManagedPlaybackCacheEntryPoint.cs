@@ -711,6 +711,11 @@ namespace Emby.M3uEditor.Plugin.Service
             var generation = _configurationGeneration;
             var capabilityKey = CreateCapabilityKey(config);
             var snapshot = CreateCapabilitySnapshot(config);
+            if (_lifecycleSnapshot == null)
+            {
+                _lifecycleSnapshot = CreateLifecycleSnapshot(config);
+                generation = ++_configurationGeneration;
+            }
             if (string.IsNullOrEmpty(capabilityKey))
             {
                 return;
