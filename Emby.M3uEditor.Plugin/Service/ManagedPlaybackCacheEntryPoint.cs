@@ -47,8 +47,10 @@ namespace Emby.M3uEditor.Plugin.Service
         private string _capabilitySnapshot;
         private string _lifecycleSnapshot;
         private string _capabilityRefreshSnapshot;
+        private CapabilityRefreshRequest _capabilityRefreshOwner;
         private M3uEditorCacheControlCapability _cacheCapability;
         private Task _capabilityRefresh;
+        private bool _capabilityRefreshQueued;
         private long _capabilityGeneration;
         private long _configurationGeneration;
         private bool _running;
@@ -199,6 +201,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private void ReconcileConfiguration(bool enabled)
         {
             var config = _configurationProvider();
+            var capabilitySnapshot = CreateCapabilitySnapshot(config);
             var lifecycleSnapshot = CreateLifecycleSnapshot(config);
             if (!string.Equals(_lifecycleSnapshot, lifecycleSnapshot, StringComparison.Ordinal))
             {
@@ -211,6 +214,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     _cacheCapability = null;
                 }
             }
+            _capabilitySnapshot = capabilitySnapshot;
             _cache?.Reconcile(enabled);
             if (_cacheCapability == null)
             {
@@ -715,39 +719,83 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 _capabilitySnapshot = snapshot;
             }
-            if (_capabilityRefresh != null && !_capabilityRefresh.IsCompleted &&
-                string.Equals(_capabilityRefreshSnapshot, snapshot, StringComparison.Ordinal))
+            if (_capabilityRefresh != null && !_capabilityRefresh.IsCompleted)
+            {
+                if (!string.Equals(_capabilityRefreshSnapshot, snapshot, StringComparison.Ordinal))
+                {
+                    QueueCapabilityRefresh();
+                }
+                return;
+            }
+            StartCapabilityRefresh(new CapabilityRefreshRequest(
+                generation, capabilityKey, config.BaseUrl, config.Username, config.Password, snapshot));
+        }
+
+        private void QueueCapabilityRefresh()
+        {
+            if (_capabilityRefreshQueued || _disposed)
             {
                 return;
             }
-            _capabilityGeneration = generation;
-            _capabilityRefreshSnapshot = snapshot;
-            _capabilityRefresh = RefreshCapabilityAsync(
-                generation,
-                capabilityKey,
-                config.BaseUrl,
-                config.Username,
-                config.Password);
+
+            _capabilityRefreshQueued = true;
+            Task.Run(async () =>
+            {
+                await Task.Delay(25).ConfigureAwait(false);
+                lock (RuntimeGate)
+                {
+                    _capabilityRefreshQueued = false;
+                    if (!_disposed && ReferenceEquals(_current, this) && _cacheCapability == null)
+                    {
+                        StartCapabilityRefreshFromCurrentConfiguration();
+                    }
+                }
+            });
         }
 
-        private async Task RefreshCapabilityAsync(
-            long generation,
-            string capabilityKey,
-            string baseUrl,
-            string username,
-            string password)
+        private void StartCapabilityRefreshFromCurrentConfiguration()
+        {
+            var config = _configurationProvider();
+            if (config == null || config.ManagedPlaybackCacheEnabled || !config.ManagedPublishingEnabled ||
+                config.ManagedPublishingIntegrationId < 1 || string.IsNullOrWhiteSpace(config.BaseUrl) ||
+                string.IsNullOrWhiteSpace(config.Username) || _client == null)
+            {
+                return;
+            }
+
+            var capabilityKey = CreateCapabilityKey(config);
+            if (string.IsNullOrEmpty(capabilityKey))
+            {
+                return;
+            }
+
+            var snapshot = CreateCapabilitySnapshot(config);
+            _capabilitySnapshot = snapshot;
+            StartCapabilityRefresh(new CapabilityRefreshRequest(
+                _configurationGeneration, capabilityKey, config.BaseUrl, config.Username, config.Password, snapshot));
+        }
+
+        private void StartCapabilityRefresh(CapabilityRefreshRequest request)
+        {
+            _capabilityGeneration = request.Generation;
+            _capabilityRefreshSnapshot = request.Snapshot;
+            _capabilityRefreshOwner = request;
+            _capabilityRefresh = RefreshCapabilityAsync(request);
+        }
+
+        private async Task RefreshCapabilityAsync(CapabilityRefreshRequest request)
         {
             try
             {
                 var capability = await _client.DiscoverCacheControlCapabilityAsync(
-                    baseUrl, username, password, _cancellation.Token).ConfigureAwait(false);
+                    request.BaseUrl, request.Username, request.Password, _cancellation.Token).ConfigureAwait(false);
                 if (capability == null || _cancellation.IsCancellationRequested) return;
                 lock (RuntimeGate)
                 {
                     if (!_disposed && ReferenceEquals(_current, this) &&
-                        generation == _configurationGeneration && generation == _capabilityGeneration)
+                        request.Generation == _configurationGeneration && request.Generation == _capabilityGeneration)
                     {
-                        _capabilityKey = capabilityKey;
+                        _capabilityKey = request.CapabilityKey;
                         _cacheCapability = capability;
                     }
                 }
@@ -758,11 +806,15 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 lock (RuntimeGate)
                 {
-                    _capabilityRefresh = null;
-                    if (!_disposed && ReferenceEquals(_current, this) &&
-                        !string.Equals(_capabilitySnapshot, _capabilityRefreshSnapshot, StringComparison.Ordinal))
+                    if (ReferenceEquals(_capabilityRefreshOwner, request))
                     {
-                        RefreshCapabilityIfNeeded();
+                        _capabilityRefreshOwner = null;
+                        _capabilityRefresh = null;
+                        if (!_disposed && ReferenceEquals(_current, this) &&
+                            !string.Equals(_capabilitySnapshot, request.Snapshot, StringComparison.Ordinal))
+                        {
+                            QueueCapabilityRefresh();
+                        }
                     }
                 }
             }
@@ -908,6 +960,26 @@ namespace Emby.M3uEditor.Plugin.Service
         private static StringComparer PathComparer => System.IO.Path.DirectorySeparatorChar == '\\'
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
+
+        private sealed class CapabilityRefreshRequest
+        {
+            public CapabilityRefreshRequest(long generation, string capabilityKey, string baseUrl, string username, string password, string snapshot)
+            {
+                Generation = generation;
+                CapabilityKey = capabilityKey;
+                BaseUrl = baseUrl;
+                Username = username;
+                Password = password;
+                Snapshot = snapshot;
+            }
+
+            public long Generation { get; private set; }
+            public string CapabilityKey { get; private set; }
+            public string BaseUrl { get; private set; }
+            public string Username { get; private set; }
+            public string Password { get; private set; }
+            public string Snapshot { get; private set; }
+        }
 
         private sealed class InputEvent
         {
