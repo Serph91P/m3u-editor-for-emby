@@ -521,13 +521,18 @@ namespace Emby.M3uEditor.Plugin.Api
                 cancellationToken,
                 () => plugin.ApplicationHost.Resolve<ILibraryManager>().QueueLibraryScan())
                 .ConfigureAwait(false);
+            return ToManagedReconcileResult(reconciled);
+        }
+
+        internal static ManagedActionResult ToManagedReconcileResult(ManagedReconcileResult reconciled)
+        {
             return new ManagedActionResult
             {
                 Success = reconciled.Success,
                 Compatible = reconciled.Compatible,
-                Message = reconciled.Compatible
-                    ? (reconciled.Success ? "Managed catalog reconcile completed." : reconciled.Error)
-                    : "Compatible m3u-editor publishing capability version 1 was not advertised.",
+                Message = reconciled.Success
+                    ? "Managed catalog reconcile completed."
+                    : reconciled.Error ?? "Managed reconcile failed.",
                 TotalMappings = reconciled.TotalMappings,
                 AppliedMappings = reconciled.AppliedMappings,
                 FailedMappings = reconciled.FailedMappings,
