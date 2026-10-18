@@ -51,6 +51,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private M3uEditorCacheControlCapability _cacheCapability;
         private Task _capabilityRefresh;
         private bool _capabilityRefreshQueued;
+        private bool _capabilityRefreshPending;
         private long _capabilityGeneration;
         private long _configurationGeneration;
         private bool _running;
@@ -212,6 +213,10 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     _capabilityKey = null;
                     _cacheCapability = null;
+                }
+                if (_cacheCapability == null)
+                {
+                    _capabilityRefreshPending = true;
                 }
             }
             _capabilitySnapshot = capabilitySnapshot;
@@ -750,10 +755,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 lock (RuntimeGate)
                 {
                     _capabilityRefreshQueued = false;
-                    if (!_disposed && ReferenceEquals(_current, this) && _cacheCapability == null)
+                    if (_disposed || !ReferenceEquals(_current, this) || _cacheCapability != null ||
+                        (_capabilityRefresh != null && !_capabilityRefresh.IsCompleted))
                     {
-                        StartCapabilityRefreshFromCurrentConfiguration();
+                        return;
                     }
+
+                    StartCapabilityRefreshFromCurrentConfiguration();
                 }
             });
         }
@@ -782,6 +790,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private void StartCapabilityRefresh(CapabilityRefreshRequest request)
         {
+            _capabilityRefreshPending = false;
             _capabilityGeneration = request.Generation;
             _capabilityRefreshSnapshot = request.Snapshot;
             _capabilityRefreshOwner = request;
@@ -816,7 +825,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         _capabilityRefreshOwner = null;
                         _capabilityRefresh = null;
                         if (!_disposed && ReferenceEquals(_current, this) &&
-                            !string.Equals(_capabilitySnapshot, request.Snapshot, StringComparison.Ordinal))
+                            (_capabilityRefreshPending || !string.Equals(_capabilitySnapshot, request.Snapshot, StringComparison.Ordinal)))
                         {
                             QueueCapabilityRefresh();
                         }

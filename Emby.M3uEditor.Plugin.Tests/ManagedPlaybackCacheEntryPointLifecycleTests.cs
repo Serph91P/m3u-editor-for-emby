@@ -442,6 +442,82 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void CapabilityDiscovery_PacedConfigurationChanges_DoNotStartConcurrentRefreshes()
+        {
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = false;
+            config.ManagedPublishingIntegrationId = 7;
+            var handler = new BlockingCapabilityHandler();
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 1, TimeSpan.FromSeconds(2)));
+                for (var change = 1; change <= 20; change++)
+                {
+                    config.Password = "paced-password-" + change;
+                    ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                    Thread.Sleep(60);
+                }
+
+                Assert.Equal(1, handler.RequestCount);
+                Assert.Equal(1, handler.OutstandingRequestCount);
+                handler.ReleaseAll();
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 2, TimeSpan.FromSeconds(2)));
+                handler.ReleaseAll();
+                Assert.True(SpinWait.SpinUntil(() => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config), TimeSpan.FromSeconds(2)));
+            }
+        }
+
+        [Theory]
+        [InlineData("unchanged")]
+        [InlineData("users")]
+        [InlineData("delete-after-watched")]
+        [InlineData("grace")]
+        [InlineData("mode")]
+        [InlineData("next-count")]
+        public void CapabilityDiscovery_InitialNotificationOrPolicyChange_DoesNotLoseReadiness(string change)
+        {
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = false;
+            config.ManagedPublishingIntegrationId = 7;
+            var handler = new BlockingCapabilityHandler();
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 1, TimeSpan.FromSeconds(2)));
+                switch (change)
+                {
+                    case "users": config.ManagedPlaybackCacheUserIds = new[] { "11111111-1111-1111-1111-111111111111" }; break;
+                    case "delete-after-watched": config.ManagedPlaybackCacheDeleteAfterWatched = true; break;
+                    case "grace": config.ManagedPlaybackCacheDeleteGraceHours = 48; break;
+                    case "mode": config.ManagedPlaybackCacheMode = "next_n"; break;
+                    case "next-count": config.ManagedPlaybackCacheNextCount = 2; break;
+                }
+
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                handler.ReleaseAll();
+                if (!string.Equals(change, "unchanged", StringComparison.Ordinal))
+                {
+                    Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 2, TimeSpan.FromSeconds(2)));
+                    handler.ReleaseAll();
+                }
+                Assert.True(SpinWait.SpinUntil(() => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config), TimeSpan.FromSeconds(2)));
+            }
+        }
+
+        [Fact]
         public void CapabilityDiscovery_IdenticalNotificationDuringInitialFlight_DoesNotInvalidateTheOnlyResponse()
         {
             var config = DefaultConfig();
@@ -488,9 +564,9 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 1, TimeSpan.FromSeconds(2)));
                 config.Password = "fresh-password";
                 ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
-                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 2, TimeSpan.FromSeconds(2)));
                 handler.Release(0);
                 Assert.True(SpinWait.SpinUntil(() => handler.CompletedRequestCount == 1, TimeSpan.FromSeconds(2)));
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 2, TimeSpan.FromSeconds(2)));
 
                 for (var notification = 0; notification < 20; notification++)
                 {
