@@ -12,6 +12,40 @@ namespace Emby.M3uEditor.Plugin.Tests
     public class NativeStrmPlaybackIdentityTests : SyncTestBase
     {
         [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void NativeHttpSource_RequiresOneExactVariantOfTheAnchoredEpisode(bool ambiguous)
+        {
+            var root = Path.Combine(TempDir.Path, "variants");
+            Directory.CreateDirectory(Path.Combine(root, ".m3u-editor-for-emby"));
+            var selectedUrl = "https://editor.example.test/series/synthetic-user/synthetic-password/2.mkv?proxy=true";
+            var entries = Enumerable.Range(1, 2).Select(number =>
+            {
+                var content = (ambiguous || number == 2 ? selectedUrl : "https://editor.example.test/series/synthetic-user/synthetic-password/1.mkv?proxy=true") + "\n";
+                var relative = "Variant" + number + ".strm";
+                File.WriteAllText(Path.Combine(root, relative), content);
+                string hash;
+                using (var sha = SHA256.Create())
+                    hash = string.Concat(sha.ComputeHash(Encoding.UTF8.GetBytes(content)).Select(value => value.ToString("x2")));
+                return new { RelativePath = relative, Sha256 = hash, CanonicalId = "episode-1", VariantKey = "variant-" + number };
+            }).ToArray();
+            File.WriteAllText(Path.Combine(root, ".m3u-editor-for-emby", "active.json"), JsonSerializer.Serialize(new
+            {
+                FormatVersion = 1,
+                MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
+                Revision = new string('a', 64),
+                Files = entries
+            }));
+
+            var resolved = new ManagedPlaybackIdentityResolver().TryResolvePlayback(
+                new[] { root }, selectedUrl, true, Path.Combine(root, "Variant1.strm"), out var identity);
+
+            Assert.Equal(!ambiguous, resolved);
+            if (ambiguous) Assert.Null(identity);
+            else Assert.Equal("variant-2", identity.VariantKey);
+        }
+
+        [Theory]
         [InlineData("foreign_url")]
         [InlineData("missing_source")]
         [InlineData("not_concrete")]

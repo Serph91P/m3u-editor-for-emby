@@ -218,34 +218,85 @@ namespace Emby.M3uEditor.Plugin.Service
 
             try
             {
-                var bytes = File.ReadAllBytes(anchor.ManagedPath);
-                using (var reader = new StreamReader(new MemoryStream(bytes)))
+                if (!TryResolve(anchor.ManagedRoot, anchor.ManagedPath, HashBytes(File.ReadAllBytes(anchor.ManagedPath)), true, out var verifiedAnchor) ||
+                    !SamePlaybackItem(verifiedAnchor, anchor) ||
+                    !string.Equals(verifiedAnchor.VariantKey, anchor.VariantKey, StringComparison.Ordinal))
                 {
-                    if (!string.Equals(reader.ReadToEnd().Trim(), selectedMediaSourcePath, StringComparison.Ordinal))
+                    return false;
+                }
+
+                var manifestPath = Path.Combine(anchor.ManagedRoot, MetadataDirectoryName, "active.json");
+                using (var document = JsonDocument.Parse(File.ReadAllText(manifestPath)))
+                {
+                    var manifest = document.RootElement;
+                    if (!IsActiveManifest(manifest) ||
+                        !string.Equals(manifest.GetProperty("MappingUuid").GetString(), anchor.MappingUuid, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(manifest.GetProperty("Revision").GetString(), anchor.Revision, StringComparison.Ordinal))
                     {
                         return false;
                     }
-                }
 
-                string hash;
-                using (var sha = SHA256.Create())
-                {
-                    hash = string.Concat(sha.ComputeHash(bytes).Select(value => value.ToString("x2")));
-                }
-                if (TryResolve(anchor.ManagedRoot, anchor.ManagedPath, hash, true, out var verified) &&
-                    string.Equals(verified.MappingUuid, anchor.MappingUuid, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(verified.Revision, anchor.Revision, StringComparison.Ordinal) &&
-                    string.Equals(verified.CanonicalId, anchor.CanonicalId, StringComparison.Ordinal) &&
-                    string.Equals(verified.VariantKey, anchor.VariantKey, StringComparison.Ordinal))
-                {
-                    identity = verified;
-                    return true;
+                    var matches = new List<ManagedPlaybackIdentity>();
+                    foreach (var file in manifest.GetProperty("Files").EnumerateArray())
+                    {
+                        if (!TryGetNonBlankString(file, "CanonicalId", out var canonicalId) ||
+                            !string.Equals(canonicalId, anchor.CanonicalId, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+                        if (!TryGetNonBlankString(file, "RelativePath", out var relativePath) ||
+                            !relativePath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+                        if (!TryGetNonBlankString(file, "Sha256", out var expectedHash) ||
+                            !ManagedOutputPolicy.TryJoinUnderRoot(anchor.ManagedRoot, relativePath, out var path) ||
+                            !TryResolve(anchor.ManagedRoot, path, expectedHash, true, out var candidate) ||
+                            !SamePlaybackItem(candidate, anchor))
+                        {
+                            return false;
+                        }
+
+                        var bytes = File.ReadAllBytes(candidate.ManagedPath);
+                        using (var reader = new StreamReader(new MemoryStream(bytes)))
+                        {
+                            if (!string.Equals(reader.ReadToEnd().Trim(), selectedMediaSourcePath, StringComparison.Ordinal))
+                            {
+                                continue;
+                            }
+                        }
+                        if (!TryResolve(anchor.ManagedRoot, candidate.ManagedPath, HashBytes(bytes), true, out var verified) ||
+                            !SamePlaybackItem(verified, anchor))
+                        {
+                            return false;
+                        }
+                        matches.Add(verified);
+                    }
+                    if (matches.Count == 1)
+                    {
+                        identity = matches[0];
+                        return true;
+                    }
                 }
             }
             catch (ArgumentException) { }
             catch (IOException) { }
+            catch (JsonException) { }
             catch (UnauthorizedAccessException) { }
             return false;
+        }
+
+        private static bool SamePlaybackItem(ManagedPlaybackIdentity left, ManagedPlaybackIdentity right)
+        {
+            return string.Equals(left.MappingUuid, right.MappingUuid, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(left.Revision, right.Revision, StringComparison.Ordinal) &&
+                string.Equals(left.CanonicalId, right.CanonicalId, StringComparison.Ordinal);
+        }
+
+        private static string HashBytes(byte[] bytes)
+        {
+            using (var sha = SHA256.Create())
+                return string.Concat(sha.ComputeHash(bytes).Select(value => value.ToString("x2")));
         }
 
         internal bool HasValidActiveManifestIdentity(string managedRoot, string mappingUuid, string revision)
