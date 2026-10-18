@@ -45,6 +45,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private M3uEditorClient _client;
         private string _capabilityKey;
         private string _capabilitySnapshot;
+        private string _lifecycleSnapshot;
         private string _capabilityRefreshSnapshot;
         private M3uEditorCacheControlCapability _cacheCapability;
         private Task _capabilityRefresh;
@@ -198,11 +199,11 @@ namespace Emby.M3uEditor.Plugin.Service
         private void ReconcileConfiguration(bool enabled)
         {
             var config = _configurationProvider();
-            var snapshot = CreateCapabilitySnapshot(config);
-            if (!string.Equals(_capabilitySnapshot, snapshot, StringComparison.Ordinal))
+            var lifecycleSnapshot = CreateLifecycleSnapshot(config);
+            if (!string.Equals(_lifecycleSnapshot, lifecycleSnapshot, StringComparison.Ordinal))
             {
                 _configurationGeneration++;
-                _capabilitySnapshot = snapshot;
+                _lifecycleSnapshot = lifecycleSnapshot;
                 _identityByItem.Clear();
                 if (!string.Equals(_capabilityKey, CreateCapabilityKey(config), StringComparison.Ordinal))
                 {
@@ -779,6 +780,20 @@ namespace Emby.M3uEditor.Plugin.Service
                 config.ManagedActiveGeneration ?? string.Empty,
                 config.ManagedMappingsJson ?? string.Empty,
                 config.ManagedApprovedOutputRoots ?? string.Empty
+            });
+        }
+
+        private static string CreateLifecycleSnapshot(PluginConfiguration config)
+        {
+            if (config == null) return null;
+            return string.Join("\n", new[]
+            {
+                CreateCapabilitySnapshot(config),
+                config.ManagedPlaybackCacheMode ?? string.Empty,
+                config.ManagedPlaybackCacheNextCount.ToString(CultureInfo.InvariantCulture),
+                config.ManagedPlaybackCacheDeleteAfterWatched.ToString(),
+                config.ManagedPlaybackCacheDeleteGraceHours.ToString(CultureInfo.InvariantCulture),
+                string.Join("\n", config.ManagedPlaybackCacheUserIds ?? new string[0])
             });
         }
 

@@ -348,6 +348,67 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData("users")]
+        [InlineData("delete-after-watched")]
+        [InlineData("mode")]
+        [InlineData("grace")]
+        [InlineData("next-count")]
+        public void ReconcileAfterCapturedPolicyChange_DropsOldInput(string changedPolicy)
+        {
+            var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
+            var mappingUuid = "123e4567-e89b-12d3-a456-426614174005";
+            var revision = new string('a', 64);
+            var paths = WriteManifest(root, mappingUuid, revision);
+            var episode = new Episode { Id = Guid.NewGuid(), Path = paths[0], Name = "Episode 1" };
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php", CapabilityJson);
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_playback");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_prefetch");
+            handler.RespondWithRequestIdEcho("action=m3u_editor_cache_release");
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+            var libraryProxy = (LifecycleProxy)(object)library;
+            libraryProxy.Items = new Dictionary<string, BaseItem>(StringComparer.Ordinal) { [paths[0]] = episode };
+            libraryProxy.BlockFindByPath = true;
+            var current = DefaultConfig();
+            current.ManagedPublishingEnabled = true;
+            current.ManagedPlaybackCacheEnabled = false;
+            current.ManagedPlaybackCacheMode = "next_n";
+            current.ManagedPlaybackCacheNextCount = 1;
+            current.ManagedPlaybackCacheUserIds = new[] { "11111111-1111-1111-1111-111111111111" };
+            current.ManagedPlaybackCacheDeleteAfterWatched = true;
+            current.ManagedPlaybackCacheDeleteGraceHours = 37;
+            current.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = revision, Success = true } });
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => current, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                Assert.True(SpinWait.SpinUntil(() => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(current), TimeSpan.FromSeconds(2)));
+                current.ManagedPlaybackCacheEnabled = true;
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(true);
+                ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episode, PlaySessionId = "captured-policy", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
+                Assert.True(libraryProxy.FindByPathEntered.Wait(TimeSpan.FromSeconds(2)));
+                current = JsonSerializer.Deserialize<PluginConfiguration>(JsonSerializer.Serialize(current));
+                switch (changedPolicy)
+                {
+                    case "users": current.ManagedPlaybackCacheUserIds = new[] { "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222" }; break;
+                    case "delete-after-watched": current.ManagedPlaybackCacheDeleteAfterWatched = false; break;
+                    case "mode": current.ManagedPlaybackCacheMode = "whole_season"; break;
+                    case "grace": current.ManagedPlaybackCacheDeleteGraceHours = 168; break;
+                    case "next-count": current.ManagedPlaybackCacheNextCount = 2; break;
+                    default: throw new ArgumentOutOfRangeException(nameof(changedPolicy));
+                }
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(true);
+                libraryProxy.ContinueFindByPath.Set();
+                Thread.Sleep(150);
+                Assert.Single(handler.ReceivedBodySnapshot());
+                Assert.DoesNotContain(handler.ReceivedBodySnapshot(), body => body.Contains("m3u_editor_cache_", StringComparison.Ordinal));
+                handler.AssertNoUnhandledRequests();
+            }
+        }
+
         private void AssertStartPrefetchTarget(
             bool watchSecondEpisode,
             string expectedCanonicalId,
