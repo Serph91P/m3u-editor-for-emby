@@ -409,6 +409,74 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public void CapabilityDiscovery_RealConfigurationChanges_AreCoalescedWhilePreviousRequestIsPending()
+        {
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = false;
+            config.ManagedPublishingIntegrationId = 7;
+            var handler = new BlockingCapabilityHandler();
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 1, TimeSpan.FromSeconds(2)));
+                for (var change = 1; change <= 20; change++)
+                {
+                    config.Password = "changed-password-" + change;
+                    ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                }
+
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 2, TimeSpan.FromSeconds(2)));
+                Thread.Sleep(100);
+                Assert.Equal(2, handler.RequestCount);
+                Assert.Equal(2, handler.OutstandingRequestCount);
+                handler.ReleaseAll();
+                Assert.True(SpinWait.SpinUntil(() => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config), TimeSpan.FromSeconds(2)));
+            }
+        }
+
+        [Fact]
+        public void CapabilityDiscovery_OldCompletion_DoesNotClearNewFlightOwnership()
+        {
+            var config = DefaultConfig();
+            config.ManagedPublishingEnabled = true;
+            config.ManagedPlaybackCacheEnabled = false;
+            config.ManagedPublishingIntegrationId = 7;
+            var handler = new BlockingCapabilityHandler();
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 1, TimeSpan.FromSeconds(2)));
+                config.Password = "fresh-password";
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 2, TimeSpan.FromSeconds(2)));
+                handler.Release(0);
+                Assert.True(SpinWait.SpinUntil(() => handler.CompletedRequestCount == 1, TimeSpan.FromSeconds(2)));
+
+                for (var notification = 0; notification < 20; notification++)
+                {
+                    ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                }
+
+                Thread.Sleep(100);
+                Assert.Equal(2, handler.RequestCount);
+                Assert.Equal(1, handler.OutstandingRequestCount);
+                handler.ReleaseAll();
+                Assert.True(SpinWait.SpinUntil(() => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config), TimeSpan.FromSeconds(2)));
+            }
+        }
+
         private void AssertStartPrefetchTarget(
             bool watchSecondEpisode,
             string expectedCanonicalId,
@@ -562,6 +630,48 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         private sealed class RuntimePlaybackProgressEventArgs : PlaybackProgressEventArgs { public RuntimeMediaSource MediaSource { get; set; } }
         private sealed class RuntimeMediaSource { public string Path { get; set; } }
+
+        private sealed class BlockingCapabilityHandler : HttpMessageHandler
+        {
+            private readonly Dictionary<int, TaskCompletionSource<bool>> _pending = new Dictionary<int, TaskCompletionSource<bool>>();
+            private int _requestCount;
+            private int _completedRequestCount;
+
+            public int RequestCount { get { return Volatile.Read(ref _requestCount); } }
+            public int CompletedRequestCount { get { return Volatile.Read(ref _completedRequestCount); } }
+            public int OutstandingRequestCount { get { return RequestCount - CompletedRequestCount; } }
+
+            public void Release(int request)
+            {
+                TaskCompletionSource<bool> completion;
+                lock (_pending)
+                {
+                    Assert.True(_pending.TryGetValue(request, out completion));
+                }
+                completion.TrySetResult(true);
+            }
+
+            public void ReleaseAll()
+            {
+                TaskCompletionSource<bool>[] pending;
+                lock (_pending) { pending = _pending.Values.ToArray(); }
+                foreach (var completion in pending) completion.TrySetResult(true);
+            }
+
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                var sequence = Interlocked.Increment(ref _requestCount) - 1;
+                var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                lock (_pending) { _pending[sequence] = completion; }
+                await completion.Task.ConfigureAwait(false);
+                Interlocked.Increment(ref _completedRequestCount);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = request,
+                    Content = new StringContent(CapabilityJson)
+                };
+            }
+        }
 
         private class LifecycleProxy : DispatchProxy
         {
