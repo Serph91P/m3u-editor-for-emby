@@ -691,9 +691,16 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             else if (command.Action == "prefetch")
             {
-                await _client.SendCachePrefetchAsync(
+                var response = await _client.SendCachePrefetchAsync(
                     command.Context.BaseUrl, command.Context.Username, command.Context.Password,
                     request, cancellationToken).ConfigureAwait(false);
+                var deferred = (command.Targets ?? new ManagedPlaybackIdentity[0]).Where(target =>
+                {
+                    var matches = (response?.Results ?? new List<M3uEditorCacheControlTargetResult>())
+                        .Where(result => result != null && result.CanonicalId == target.CanonicalId && result.VariantKey == target.VariantKey).ToList();
+                    return matches.Count == 1 && matches[0].Status == "deferred";
+                }).ToList();
+                _cache?.RecordDeferredPrefetch(command, deferred);
             }
             else if (command.Action == "release")
             {

@@ -30,6 +30,8 @@ namespace Emby.M3uEditor.Plugin.Service
         public int? DeleteAfterHours { get; set; }
         public bool? CohortComplete { get; set; }
         internal long Generation { get; set; }
+        internal string OriginatingPlaybackId { get; set; }
+        internal bool IsDeferredRetry { get; set; }
     }
 
     /// <summary>
@@ -133,11 +135,13 @@ namespace Emby.M3uEditor.Plugin.Service
                     return false;
                 }
 
+                var targets = NormalizePrefetchTargets(current, prefetchTargets);
                 var state = new SessionState
                 {
                     ProtocolSessionId = Guid.NewGuid().ToString("D"),
                     Identity = current,
                     Context = context,
+                    PrefetchTargets = targets,
                     Sequence = 1,
                     LastHeartbeatUtc = now
                 };
@@ -148,18 +152,9 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 _activeSessions.Add(embySessionId, state);
-                var targets = NormalizePrefetchTargets(current, prefetchTargets);
                 if (targets.Count > 0)
                 {
-                    TryEnqueue(new ManagedPlaybackCacheCommand
-                    {
-                        Action = "prefetch",
-                        RequestId = Guid.NewGuid().ToString("D"),
-                        Context = context,
-                        Identity = current,
-                        Targets = targets,
-                        Generation = _generation
-                    });
+                    TryEnqueue(CreatePrefetchCommand(state, targets, _generation, false));
                 }
 
                 return true;
@@ -189,6 +184,36 @@ namespace Emby.M3uEditor.Plugin.Service
                 session.Sequence++;
                 session.LastHeartbeatUtc = now;
                 TryEnqueue(CreatePlaybackCommand(session, "heartbeat", _generation));
+                if (!session.DeferredRetryUsed && session.DeferredTargets != null && now >= session.RetryNotBeforeUtc)
+                {
+                    if (TryEnqueue(CreatePrefetchCommand(session, session.DeferredTargets, _generation, true)))
+                    {
+                        session.DeferredRetryUsed = true;
+                        session.DeferredTargets = null;
+                    }
+                }
+            }
+        }
+
+        internal void RecordDeferredPrefetch(ManagedPlaybackCacheCommand command, IEnumerable<ManagedPlaybackIdentity> deferredTargets)
+        {
+            lock (_gate)
+            {
+                if (_disposed || !_enabled || command == null || command.Action != "prefetch" ||
+                    command.IsDeferredRetry || command.Generation != _generation)
+                    return;
+                var session = _activeSessions.Values.FirstOrDefault(value => value.ProtocolSessionId == command.OriginatingPlaybackId);
+                if (session == null || session.DeferredResponseRecorded)
+                    return;
+                session.DeferredResponseRecorded = true;
+                var sentKeys = new HashSet<string>((command.Targets ?? new ManagedPlaybackIdentity[0]).Select(TargetKey), StringComparer.Ordinal);
+                var targets = NormalizePrefetchTargets(session.Identity, deferredTargets)
+                    .Where(target => sentKeys.Contains(TargetKey(target)) && !session.SuppressedRetryTargets.Contains(TargetKey(target)))
+                    .ToList();
+                if (targets.Count == 0)
+                    return;
+                session.DeferredTargets = targets;
+                session.RetryNotBeforeUtc = _utcNow().AddSeconds(120);
             }
         }
 
@@ -231,6 +256,15 @@ namespace Emby.M3uEditor.Plugin.Service
                 if (_disposed || !_enabled)
                 {
                     return;
+                }
+
+                if (watched && cohortComplete)
+                {
+                    foreach (var session in _activeSessions.Values.Where(value =>
+                        value.Context.IntegrationId == context.IntegrationId && value.Context.ConsumerId == context.ConsumerId &&
+                        value.Identity.MappingUuid == identity.MappingUuid && value.Identity.Revision == identity.Revision &&
+                        value.PrefetchTargets.Any(target => TargetKey(target) == TargetKey(identity))))
+                        session.SuppressedRetryTargets.Add(TargetKey(identity));
                 }
 
                 TryEnqueue(new ManagedPlaybackCacheCommand
@@ -310,6 +344,23 @@ namespace Emby.M3uEditor.Plugin.Service
             };
         }
 
+        private static ManagedPlaybackCacheCommand CreatePrefetchCommand(SessionState session, IReadOnlyList<ManagedPlaybackIdentity> targets, long generation, bool retry, string requestId = null)
+        {
+            return new ManagedPlaybackCacheCommand
+            {
+                Action = "prefetch",
+                RequestId = requestId ?? Guid.NewGuid().ToString("D"),
+                Context = session.Context,
+                Identity = session.Identity,
+                Targets = targets,
+                Generation = generation,
+                OriginatingPlaybackId = session.ProtocolSessionId,
+                IsDeferredRetry = retry
+            };
+        }
+
+        private static string TargetKey(ManagedPlaybackIdentity identity) => identity.CanonicalId + "\n" + identity.VariantKey;
+
         private static IReadOnlyList<ManagedPlaybackIdentity> NormalizePrefetchTargets(
             ManagedPlaybackIdentity current,
             IEnumerable<ManagedPlaybackIdentity> targets)
@@ -356,14 +407,15 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 foreach (var command in _commands.GetConsumingEnumerable(_cancellation.Token))
                 {
-                    if (!CanDispatch(command))
+                    var prepared = PrepareDispatch(command);
+                    if (prepared == null)
                     {
                         continue;
                     }
 
                     try
                     {
-                        _send(command, _cancellation.Token).GetAwaiter().GetResult();
+                        _send(prepared, _cancellation.Token).GetAwaiter().GetResult();
                     }
                     catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                     {
@@ -380,12 +432,17 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        private bool CanDispatch(ManagedPlaybackCacheCommand command)
+        private ManagedPlaybackCacheCommand PrepareDispatch(ManagedPlaybackCacheCommand command)
         {
             lock (_gate)
             {
-                return IsLeaseStop(command) ||
-                    (_enabled && command != null && command.Generation == _generation);
+                if (IsLeaseStop(command)) return command;
+                if (_disposed || !_enabled || command == null || command.Generation != _generation) return null;
+                if (!command.IsDeferredRetry) return command;
+                var session = _activeSessions.Values.FirstOrDefault(value => value.ProtocolSessionId == command.OriginatingPlaybackId);
+                if (session == null) return null;
+                var targets = command.Targets.Where(target => !session.SuppressedRetryTargets.Contains(TargetKey(target))).ToList();
+                return targets.Count == 0 ? null : CreatePrefetchCommand(session, targets, command.Generation, true, command.RequestId);
             }
         }
 
@@ -403,6 +460,12 @@ namespace Emby.M3uEditor.Plugin.Service
             public ManagedPlaybackDispatchContext Context { get; set; }
             public long Sequence { get; set; }
             public DateTime LastHeartbeatUtc { get; set; }
+            public IReadOnlyList<ManagedPlaybackIdentity> PrefetchTargets { get; set; }
+            public IReadOnlyList<ManagedPlaybackIdentity> DeferredTargets { get; set; }
+            public HashSet<string> SuppressedRetryTargets { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public DateTime RetryNotBeforeUtc { get; set; }
+            public bool DeferredResponseRecorded { get; set; }
+            public bool DeferredRetryUsed { get; set; }
         }
     }
 }

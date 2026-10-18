@@ -22,7 +22,7 @@ using Xunit;
 namespace Emby.M3uEditor.Plugin.Tests
 {
     [Collection(PluginSingletonCollection.Name)]
-    public class ManagedPlaybackCacheEntryPointLifecycleTests : SyncTestBase
+    public partial class ManagedPlaybackCacheEntryPointLifecycleTests : SyncTestBase
     {
         [Fact]
         public void LifecycleFixture_EntryPointExposesInternalRuntimeSeam()
