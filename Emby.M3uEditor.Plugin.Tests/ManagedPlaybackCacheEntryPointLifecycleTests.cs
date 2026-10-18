@@ -432,10 +432,10 @@ namespace Emby.M3uEditor.Plugin.Tests
                     ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
                 }
 
+                Assert.Equal(1, handler.RequestCount);
+                Assert.Equal(1, handler.OutstandingRequestCount);
+                handler.ReleaseAll();
                 Assert.True(SpinWait.SpinUntil(() => handler.RequestCount == 2, TimeSpan.FromSeconds(2)));
-                Thread.Sleep(100);
-                Assert.Equal(2, handler.RequestCount);
-                Assert.Equal(2, handler.OutstandingRequestCount);
                 handler.ReleaseAll();
                 Assert.True(SpinWait.SpinUntil(() => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config), TimeSpan.FromSeconds(2)));
             }
