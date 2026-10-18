@@ -250,8 +250,34 @@ namespace Emby.M3uEditor.Plugin.Tests
                 config, new ManagedJobStatus { State = "idle" }, 1, 10);
 
             Assert.True(dashboard.ConfigurationValid);
-            Assert.True(dashboard.ActiveManifestIdentityReady);
+            Assert.False(dashboard.ActiveManifestIdentityReady);
             Assert.False(dashboard.CacheCapabilityReady);
+        }
+
+        [Fact]
+        public void BuildManagedDashboardStatus_RequiresIdentityFieldsInConfirmedActiveManifest()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "managed-dashboard-identity-" + System.Guid.NewGuid().ToString("N"));
+            var revision = new string('a', 64);
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(root, ".m3u-editor-for-emby"));
+                File.WriteAllText(Path.Combine(root, ".m3u-editor-for-emby", "active.json"), JsonSerializer.Serialize(new
+                {
+                    Revision = revision,
+                    Files = new[] { new { CanonicalId = "episode-1", VariantKey = "variant-a", SourceId = 1, PlaylistId = 2 } }
+                }));
+                var config = new PluginConfiguration
+                {
+                    ManagedSetupReady = true, ManagedPublishingIntegrationId = 7,
+                    ManagedApprovedOutputRoots = root, ManagedActiveGeneration = revision,
+                    ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { OutputPath = root, ActiveRevision = revision, Success = true } })
+                };
+                Assert.True(M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 10).ActiveManifestIdentityReady);
+                File.WriteAllText(Path.Combine(root, ".m3u-editor-for-emby", "active.json"), JsonSerializer.Serialize(new { Revision = revision, Files = new[] { new { RelativePath = "legacy.strm" } } }));
+                Assert.False(M3uEditorApi.BuildManagedDashboardStatus(config, null, 1, 10).ActiveManifestIdentityReady);
+            }
+            finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
         }
 
         [Theory]

@@ -45,6 +45,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private M3uEditorClient _client;
         private string _capabilityKey;
         private M3uEditorCacheControlCapability _cacheCapability;
+        private Task _capabilityRefresh;
         private long _configurationGeneration;
         private bool _running;
         private bool _disposed;
@@ -118,6 +119,7 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 _current = this;
             }
+            _capabilityRefresh = RefreshCapabilityAsync();
         }
 
         public void Dispose()
@@ -669,6 +671,35 @@ namespace Emby.M3uEditor.Plugin.Service
                     command.Context.BaseUrl, command.Context.Username, command.Context.Password,
                     request, cancellationToken).ConfigureAwait(false);
             }
+        }
+
+        private async Task RefreshCapabilityAsync()
+        {
+            var config = _configurationProvider();
+            if (config == null || config.ManagedPlaybackCacheEnabled || !config.ManagedPublishingEnabled ||
+                config.ManagedPublishingIntegrationId < 1 ||
+                string.IsNullOrWhiteSpace(config.BaseUrl) || string.IsNullOrWhiteSpace(config.Username) ||
+                _client == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var capability = await _client.DiscoverCacheControlCapabilityAsync(
+                    config.BaseUrl, config.Username, config.Password, _cancellation.Token).ConfigureAwait(false);
+                if (capability == null || _cancellation.IsCancellationRequested) return;
+                lock (RuntimeGate)
+                {
+                    if (!_disposed && ReferenceEquals(_current, this))
+                    {
+                        _capabilityKey = config.BaseUrl + "\n" + config.Username;
+                        _cacheCapability = capability;
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (HttpRequestException) { }
         }
 
         private static ManagedPlaybackDispatchContext CreateContext(
