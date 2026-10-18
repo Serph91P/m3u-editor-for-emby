@@ -191,6 +191,65 @@ namespace Emby.M3uEditor.Plugin.Service
             return true;
         }
 
+        internal bool HasValidActiveManifestIdentity(string managedRoot, string mappingUuid, string revision)
+        {
+            if (string.IsNullOrWhiteSpace(managedRoot) || !Guid.TryParse(mappingUuid, out _) || !IsHash(revision) ||
+                ManagedOutputPolicy.HasReparsePointInPath(managedRoot))
+            {
+                return false;
+            }
+
+            try
+            {
+                string metadataRoot;
+                string manifestPath;
+                if (!ManagedOutputPolicy.TryJoinUnderRoot(managedRoot, MetadataDirectoryName, out metadataRoot) ||
+                    !ManagedOutputPolicy.TryJoinUnderRoot(metadataRoot, "active.json", out manifestPath) ||
+                    !File.Exists(manifestPath))
+                {
+                    return false;
+                }
+
+                using (var document = JsonDocument.Parse(File.ReadAllText(manifestPath)))
+                {
+                    var manifest = document.RootElement;
+                    if (!IsActiveManifest(manifest) ||
+                        !string.Equals(manifest.GetProperty("MappingUuid").GetString(), mappingUuid, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(manifest.GetProperty("Revision").GetString(), revision, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    foreach (var file in manifest.GetProperty("Files").EnumerateArray())
+                    {
+                        if (!TryGetNonBlankString(file, "RelativePath", out var relativePath) ||
+                            !TryGetNonBlankString(file, "Sha256", out var hash) || !IsHash(hash) ||
+                            !TryGetNonBlankString(file, "CanonicalId", out _) ||
+                            !TryGetNonBlankString(file, "VariantKey", out _) ||
+                            !HasRequiredInt32(file, "SourceId") || !HasRequiredInt32(file, "PlaylistId") ||
+                            !ManagedOutputPolicy.TryJoinUnderRoot(managedRoot, relativePath, out var selectedPath) ||
+                            !selectedPath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) ||
+                            !File.Exists(selectedPath) || HasReparsePoint(managedRoot, selectedPath))
+                        {
+                            continue;
+                        }
+
+                        ManagedPlaybackIdentity identity;
+                        if (TryResolve(managedRoot, selectedPath, hash, true, out identity))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch (ArgumentException) { }
+            catch (IOException) { }
+            catch (JsonException) { }
+            catch (UnauthorizedAccessException) { }
+
+            return false;
+        }
+
         public IReadOnlyList<ManagedPlaybackIdentity> GetSeriesCandidates(ManagedPlaybackIdentity current)
         {
             var result = new List<ManagedPlaybackIdentity>();
@@ -333,7 +392,8 @@ namespace Emby.M3uEditor.Plugin.Service
         private static bool IsActiveManifest(JsonElement manifest)
         {
             if (manifest.ValueKind != JsonValueKind.Object ||
-                !manifest.TryGetProperty("FormatVersion", out var version) || version.GetInt32() != 1 ||
+                !manifest.TryGetProperty("FormatVersion", out var version) || version.ValueKind != JsonValueKind.Number ||
+                !version.TryGetInt32(out var formatVersion) || formatVersion != 1 ||
                 !TryGetNonBlankString(manifest, "MappingUuid", out var mappingUuid) || !Guid.TryParse(mappingUuid, out _) ||
                 !TryGetNonBlankString(manifest, "Revision", out var revision) || !IsHash(revision) ||
                 !manifest.TryGetProperty("Files", out var files) || files.ValueKind != JsonValueKind.Array)
@@ -363,6 +423,12 @@ namespace Emby.M3uEditor.Plugin.Service
             return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var result)
                 ? result
                 : (int?)null;
+        }
+
+        private static bool HasRequiredInt32(JsonElement element, string name)
+        {
+            return element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number &&
+                value.TryGetInt32(out _);
         }
 
         private static string GetOptionalString(JsonElement element, string name)

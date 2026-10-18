@@ -85,6 +85,39 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ConfigurationChange_DefaultOffSetupBecomesReadyWithoutCacheActions()
+        {
+            var unavailable = DefaultConfig();
+            unavailable.ManagedPublishingEnabled = false;
+            unavailable.ManagedPlaybackCacheEnabled = false;
+            var ready = DefaultConfig();
+            ready.ManagedPublishingEnabled = true;
+            ready.ManagedPlaybackCacheEnabled = false;
+            ready.ManagedPublishingIntegrationId = 7;
+            var current = unavailable;
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php", CapabilityJson);
+            var sessions = DispatchProxy.Create<ISessionManager, LifecycleProxy>();
+            var users = DispatchProxy.Create<IUserDataManager, LifecycleProxy>();
+            var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
+
+            using (var client = new HttpClient(handler))
+            using (var entryPoint = new ManagedPlaybackCacheEntryPoint(sessions, users, library, () => current, () => client, () => DateTime.UtcNow, controlledClient => new M3uEditorClient(controlledClient, (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }))))
+            {
+                entryPoint.Run();
+                Assert.Empty(handler.ReceivedBodySnapshot());
+                current = ready;
+                ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
+                Assert.True(SpinWait.SpinUntil(
+                    () => ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(ready),
+                    TimeSpan.FromSeconds(2)));
+                Assert.Single(handler.ReceivedBodySnapshot());
+                Assert.DoesNotContain(handler.ReceivedBodySnapshot(), body => body.Contains("m3u_editor_cache_", StringComparison.Ordinal));
+                handler.AssertNoUnhandledRequests();
+            }
+        }
+
+        [Fact]
         public void ThreeEpisodes_Start_UsesActiveManifestAndPostsUnwatchedPrefetch()
         {
             AssertStartPrefetchTarget(watchSecondEpisode: true, expectedCanonicalId: "episode-3");
@@ -261,7 +294,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                     ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(false);
                     releaseProvider.Set();
                     Thread.Sleep(150);
-                    Assert.Empty(handler.ReceivedBodySnapshot());
+                    Assert.Single(handler.ReceivedBodySnapshot());
+                    Assert.DoesNotContain(handler.ReceivedBodySnapshot(), body => body.Contains("m3u_editor_cache_", StringComparison.Ordinal));
                     handler.AssertNoUnhandledRequests();
                 }
             }

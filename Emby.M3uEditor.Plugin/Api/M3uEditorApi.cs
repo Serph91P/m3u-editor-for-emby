@@ -377,36 +377,19 @@ namespace Emby.M3uEditor.Plugin.Api
                 return false;
             }
 
+            var resolver = new ManagedPlaybackIdentityResolver();
             return (mappings ?? Enumerable.Empty<ManagedMappingState>()).Any(mapping =>
-                HasValidActiveManifestIdentity(mapping, activeGeneration, approvedRoots));
+                HasValidActiveManifestIdentity(resolver, mapping, activeGeneration, approvedRoots));
         }
 
-        private static bool HasValidActiveManifestIdentity(ManagedMappingState mapping, string activeGeneration, string approvedRoots)
+        private static bool HasValidActiveManifestIdentity(ManagedPlaybackIdentityResolver resolver, ManagedMappingState mapping, string activeGeneration, string approvedRoots)
         {
             if (mapping == null || !mapping.Success ||
                 !string.Equals(mapping.ActiveRevision, activeGeneration, StringComparison.Ordinal) ||
                 string.IsNullOrWhiteSpace(mapping.OutputPath) ||
                 !ManagedOutputPolicy.IsApproved(mapping.OutputPath, approvedRoots, out _)) return false;
-            try
-            {
-                var path = Path.Combine(mapping.OutputPath, ".m3u-editor-for-emby", "active.json");
-                if (!File.Exists(path)) return false;
-                using (var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path)))
-                {
-                    var manifest = document.RootElement;
-                    if (!manifest.TryGetProperty("Revision", out var revision) ||
-                        !string.Equals(revision.GetString(), activeGeneration, StringComparison.Ordinal) ||
-                        !manifest.TryGetProperty("Files", out var files) || files.ValueKind != System.Text.Json.JsonValueKind.Array) return false;
-                    return files.EnumerateArray().Any(file => file.ValueKind == System.Text.Json.JsonValueKind.Object &&
-                        file.TryGetProperty("CanonicalId", out var canonical) && canonical.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(canonical.GetString()) &&
-                        file.TryGetProperty("VariantKey", out var variant) && variant.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(variant.GetString()) &&
-                        file.TryGetProperty("SourceId", out var source) && source.ValueKind == System.Text.Json.JsonValueKind.Number &&
-                        file.TryGetProperty("PlaylistId", out var playlist) && playlist.ValueKind == System.Text.Json.JsonValueKind.Number);
-                }
-            }
-            catch (IOException) { return false; }
-            catch (System.Text.Json.JsonException) { return false; }
-            catch (UnauthorizedAccessException) { return false; }
+            return resolver.HasValidActiveManifestIdentity(
+                mapping.OutputPath, mapping.MappingUuid, activeGeneration);
         }
 
         private static bool IsManagedRevision(string value)

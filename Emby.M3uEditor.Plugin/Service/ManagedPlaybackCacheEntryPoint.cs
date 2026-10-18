@@ -46,6 +46,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private string _capabilityKey;
         private M3uEditorCacheControlCapability _cacheCapability;
         private Task _capabilityRefresh;
+        private long _capabilityGeneration;
         private long _configurationGeneration;
         private bool _running;
         private bool _disposed;
@@ -119,7 +120,7 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 _current = this;
             }
-            _capabilityRefresh = RefreshCapabilityAsync();
+            RefreshCapabilityIfNeeded();
         }
 
         public void Dispose()
@@ -179,7 +180,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     return false;
                 }
 
-                var capabilityKey = config.BaseUrl + "\n" + config.Username;
+                var capabilityKey = CreateCapabilityKey(config);
                 return string.Equals(_current._capabilityKey, capabilityKey, StringComparison.Ordinal);
             }
         }
@@ -197,6 +198,16 @@ namespace Emby.M3uEditor.Plugin.Service
             _configurationGeneration++;
             _identityByItem.Clear();
             _cache?.Reconcile(enabled);
+            var capabilityKey = CreateCapabilityKey(_configurationProvider());
+            if (!string.Equals(_capabilityKey, capabilityKey, StringComparison.Ordinal))
+            {
+                _capabilityKey = null;
+                _cacheCapability = null;
+            }
+            if (_cacheCapability == null)
+            {
+                RefreshCapabilityIfNeeded();
+            }
         }
 
         private void OnPlaybackStart(object sender, PlaybackProgressEventArgs args)
@@ -599,7 +610,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 return;
             }
 
-            var capabilityKey = command.Context.BaseUrl + "\n" + command.Context.Username;
+            var capabilityKey = CreateCapabilityKey(
+                command.Context.BaseUrl, command.Context.Username, command.Context.Password);
             M3uEditorCacheControlCapability capability;
             lock (RuntimeGate)
             {
@@ -673,7 +685,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        private async Task RefreshCapabilityAsync()
+        private void RefreshCapabilityIfNeeded()
         {
             var config = _configurationProvider();
             if (config == null || config.ManagedPlaybackCacheEnabled || !config.ManagedPublishingEnabled ||
@@ -684,22 +696,64 @@ namespace Emby.M3uEditor.Plugin.Service
                 return;
             }
 
+            var generation = _configurationGeneration;
+            var capabilityKey = CreateCapabilityKey(config);
+            if (string.IsNullOrEmpty(capabilityKey))
+            {
+                return;
+            }
+            _capabilityGeneration = generation;
+            _capabilityRefresh = RefreshCapabilityAsync(
+                generation,
+                capabilityKey,
+                config.BaseUrl,
+                config.Username,
+                config.Password);
+        }
+
+        private async Task RefreshCapabilityAsync(
+            long generation,
+            string capabilityKey,
+            string baseUrl,
+            string username,
+            string password)
+        {
             try
             {
                 var capability = await _client.DiscoverCacheControlCapabilityAsync(
-                    config.BaseUrl, config.Username, config.Password, _cancellation.Token).ConfigureAwait(false);
+                    baseUrl, username, password, _cancellation.Token).ConfigureAwait(false);
                 if (capability == null || _cancellation.IsCancellationRequested) return;
                 lock (RuntimeGate)
                 {
-                    if (!_disposed && ReferenceEquals(_current, this))
+                    if (!_disposed && ReferenceEquals(_current, this) &&
+                        generation == _configurationGeneration && generation == _capabilityGeneration)
                     {
-                        _capabilityKey = config.BaseUrl + "\n" + config.Username;
+                        _capabilityKey = capabilityKey;
                         _cacheCapability = capability;
                     }
                 }
             }
             catch (OperationCanceledException) { }
             catch (HttpRequestException) { }
+        }
+
+        private static string CreateCapabilityKey(PluginConfiguration config)
+        {
+            return config == null ? null : CreateCapabilityKey(config.BaseUrl, config.Username, config.Password);
+        }
+
+        private static string CreateCapabilityKey(string baseUrl, string username, string password)
+        {
+            if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(username))
+            {
+                return null;
+            }
+
+            using (var sha256 = SHA256.Create())
+            {
+                var bytes = Encoding.UTF8.GetBytes(baseUrl + "\n" + username + "\n" + (password ?? string.Empty));
+                return Convert.ToBase64String(sha256.ComputeHash(bytes));
+            }
         }
 
         private static ManagedPlaybackDispatchContext CreateContext(
