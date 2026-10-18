@@ -241,7 +241,11 @@ function (BaseView, loading) {
             config.M3UCacheMinutes = parseInt(view.querySelector('.txtM3UCacheMinutes').value, 10) || 15;
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
             config.UseBetaChannel = view.querySelector('.chkUseBetaChannel').checked;
-            config.ManagedPlaybackCacheEnabled = view.querySelector('.chkManagedPlaybackCacheEnabled').checked;
+            var cacheToggle = view.querySelector('.chkManagedPlaybackCacheEnabled');
+            var cacheActivationReady = !!view._managedPlaybackCacheActivationReady;
+            var requestedCacheEnabled = cacheToggle.checked;
+            config.ManagedPlaybackCacheEnabled = requestedCacheEnabled &&
+                (cacheActivationReady || !!config.ManagedPlaybackCacheEnabled);
             config.ManagedPlaybackCacheMode = view.querySelector('.selManagedPlaybackCacheMode').value;
             config.ManagedPlaybackCacheNextCount = parseInt(view.querySelector('.txtManagedPlaybackCacheNextCount').value, 10) || 1;
             config.ManagedPlaybackCacheDeleteAfterWatched = view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').checked;
@@ -644,10 +648,20 @@ function (BaseView, loading) {
         var available = !!managed.SetupReady && !!managed.ConfigurationValid;
         var cacheToggle = view.querySelector('.chkManagedPlaybackCacheEnabled');
         var cacheStatus = view.querySelector('.managedPlaybackCacheStatus');
-        cacheToggle.disabled = !available;
-        cacheStatus.textContent = available && managed.ActiveGeneration
-            ? 'Active managed identity is ready. Cache-control capability and provider budget are verified fail-closed for every request.'
-            : 'Playback cache is unavailable until managed setup and an active generation are ready.';
+        var cacheCapabilityReady = managed.CacheCapabilityReady === true;
+        var activeManifestIdentityReady = managed.ActiveManifestIdentityReady === true;
+        var cacheActivationReady = available && cacheCapabilityReady && activeManifestIdentityReady;
+        view._managedPlaybackCacheActivationReady = cacheActivationReady;
+        cacheToggle.disabled = !cacheActivationReady && !cacheToggle.checked;
+        if (!available) {
+            cacheStatus.textContent = 'Playback cache is unavailable until managed setup is ready.';
+        } else if (!cacheCapabilityReady) {
+            cacheStatus.textContent = 'Playback cache is unavailable until the server confirms cache-control capability.';
+        } else if (!activeManifestIdentityReady) {
+            cacheStatus.textContent = 'Playback cache is unavailable until a valid active managed identity is ready.';
+        } else {
+            cacheStatus.textContent = 'Active managed identity and cache-control capability are ready.';
+        }
 
         if (!available) {
             summaryElement.innerHTML = '<span class="status-badge idle">Awaiting managed setup</span>' +

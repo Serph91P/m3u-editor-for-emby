@@ -41,8 +41,10 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Contains("config.ManagedPlaybackCacheDeleteGraceHours", javascript);
             Assert.Contains("config.ManagedPlaybackCacheUserIds", javascript);
             Assert.Contains("function updateManagedPlaybackCacheVisibility", javascript);
-            Assert.Contains("cacheToggle.disabled = !available", javascript);
-            Assert.Contains("Cache-control capability and provider budget are verified fail-closed", javascript);
+            Assert.Contains("cacheActivationReady", javascript);
+            Assert.Contains("CacheCapabilityReady", javascript);
+            Assert.Contains("ActiveManifestIdentityReady", javascript);
+            Assert.Contains("server confirms cache-control capability", javascript);
         }
     }
 }

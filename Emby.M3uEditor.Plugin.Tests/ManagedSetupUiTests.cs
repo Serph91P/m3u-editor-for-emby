@@ -117,7 +117,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(
                     process.ExitCode == 0,
                     "Node UI harness failed." + Environment.NewLine + standardOutput + standardError);
-                Assert.Contains("20 scenarios passed", standardOutput);
+                Assert.Contains("21 scenarios passed", standardOutput);
             }
         }
 

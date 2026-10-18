@@ -225,6 +225,35 @@ namespace Emby.M3uEditor.Plugin.Tests
             });
         }
 
+        [Fact]
+        public void BuildManagedDashboardStatus_ReportsIdentityReadinessSeparatelyFromUnknownCapability()
+        {
+            var revision = new string('a', 64);
+            var config = new PluginConfiguration
+            {
+                ManagedSetupReady = true,
+                ManagedPublishingIntegrationId = 7,
+                ManagedApprovedOutputRoots = Path.Join(Path.GetTempPath(), "managed-dashboard-approved"),
+                ManagedActiveGeneration = revision,
+                ManagedMappingsJson = JsonSerializer.Serialize(new List<ManagedMappingState>
+                {
+                    new ManagedMappingState
+                    {
+                        MappingUuid = "mapping-ready",
+                        ActiveRevision = revision,
+                        Success = true
+                    }
+                })
+            };
+
+            var dashboard = M3uEditorApi.BuildManagedDashboardStatus(
+                config, new ManagedJobStatus { State = "idle" }, 1, 10);
+
+            Assert.True(dashboard.ConfigurationValid);
+            Assert.True(dashboard.ActiveManifestIdentityReady);
+            Assert.False(dashboard.CacheCapabilityReady);
+        }
+
         [Theory]
         [InlineData(0, false, false)]
         [InlineData(-1, true, false)]

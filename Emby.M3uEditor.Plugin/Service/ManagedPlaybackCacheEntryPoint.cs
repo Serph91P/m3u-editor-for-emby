@@ -162,6 +162,26 @@ namespace Emby.M3uEditor.Plugin.Service
             _cancellation.Dispose();
         }
 
+        internal static bool IsCacheCapabilityReady(PluginConfiguration config)
+        {
+            if (config == null || string.IsNullOrWhiteSpace(config.BaseUrl) ||
+                string.IsNullOrWhiteSpace(config.Username))
+            {
+                return false;
+            }
+
+            lock (RuntimeGate)
+            {
+                if (_current == null || _current._disposed || _current._cacheCapability == null)
+                {
+                    return false;
+                }
+
+                var capabilityKey = config.BaseUrl + "\n" + config.Username;
+                return string.Equals(_current._capabilityKey, capabilityKey, StringComparison.Ordinal);
+            }
+        }
+
         internal static void NotifyConfigurationChanged(bool enabled)
         {
             lock (RuntimeGate)
@@ -578,9 +598,13 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             var capabilityKey = command.Context.BaseUrl + "\n" + command.Context.Username;
-            var capability = string.Equals(_capabilityKey, capabilityKey, StringComparison.Ordinal)
-                ? _cacheCapability
-                : null;
+            M3uEditorCacheControlCapability capability;
+            lock (RuntimeGate)
+            {
+                capability = string.Equals(_capabilityKey, capabilityKey, StringComparison.Ordinal)
+                    ? _cacheCapability
+                    : null;
+            }
             if (capability == null)
             {
                 capability = await _client.DiscoverCacheControlCapabilityAsync(
@@ -590,8 +614,14 @@ namespace Emby.M3uEditor.Plugin.Service
                     cancellationToken).ConfigureAwait(false);
                 if (capability != null)
                 {
-                    _capabilityKey = capabilityKey;
-                    _cacheCapability = capability;
+                    lock (RuntimeGate)
+                    {
+                        if (!_disposed && ReferenceEquals(_current, this))
+                        {
+                            _capabilityKey = capabilityKey;
+                            _cacheCapability = capability;
+                        }
+                    }
                 }
             }
             if (capability == null)

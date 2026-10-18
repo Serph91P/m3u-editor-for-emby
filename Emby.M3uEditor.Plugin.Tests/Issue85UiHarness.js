@@ -111,6 +111,7 @@ async function mount(options = {}) {
     const view = new FakeView();
     const state = {
         config: Object.assign(defaultConfig(), options.config || {}),
+        dashboard: options.dashboard || {},
         updates: [],
         ajaxCalls: [],
         ajaxResult: options.ajaxResult || { Success: false },
@@ -144,7 +145,7 @@ async function mount(options = {}) {
             state.ajaxCalls.push(request);
             return state.rejectAjax ? Promise.reject(new Error('network')) : Promise.resolve(state.ajaxResult);
         },
-        getJSON: () => Promise.resolve({}),
+        getJSON: () => Promise.resolve(state.dashboard),
         getUrl: path => '/admin/' + path,
         accessToken: () => 'test-token',
     };
@@ -232,6 +233,54 @@ async function runManagedPlaybackCacheLoadSaveScenario() {
     process.stdout.write('Managed playback cache load/save scenario passed\n');
 }
 
+async function runManagedPlaybackCacheReadinessScenario() {
+    const baseManaged = {
+        SetupReady: true,
+        ConfigurationValid: true,
+        Enabled: true,
+        ActiveGeneration: 'a'.repeat(64),
+        Mappings: [],
+    };
+    const unavailable = await mount({ dashboard: { ManagedPublishing: baseManaged } });
+    const unavailableToggle = unavailable.view.lookup('.chkManagedPlaybackCacheEnabled');
+    assert.equal(unavailableToggle.disabled, true, 'unknown cache capability must disable activation');
+    unavailableToggle.checked = true;
+    unavailable.view.lookup('.m3uEditorConfigForm').emit('submit');
+    await flushPromises();
+    assert.equal(unavailable.state.updates[0].ManagedPlaybackCacheEnabled, false,
+        'unavailable readiness must not be saved as a new activation');
+
+    const missingIdentity = await mount({ dashboard: { ManagedPublishing: Object.assign({}, baseManaged, {
+        CacheCapabilityReady: true,
+        ActiveManifestIdentityReady: false,
+    }) } });
+    assert.equal(missingIdentity.view.lookup('.chkManagedPlaybackCacheEnabled').disabled, true,
+        'missing active identity must disable activation');
+
+    const ready = await mount({ dashboard: { ManagedPublishing: Object.assign({}, baseManaged, {
+        CacheCapabilityReady: true,
+        ActiveManifestIdentityReady: true,
+    }) } });
+    const readyToggle = ready.view.lookup('.chkManagedPlaybackCacheEnabled');
+    assert.equal(readyToggle.disabled, false, 'supported capability and active identity must enable activation');
+    readyToggle.checked = true;
+    ready.view.lookup('.m3uEditorConfigForm').emit('submit');
+    await flushPromises();
+    assert.equal(ready.state.updates[0].ManagedPlaybackCacheEnabled, true);
+
+    const enabledButUnknown = await mount({
+        config: { ManagedPlaybackCacheEnabled: true },
+        dashboard: { ManagedPublishing: baseManaged },
+    });
+    const enabledToggle = enabledButUnknown.view.lookup('.chkManagedPlaybackCacheEnabled');
+    assert.equal(enabledToggle.disabled, false, 'an existing activation must remain switch-off capable');
+    enabledToggle.checked = false;
+    enabledButUnknown.view.lookup('.m3uEditorConfigForm').emit('submit');
+    await flushPromises();
+    assert.equal(enabledButUnknown.state.updates[0].ManagedPlaybackCacheEnabled, false);
+    process.stdout.write('Managed playback cache readiness scenario passed\n');
+}
+
 async function run() {
     let mounted = await mount({ config: { LiveTvTunerCount: 0 } });
     assert.equal(mounted.view.lookup('.txtLiveTvTunerCount').value, '');
@@ -301,8 +350,9 @@ async function run() {
     assert.match(mounted.view.lookup('.livetvLimitImportResult').innerHTML, /enter server URL/);
 
     await runManagedPlaybackCacheLoadSaveScenario();
+    await runManagedPlaybackCacheReadinessScenario();
 
-    process.stdout.write('Issue85 UI harness: 20 scenarios passed\n');
+    process.stdout.write('Issue85 UI harness: 21 scenarios passed\n');
 }
 
 run().catch(error => {

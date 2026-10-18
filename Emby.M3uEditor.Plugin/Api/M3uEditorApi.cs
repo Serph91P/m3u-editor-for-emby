@@ -207,6 +207,8 @@ namespace Emby.M3uEditor.Plugin.Api
         public int ApiVersion { get; set; }
         public int IntegrationId { get; set; }
         public bool ConfigurationValid { get; set; }
+        public bool CacheCapabilityReady { get; set; }
+        public bool ActiveManifestIdentityReady { get; set; }
         public string CatalogRevision { get; set; }
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
@@ -325,6 +327,8 @@ namespace Emby.M3uEditor.Plugin.Api
                 })
                 .ToList();
             var libraryStats = BuildManagedLibraryStats(mappings);
+            var activeManifestIdentityReady = HasValidActiveManifestIdentity(
+                config.ManagedActiveGeneration, mappings);
 
             return new ManagedDashboardStatus
             {
@@ -336,6 +340,8 @@ namespace Emby.M3uEditor.Plugin.Api
                 ConfigurationValid = config.ManagedSetupReady &&
                     config.ManagedPublishingIntegrationId > 0 &&
                     ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots).Count > 0,
+                CacheCapabilityReady = ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config),
+                ActiveManifestIdentityReady = activeManifestIdentityReady,
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
@@ -359,6 +365,26 @@ namespace Emby.M3uEditor.Plugin.Api
                     : (DateTime?)null,
                 Job = job
             };
+        }
+
+        private static bool HasValidActiveManifestIdentity(
+            string activeGeneration,
+            IEnumerable<ManagedMappingState> mappings)
+        {
+            if (!IsManagedRevision(activeGeneration))
+            {
+                return false;
+            }
+
+            return (mappings ?? Enumerable.Empty<ManagedMappingState>()).Any(mapping =>
+                mapping != null && mapping.Success &&
+                string.Equals(mapping.ActiveRevision, activeGeneration, StringComparison.Ordinal));
+        }
+
+        private static bool IsManagedRevision(string value)
+        {
+            return !string.IsNullOrEmpty(value) && value.Length == 64 && value.All(character =>
+                (character >= 'a' && character <= 'f') || (character >= '0' && character <= '9'));
         }
 
         internal static LibraryStats BuildManagedLibraryStats(IEnumerable<ManagedMappingState> mappings)
