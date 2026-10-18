@@ -472,7 +472,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        private static bool IsLeaseStop(ManagedPlaybackCacheCommand command)
+        internal static bool IsLeaseStop(ManagedPlaybackCacheCommand command)
         {
             return command != null &&
                 string.Equals(command.Action, "playback", StringComparison.Ordinal) &&

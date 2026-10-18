@@ -29,6 +29,10 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("watched", "disable")]
         [InlineData("watched", "reconcile")]
         [InlineData("watched", "revision")]
+        [InlineData("start", "dispose")]
+        [InlineData("prefetch", "dispose")]
+        [InlineData("watched", "dispose")]
+        [InlineData("stop", "dispose")]
         public async Task Dispatch_DiscoveryCrossesConfigurationBoundary_OnlyLeaseStopSurvives(string input, string change)
         {
             var root = System.IO.Path.Combine(TempDir.Path, "approved", "dispatch-fence");
@@ -65,14 +69,18 @@ namespace Emby.M3uEditor.Plugin.Tests
                 }
                 entryPoint.Run();
                 ((LifecycleProxy)(object)sessions).Raise("PlaybackStart", new RuntimePlaybackProgressEventArgs { Item = episodes[0], PlaySessionId = "dispatch-fence", MediaSource = new RuntimeMediaSource { Path = paths[0] } });
-                if (input == "watched")
+                if (input == "watched" || input == "stop")
                 {
                     await handler.InitialRelease.Task.WaitAsync(TimeSpan.FromSeconds(5));
                     typeof(ManagedPlaybackCacheEntryPoint).GetField("_cacheCapability", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(entryPoint, null);
                     handler.Bodies.Clear();
                     handler.BlockDiscovery = true;
-                    ((LifecycleProxy)(object)users).Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = userId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
+                    if (input == "watched")
+                        ((LifecycleProxy)(object)users).Raise("UserDataSaved", new UserDataSaveEventArgs { User = new User { Id = userId }, Item = episodes[0], UserData = new UserItemData { Played = true } });
+                    else
+                        ((LifecycleProxy)(object)sessions).Raise("PlaybackStopped", new PlaybackStopEventArgs { PlaySessionId = "dispatch-fence" });
                 }
+                Task disposal = null;
                 try
                 {
                     await handler.DiscoveryEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -84,9 +92,17 @@ namespace Emby.M3uEditor.Plugin.Tests
                         WriteManifest(root, mappingUuid, nextRevision);
                         config.ManagedMappingsJson = JsonSerializer.Serialize(new[] { new ManagedMappingState { MappingUuid = mappingUuid, IntegrationId = 7, OutputPath = root, ActiveRevision = nextRevision, Success = true } });
                     }
-                    ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(config.ManagedPlaybackCacheEnabled);
+                    if (change == "dispose")
+                    {
+                        disposal = Task.Run(entryPoint.Dispose);
+                        Assert.True(SpinWait.SpinUntil(() =>
+                            (bool)typeof(ManagedPlaybackCacheEntryPoint).GetField("_disposed", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(entryPoint), TimeSpan.FromSeconds(5)));
+                    }
+                    else
+                        ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(config.ManagedPlaybackCacheEnabled);
                     handler.ContinueDiscovery.TrySetResult(true);
                     await handler.StopSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    if (disposal != null) await disposal.WaitAsync(TimeSpan.FromSeconds(5));
                     var actions = handler.Bodies.Select(ParseForm).Where(form => form.TryGetValue("action", out var action) && action.StartsWith("m3u_editor_cache_", StringComparison.Ordinal)).ToArray();
                     var stop = Assert.Single(actions);
                     Assert.Equal("m3u_editor_cache_playback", stop["action"]);
@@ -96,6 +112,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 finally
                 {
                     handler.ContinueDiscovery.TrySetResult(true);
+                    if (disposal != null) await disposal.WaitAsync(TimeSpan.FromSeconds(5));
                 }
             }
         }

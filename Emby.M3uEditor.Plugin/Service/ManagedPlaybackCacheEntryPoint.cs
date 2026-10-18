@@ -633,7 +633,7 @@ namespace Emby.M3uEditor.Plugin.Service
             M3uEditorCacheControlCapability capability;
             lock (RuntimeGate)
             {
-                if (_disposed || !ReferenceEquals(_current, this) || _cache == null || !_cache.IsDispatchCurrent(command))
+                if (!CanDispatchUnderRuntimeLock(command))
                 {
                     return;
                 }
@@ -652,7 +652,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     // Discovery can outlive a configuration or ownership generation.
                     // Reject it before publishing capability state or sending old work.
-                    if (_disposed || !ReferenceEquals(_current, this) || !_cache.IsDispatchCurrent(command))
+                    if (!CanDispatchUnderRuntimeLock(command))
                     {
                         return;
                     }
@@ -725,10 +725,20 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             lock (RuntimeGate)
             {
-                return _disposed || !ReferenceEquals(_current, this) || _cache == null
+                return !CanDispatchUnderRuntimeLock(command)
                     ? Task.FromResult<M3uEditorCacheControlResponse>(null)
                     : _cache.DispatchIfCurrent(command, send);
             }
+        }
+
+        private bool CanDispatchUnderRuntimeLock(ManagedPlaybackCacheCommand command)
+        {
+            // Shutdown still drains explicit stops with the old context before
+            // disposing HttpClient. No other command may outlive its runtime.
+            return _cache != null &&
+                (ManagedPlaybackCacheService.IsLeaseStop(command) ||
+                    (!_disposed && ReferenceEquals(_current, this))) &&
+                _cache.IsDispatchCurrent(command);
         }
 
         private void RefreshCapabilityIfNeeded()
