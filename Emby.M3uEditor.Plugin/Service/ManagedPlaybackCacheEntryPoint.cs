@@ -696,6 +696,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     request, cancellationToken).ConfigureAwait(false);
                 var deferred = (command.Targets ?? new ManagedPlaybackIdentity[0]).Where(target =>
                 {
+                    if (!request.Targets.Any(sent => sent.CanonicalId == target.CanonicalId && sent.VariantKey == target.VariantKey))
+                        return false;
                     var matches = (response?.Results ?? new List<M3uEditorCacheControlTargetResult>())
                         .Where(result => result != null && result.CanonicalId == target.CanonicalId && result.VariantKey == target.VariantKey).ToList();
                     return matches.Count == 1 && matches[0].Status == "deferred";

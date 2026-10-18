@@ -21,13 +21,14 @@ namespace Emby.M3uEditor.Plugin.Tests
     public partial class ManagedPlaybackCacheEntryPointLifecycleTests
     {
         [Theory]
-        [InlineData("deferred", 2)]
-        [InlineData("queued", 1)]
-        [InlineData("already_queued", 1)]
-        [InlineData("already_cached", 1)]
-        [InlineData("Deferred", 1)]
-        [InlineData("unknown", 1)]
-        public void DeferredPrefetch_ActiveProgress_RetriesOnlyDeferredTargetsOnceWithNewRequestId(string status, int expectedAttempts)
+        [InlineData("deferred", 2, false)]
+        [InlineData("queued", 1, false)]
+        [InlineData("already_queued", 1, false)]
+        [InlineData("already_cached", 1, false)]
+        [InlineData("Deferred", 1, false)]
+        [InlineData("unknown", 1, false)]
+        [InlineData("queued", 1, true)]
+        public void DeferredPrefetch_ActiveProgress_RetriesOnlyDeferredTargetsOnceWithNewRequestId(string status, int expectedAttempts, bool injectUnsentDeferred)
         {
             var root = Path.Combine(TempDir.Path, "approved", "library", "mapping");
             const string mappingUuid = "123e4567-e89b-12d3-a456-426614174000";
@@ -49,7 +50,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var library = DispatchProxy.Create<ILibraryManager, LifecycleProxy>();
             var proxy = (LifecycleProxy)(object)sessions;
             var now = new DateTime(2026, 10, 18, 10, 0, 0, DateTimeKind.Utc);
-            using (var handler = new DeferredPrefetchHandler { EpisodeTwoStatus = status })
+            using (var handler = new DeferredPrefetchHandler { EpisodeTwoStatus = status, InjectUnsentDeferred = injectUnsentDeferred })
             using (var client = new HttpClient(handler))
             using (var entryPoint = new Service.ManagedPlaybackCacheEntryPoint(sessions, users, library, () => config, () => client, () => now, controlled => new M3uEditorClient(controlled, (host, token) => Task.FromResult(new[] { IPAddress.Loopback }))))
             {
@@ -84,6 +85,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         private sealed class DeferredPrefetchHandler : HttpMessageHandler
         {
             public string EpisodeTwoStatus { get; set; } = "deferred";
+            public bool InjectUnsentDeferred { get; set; }
             public ConcurrentQueue<IDictionary<string, string>> Forms { get; } = new ConcurrentQueue<IDictionary<string, string>>();
             public IDictionary<string, string>[] Prefetches => Forms.Where(form => form["action"] == "m3u_editor_cache_prefetch").ToArray();
             public int HeartbeatCount => Forms.Count(form => form.TryGetValue("state", out var state) && state == "heartbeat");
@@ -93,7 +95,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var body = request.Content == null ? string.Empty : await request.Content.ReadAsStringAsync();
                 var form = ParseForm(body);
                 string response;
-                if (!form.ContainsKey("request_id")) response = CapabilityJson;
+                if (!form.ContainsKey("request_id")) response = InjectUnsentDeferred ? CapabilityJson.Replace("\"max_targets\":100", "\"max_targets\":1") : CapabilityJson;
                 else
                 {
                     Forms.Enqueue(form);
@@ -102,6 +104,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                     {
                         for (var index = 0; form.TryGetValue("targets[" + index + "][canonical_id]", out var id); index++)
                             results.Add(new { canonical_id = id, variant_key = form["targets[" + index + "][variant_key]"], status = id == "episode-2" ? EpisodeTwoStatus : "queued" });
+                        if (InjectUnsentDeferred)
+                            results.Add(new { canonical_id = "episode-3", variant_key = "variant-A", status = "deferred" });
                     }
                     response = JsonSerializer.Serialize(new { api_version = 1, data = new { request_id = form["request_id"], duplicate = false, results } });
                 }
