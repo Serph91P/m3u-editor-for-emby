@@ -77,8 +77,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         public void Reconcile_StopsOldLeaseAndDropsQueuedPrefetchBeforeReenabling()
         {
             var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
-            var startEntered = new ManualResetEventSlim(false);
-            var releaseStart = new ManualResetEventSlim(false);
+            using var startEntered = new ManualResetEventSlim(false);
+            using var releaseStart = new ManualResetEventSlim(false);
             using (var service = new ManagedPlaybackCacheService(
                 (command, cancellationToken) =>
                 {
@@ -151,8 +151,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         public void FeatureOff_DropsQueuedPrefetchAndReleaseButDeliversGrantedLeaseStop()
         {
             var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
-            var startEntered = new ManualResetEventSlim(false);
-            var releaseStart = new ManualResetEventSlim(false);
+            using var startEntered = new ManualResetEventSlim(false);
+            using var releaseStart = new ManualResetEventSlim(false);
             using (var service = new ManagedPlaybackCacheService(
                 (command, cancellationToken) =>
                 {

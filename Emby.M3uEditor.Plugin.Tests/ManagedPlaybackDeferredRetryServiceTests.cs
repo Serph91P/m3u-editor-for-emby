@@ -20,7 +20,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         public void DeferredRetry_RespectsLifecycleAndWatchedFences(string fence)
         {
             var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
-            var acknowledged = new ManualResetEventSlim();
+            using var acknowledged = new ManualResetEventSlim();
             var now = new DateTime(2026, 10, 18, 10, 0, 0, DateTimeKind.Utc);
             var next = Identity("episode-2");
             var later = Identity("episode-3");
@@ -84,10 +84,10 @@ namespace Emby.M3uEditor.Plugin.Tests
         public void QueuedDeferredRetry_RechecksFencesAfterHeartbeatUnblocks(string fence)
         {
             var calls = new ConcurrentQueue<ManagedPlaybackCacheCommand>();
-            var acknowledged = new ManualResetEventSlim();
-            var heartbeatEntered = new ManualResetEventSlim();
-            var unblockHeartbeat = new ManualResetEventSlim();
-            var barrierProcessed = new ManualResetEventSlim();
+            using var acknowledged = new ManualResetEventSlim();
+            using var heartbeatEntered = new ManualResetEventSlim();
+            using var unblockHeartbeat = new ManualResetEventSlim();
+            using var barrierProcessed = new ManualResetEventSlim();
             var now = DateTime.UtcNow;
             var next = Identity("episode-2");
             var context = new ManagedPlaybackDispatchContext { BaseUrl = "https://editor.example.test", Username = "synthetic", Password = "synthetic", IntegrationId = 7, ConsumerId = new string('b', 64) };
