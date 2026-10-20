@@ -193,20 +193,35 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public void ContentHandler_DisposesOwnedContentEvenWithoutSendingARequest()
+        {
+            var stream = new PaddedStream(EmptyCatalog, EmptyCatalog.Length);
+            var content = new StreamContent(stream);
+            using (var handler = new ContentHandler(content))
+            {
+                Assert.False(stream.Disposed);
+            }
+            Assert.True(stream.Disposed);
+        }
+
         private sealed class ContentHandler : HttpMessageHandler
         {
-            private readonly HttpContent _content;
-            private readonly HttpStatusCode _status;
+            private readonly HttpResponseMessage _response;
             internal int Requests { get; private set; }
             internal ContentHandler(HttpContent content, HttpStatusCode status = HttpStatusCode.OK)
             {
-                _content = content;
-                _status = status;
+                _response = new HttpResponseMessage(status) { Content = content };
             }
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
                 Requests++;
-                return Task.FromResult(new HttpResponseMessage(_status) { Content = _content });
+                return Task.FromResult(_response);
+            }
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) _response.Dispose();
+                base.Dispose(disposing);
             }
         }
 

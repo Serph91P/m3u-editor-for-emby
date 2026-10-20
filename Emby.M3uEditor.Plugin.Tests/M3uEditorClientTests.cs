@@ -1072,11 +1072,13 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             private readonly byte[] _bytes;
             private readonly bool _declaredLength;
+            private readonly MemoryStream _readStream;
 
             public CatalogJsonContent(byte[] bytes, bool declaredLength)
             {
                 _bytes = bytes;
                 _declaredLength = declaredLength;
+                _readStream = new MemoryStream(bytes, false);
             }
 
             protected override bool TryComputeLength(out long length)
@@ -1092,7 +1094,13 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             protected override Task<Stream> CreateContentReadStreamAsync()
             {
-                return Task.FromResult<Stream>(new MemoryStream(_bytes, false));
+                return Task.FromResult<Stream>(_readStream);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) _readStream.Dispose();
+                base.Dispose(disposing);
             }
         }
 
