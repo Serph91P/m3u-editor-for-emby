@@ -180,7 +180,10 @@ namespace Emby.M3uEditor.Plugin.Tests
                 if (asynchronous)
                 {
                     await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-                        await limited.ReadAsync(buffer.AsMemory(), CancellationToken.None));
+                    {
+                        var read = await limited.ReadAsync(buffer.AsMemory(), CancellationToken.None);
+                        Assert.InRange(read, 0, buffer.Length);
+                    });
                 }
                 else
                 {
