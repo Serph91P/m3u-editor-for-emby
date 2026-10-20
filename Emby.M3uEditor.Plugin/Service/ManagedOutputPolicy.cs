@@ -48,7 +48,8 @@ namespace Emby.M3uEditor.Plugin.Service
             string candidatePath,
             string existingApprovedRoots,
             out string normalizedCandidate,
-            out string error)
+            out string error,
+            bool allowExplicitRoot = false)
         {
             normalizedCandidate = null;
             error = "The managed output root is not safe.";
@@ -57,8 +58,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 !TryNormalize(candidatePath, out normalizedCandidate) ||
                 IsFileSystemRoot(normalizedOwner) || IsFileSystemRoot(normalizedCandidate) ||
                 HasReparsePoint(normalizedOwner) || HasReparsePoint(normalizedCandidate) ||
-                !IsSameOrChild(normalizedOwner, normalizedCandidate) ||
-                string.Equals(normalizedOwner, normalizedCandidate, PathComparison))
+                (!allowExplicitRoot && !IsSameOrChild(normalizedOwner, normalizedCandidate)) ||
+                IsSameOrChild(normalizedCandidate, normalizedOwner))
             {
                 normalizedCandidate = null;
                 return false;
@@ -163,7 +164,11 @@ namespace Emby.M3uEditor.Plugin.Service
                     stream.WriteByte(0);
                     stream.Flush();
                 }
-                File.Delete(probePath);
+                string renamedPath;
+                if (!TryJoinUnderRoot(probeDirectory, "renamed", out renamedPath))
+                    return false;
+                File.Move(probePath, renamedPath);
+                File.Delete(renamedPath);
                 Directory.Delete(probeDirectory, false);
                 return true;
             }
@@ -185,8 +190,23 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             finally
             {
+                DeleteOwnedProbeFile(probeDirectory, "probe");
+                DeleteOwnedProbeFile(probeDirectory, "renamed");
                 DeleteProbeDirectoryIfEmpty(probeDirectory);
             }
+        }
+
+        private static void DeleteOwnedProbeFile(string probeDirectory, string name)
+        {
+            string path;
+            if (!TryJoinUnderRoot(probeDirectory, name, out path))
+                return;
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
 
         private static void DeleteProbeDirectoryIfEmpty(string probeDirectory)

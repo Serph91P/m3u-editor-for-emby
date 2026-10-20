@@ -72,6 +72,8 @@ namespace Emby.M3uEditor.Plugin
 
             lock (ConfigurationTransactionGate)
             {
+                if (configuration is PluginConfiguration requested)
+                    ManagedSetupService.ValidateConfigurationChange(Configuration, requested, DataFolderPath);
                 base.UpdateConfiguration(configuration);
 
                 if (Configuration is PluginConfiguration pluginConfig)

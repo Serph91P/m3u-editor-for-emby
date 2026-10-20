@@ -22,6 +22,8 @@ namespace Emby.M3uEditor.Plugin
         public string ManagedPreviousGeneration { get; set; } = string.Empty;
         public string ManagedMappingsJson { get; set; } = string.Empty;
         public string ManagedApprovedOutputRoots { get; set; } = string.Empty;
+        // Empty preserves the legacy DataFolderPath/managed-publishing location.
+        public string ManagedPublishingOutputRoot { get; set; } = string.Empty;
         public string ManagedDirectoryOwnershipJson { get; set; } = string.Empty;
         public string ManagedDryRunSummary { get; set; } = string.Empty;
         public int ManagedOmittedVersions { get; set; }

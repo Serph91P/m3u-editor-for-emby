@@ -30,12 +30,17 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*", SearchOption.AllDirectories));
         }
 
-        [Fact]
-        public async Task PublishManagedMappingAsync_MissingOwnedMappingLeaf_IsProvisionedOnFirstReconcile()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task PublishManagedMappingAsync_MissingOwnedMappingLeaf_IsProvisionedOnFirstReconcile(bool explicitOutput)
         {
             using (var owner = new TempDirectory())
             {
-                var config = new PluginConfiguration();
+                var config = new PluginConfiguration
+                {
+                    ManagedPublishingOutputRoot = explicitOutput ? Path.Combine(TempDir.Path, "custom-publishing") : string.Empty
+                };
                 Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
                 var libraries = new ManagedLibraryProvisioningService(owner.Path);
                 var operation = Guid.NewGuid().ToString("D");

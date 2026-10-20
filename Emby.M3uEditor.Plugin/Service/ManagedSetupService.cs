@@ -34,7 +34,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             string candidate;
-            if (!TryGetCandidateRoot(_ownerPath, out candidate))
+            if (!TryGetCandidateRoot(_ownerPath, out candidate, config))
             {
                 return Failed("Managed setup is not ready.");
             }
@@ -46,7 +46,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 candidate,
                 config.ManagedApprovedOutputRoots,
                 out root,
-                out validationError))
+                out validationError,
+                !string.IsNullOrWhiteSpace(config.ManagedPublishingOutputRoot)))
             {
                 return Failed("Managed setup is not ready.");
             }
@@ -68,7 +69,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
 
             string candidate;
-            if (!TryGetCandidateRoot(_ownerPath, out candidate))
+            if (!TryGetCandidateRoot(_ownerPath, out candidate, config))
             {
                 return Failed("The managed output root is not safe.");
             }
@@ -89,7 +90,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     candidate,
                     config.ManagedApprovedOutputRoots,
                     out root,
-                    out validationError))
+                    out validationError,
+                    !string.IsNullOrWhiteSpace(config.ManagedPublishingOutputRoot)))
                 {
                     return Failed(validationError);
                 }
@@ -170,11 +172,16 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        internal static bool TryGetCandidateRoot(string ownerPath, out string root)
+        internal static bool TryGetCandidateRoot(string ownerPath, out string root, PluginConfiguration config = null)
         {
             root = null;
             string candidate;
-            if (!ManagedOutputPolicy.TryJoinUnderRoot(ownerPath, ManagedRootName, out candidate))
+            var explicitRoot = !string.IsNullOrWhiteSpace(config?.ManagedPublishingOutputRoot);
+            if (explicitRoot)
+            {
+                candidate = config.ManagedPublishingOutputRoot;
+            }
+            else if (!ManagedOutputPolicy.TryJoinUnderRoot(ownerPath, ManagedRootName, out candidate))
             {
                 return false;
             }
@@ -185,7 +192,101 @@ namespace Emby.M3uEditor.Plugin.Service
                 candidate,
                 string.Empty,
                 out root,
-                out error);
+                out error,
+                explicitRoot);
+        }
+
+        internal static void ValidateConfigurationChange(
+            PluginConfiguration current, PluginConfiguration requested, string ownerPath)
+        {
+            if (requested == null)
+                throw new ArgumentNullException(nameof(requested));
+            current = current ?? new PluginConfiguration();
+            if (string.Equals(current.ManagedPublishingOutputRoot ?? string.Empty,
+                requested.ManagedPublishingOutputRoot ?? string.Empty, StringComparison.Ordinal))
+                return;
+
+            string oldRoot;
+            string newRoot;
+            if (!TryGetCandidateRoot(ownerPath, out oldRoot, current) ||
+                !TryGetCandidateRoot(ownerPath, out newRoot, requested))
+                throw new InvalidOperationException("The managed output directory must be a safe absolute directory, not a filesystem root or plugin configuration ancestor.");
+
+            var selected = string.IsNullOrWhiteSpace(requested.ManagedPublishingOutputRoot) ? string.Empty : newRoot;
+            if (string.Equals(oldRoot, newRoot, PathComparison))
+            {
+                requested.ManagedPublishingOutputRoot = selected;
+                return;
+            }
+
+            const string stateError = "The output directory cannot change while existing managed mappings, ownership or publishing state remain. No files were moved.";
+            if (HasPublishingState(current) || HasPublishingState(requested))
+                throw new InvalidOperationException(stateError);
+
+            var oldRoots = ManagedOutputPolicy.GetCanonicalRoots(current.ManagedApprovedOutputRoots);
+            if (!string.IsNullOrWhiteSpace(current.ManagedApprovedOutputRoots) && oldRoots.Count == 0)
+                throw new InvalidOperationException(stateError);
+            oldRoots.Add(oldRoot);
+            try
+            {
+                if (oldRoots.Any(root => File.Exists(root) ||
+                    (Directory.Exists(root) && Directory.EnumerateFileSystemEntries(root).Any())))
+                    throw new InvalidOperationException(stateError);
+            }
+            catch (IOException)
+            {
+                throw new InvalidOperationException(stateError);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new InvalidOperationException(stateError);
+            }
+
+            string normalized;
+            string error;
+            if (!ManagedOutputPolicy.TryValidateSetupRoot(ownerPath, newRoot,
+                current.ManagedApprovedOutputRoots, out normalized, out error, selected.Length > 0))
+                throw new InvalidOperationException(error);
+            try
+            {
+                Directory.CreateDirectory(normalized);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException ||
+                ex is ArgumentException || ex is NotSupportedException)
+            {
+                throw new InvalidOperationException("The managed output directory is not locally writable.");
+            }
+            if (!ManagedOutputPolicy.IsLocallyWritableRoot(normalized))
+                throw new InvalidOperationException("The managed output directory must support creating, writing, renaming and deleting files.");
+
+            requested.ManagedPublishingOutputRoot = selected;
+            requested.ManagedApprovedOutputRoots = string.Empty;
+            requested.ManagedSetupReady = false;
+            requested.ManagedSetupLastResult = "Output directory changed. Run managed setup in m3u-editor to confirm it.";
+        }
+
+        private static bool HasPublishingState(PluginConfiguration config)
+        {
+            return !string.IsNullOrEmpty(config.ManagedCatalogRevision) ||
+                !string.IsNullOrEmpty(config.ManagedActiveGeneration) ||
+                !string.IsNullOrEmpty(config.ManagedPreviousGeneration) ||
+                config.ManagedLastSuccessTicks > 0 ||
+                HasJsonState(config.ManagedMappingsJson) || HasJsonState(config.ManagedDirectoryOwnershipJson);
+        }
+
+        private static bool HasJsonState(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+            try
+            {
+                using (var document = JsonDocument.Parse(value))
+                    return document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() > 0;
+            }
+            catch (JsonException)
+            {
+                return true;
+            }
         }
 
         private static bool IsPersistenceException(Exception exception)
