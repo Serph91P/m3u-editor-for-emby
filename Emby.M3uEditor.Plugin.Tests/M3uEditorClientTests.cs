@@ -1031,6 +1031,71 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task GetCatalogAsync_ValidLargeFullSnapshot_DeserializesEveryItem(bool declaredLength)
+        {
+            var template = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            var mapping = template.Mappings[0];
+            var itemJson = JsonSerializer.Serialize(mapping.Items[0]);
+            mapping.Items.Clear();
+            for (var index = 0; index < 4000; index++)
+            {
+                var item = JsonSerializer.Deserialize<M3uEditorCatalogItem>(itemJson);
+                item.CanonicalId = "movie:synthetic:" + index;
+                item.RelativeFolder = "synthetic-movie-" + index;
+                item.BaseFilename = item.RelativeFolder;
+                item.Nfo.Plot = new string('a', 5000);
+                mapping.Items.Add(item);
+            }
+
+            // Prove that the untouched validator accepts the actual complete contract,
+            // not an oversized invalid body that should continue to fail closed.
+            M3uEditorCatalogValidator.Validate(template);
+            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(template));
+            Assert.True(bytes.Length > M3uEditorClient.MaximumResponseBytes);
+            using (var httpClient = new HttpClient(new IncrementalContentHandler(
+                new CatalogJsonContent(bytes, declaredLength))))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var catalog = await client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None);
+
+                Assert.Equal(4000, Assert.Single(catalog.Mappings).Items.Count);
+                Assert.Equal("movie:synthetic:3999", catalog.Mappings[0].Items[3999].CanonicalId);
+                Assert.Equal(Revision, catalog.Revision);
+            }
+        }
+
+        private sealed class CatalogJsonContent : HttpContent
+        {
+            private readonly byte[] _bytes;
+            private readonly bool _declaredLength;
+
+            public CatalogJsonContent(byte[] bytes, bool declaredLength)
+            {
+                _bytes = bytes;
+                _declaredLength = declaredLength;
+            }
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = _bytes.Length;
+                return _declaredLength;
+            }
+
+            protected override Task SerializeToStreamAsync(Stream stream, TransportContext context)
+            {
+                return stream.WriteAsync(_bytes, 0, _bytes.Length);
+            }
+
+            protected override Task<Stream> CreateContentReadStreamAsync()
+            {
+                return Task.FromResult<Stream>(new MemoryStream(_bytes, false));
+            }
+        }
+
         [Fact]
         public async Task GetCatalogAsync_OversizedDeclaredResponse_FailsClosed()
         {
