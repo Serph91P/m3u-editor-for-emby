@@ -1111,6 +1111,29 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
+        [InlineData(201)]
+        [InlineData(202)]
+        [InlineData(204)]
+        [InlineData(205)]
+        [InlineData(206)]
+        public async Task GetCatalogAsync_NonOkSuccessResponse_FailsClosedWithoutReadingBodyOrRetrying(int statusCode)
+        {
+            var content = new IncrementalContent(M3uEditorClient.MaximumResponseBytes + 8192);
+            var handler = new IncrementalContentHandler(content, (HttpStatusCode)statusCode);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None));
+
+                Assert.Contains("HTTP " + statusCode, error.Message);
+                Assert.Equal(1, handler.RequestCount);
+                Assert.Equal(0L, content.BytesRead);
+            }
+        }
+
+        [Theory]
         [InlineData("capability", "GET")]
         [InlineData("callback", "POST")]
         public async Task ManagedRequests_IncrementalOversizedResponse_ReadsOnlyThroughSentinel(
@@ -1347,25 +1370,29 @@ namespace Emby.M3uEditor.Plugin.Tests
         private sealed class IncrementalContentHandler : HttpMessageHandler
         {
             private readonly HttpContent _content;
+            private readonly HttpStatusCode _statusCode;
 
-            public IncrementalContentHandler(HttpContent content)
+            public IncrementalContentHandler(HttpContent content, HttpStatusCode statusCode = HttpStatusCode.OK)
             {
                 _content = content;
+                _statusCode = statusCode;
             }
 
             public string Method { get; private set; }
+            public int RequestCount { get; private set; }
 
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
                 Method = request.Method.Method;
-                return Task.FromResult(CreateResponse(_content));
+                RequestCount++;
+                return Task.FromResult(CreateResponse(_content, _statusCode));
             }
 
-            private static HttpResponseMessage CreateResponse(HttpContent content)
+            private static HttpResponseMessage CreateResponse(HttpContent content, HttpStatusCode statusCode)
             {
-                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                return new HttpResponseMessage(statusCode)
                 {
                     Content = content
                 };

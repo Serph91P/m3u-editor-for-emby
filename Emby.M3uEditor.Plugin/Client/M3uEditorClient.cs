@@ -272,7 +272,7 @@ namespace Emby.M3uEditor.Plugin.Client
                             HttpCompletionOption.ResponseHeadersRead,
                             timeout.Token).ConfigureAwait(false))
                         {
-                            if (!response.IsSuccessStatusCode)
+                            if (response.StatusCode != HttpStatusCode.OK)
                             {
                                 if ((int)response.StatusCode == 409 && attempt < 2)
                                 {
