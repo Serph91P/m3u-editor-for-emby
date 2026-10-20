@@ -238,12 +238,13 @@ namespace Emby.M3uEditor.Plugin.Service
                     cancellationToken).ConfigureAwait(false);
                 if (capability == null)
                 {
-                    config.ManagedPublishingEnabled = false;
                     config.ManagedPublishingApiVersion = 0;
-                    config.ManagedLastError = string.Empty;
-                    saveConfig?.Invoke();
                     progress?.Report(100);
-                    return result;
+                    return RecordManagedReconcileFailure(
+                        config,
+                        saveConfig,
+                        result,
+                        "Managed publishing capability is not available for this configured connection. Check publishing permissions and enhanced output in m3u-editor.");
                 }
 
                 result.Compatible = true;

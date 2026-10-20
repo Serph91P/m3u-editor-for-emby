@@ -933,20 +933,32 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(1, refreshCount);
         }
 
-        [Fact]
-        public async Task ReconcileManagedAsync_NoCompatibleCapability_LeavesGenericXtreamModeUntouched()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task ReconcileManagedAsync_NoCompatibleCapability_PersistsFailureWithoutPublishingSideEffects(bool wasPublishingEnabled)
         {
             Handler.RespondWith("player_api.php?username=", "{\"user_info\":{\"auth\":1}}");
             var config = DefaultConfig();
+            config.ManagedPublishingEnabled = wasPublishingEnabled;
             var refreshCount = 0;
 
             var result = await ReconcileWithRefresh(MakeService(), config, () => refreshCount++);
 
             Assert.False(result.Compatible);
-            Assert.True(result.Success);
+            Assert.False(result.Success);
+            Assert.Contains("publishing capability", result.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("configured connection", result.Error, StringComparison.Ordinal);
+            Assert.Contains("Check publishing permissions and enhanced output in m3u-editor.", result.Error, StringComparison.Ordinal);
+            Assert.Equal(result.Error, config.ManagedLastError);
+            Assert.Equal(1, SaveConfigCallCount);
             Assert.Equal(0, refreshCount);
             Assert.False(config.ManagedPublishingEnabled);
             Assert.Single(Handler.ReceivedUrls);
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("register_publisher"));
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("catalog"));
+            Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("sync_result"));
+            Assert.Empty(Directory.GetFiles(TempDir.Path, "*", SearchOption.AllDirectories));
         }
 
         [Fact]

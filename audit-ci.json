@@ -1,0 +1,17 @@
+{
+  "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
+  "package-manager": "npm",
+  "high": true,
+  "skip-dev": false,
+  "pass-enoaudit": false,
+  "retry-count": 0,
+  "allowlist": [
+    {
+      "GHSA-vfj7-8cjw-p6xm": {
+        "active": true,
+        "expiry": "2026-11-19T00:00:00Z",
+        "notes": "Temporary accepted risk for private release tooling only; no patched braces release exists. Branch patterns and commit-analyzer rule patterns are repository-controlled constants, not media/user input. All other high/critical advisories remain blocking. See scripts/release/SECURITY.md and PR #106; remove when an upstream fix is available."
+      }
+    }
+  ]
+}

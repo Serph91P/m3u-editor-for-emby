@@ -225,6 +225,23 @@ namespace Emby.M3uEditor.Plugin.Tests
             });
         }
 
+        [Fact]
+        public void ToManagedReconcileResult_MissingCapability_ReturnsPersistedActionableFailure()
+        {
+            var reconciled = new ManagedReconcileResult
+            {
+                Compatible = false,
+                Success = false,
+                Error = "Managed publishing capability is not available for this configured connection. Check publishing permissions and enhanced output in m3u-editor."
+            };
+
+            var result = M3uEditorApi.ToManagedReconcileResult(reconciled);
+
+            Assert.False(result.Success);
+            Assert.False(result.Compatible);
+            Assert.Equal(reconciled.Error, result.Message);
+        }
+
         [Theory]
         [InlineData(0, false, false)]
         [InlineData(-1, true, false)]

@@ -10,11 +10,21 @@
     "type": "git",
     "url": "git+https://github.com/Serph91P/m3u-editor-for-emby.git"
   },
+  "scripts": {
+    "audit:release": "audit-ci --config audit-ci.json"
+  },
+  "overrides": {
+    "@semantic-release/npm": {
+      "npm": "11.21.1"
+    },
+    "handlebars": "4.7.10"
+  },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.0",
     "@semantic-release/exec": "^7.0.3",
     "@semantic-release/github": "^12.0.10",
     "@semantic-release/release-notes-generator": "^14.0.1",
+    "audit-ci": "7.1.0",
     "conventional-changelog-conventionalcommits": "^8.0.0",
     "semantic-release": "^25.0.9"
   }
