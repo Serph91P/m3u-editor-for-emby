@@ -39,7 +39,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 var config = new PluginConfiguration
                 {
-                    ManagedPublishingOutputRoot = explicitOutput ? Path.Combine(TempDir.Path, "custom-publishing") : string.Empty
+                    ManagedPublishingOutputRoot = explicitOutput ? Path.Join(TempDir.Path, "custom-publishing") : string.Empty
                 };
                 Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
                 var libraries = new ManagedLibraryProvisioningService(owner.Path);

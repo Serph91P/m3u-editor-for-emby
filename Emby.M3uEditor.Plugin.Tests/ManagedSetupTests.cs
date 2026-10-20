@@ -48,9 +48,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var temp = new TempDirectory())
             {
-                var owner = Path.Combine(temp.Path, "plugin-state");
+                var owner = Path.Join(temp.Path, "plugin-state");
                 Directory.CreateDirectory(owner);
-                var output = Path.Combine(temp.Path, "media", "publishing");
+                var output = Path.Join(temp.Path, "media", "publishing");
                 var config = new PluginConfiguration();
                 config.ManagedPublishingOutputRoot = output;
                 var service = new ManagedSetupService(owner);
@@ -59,7 +59,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(result.Ready, result.Result);
                 Assert.Equal(output, result.ConfirmedRoot);
                 Assert.Equal(output, service.Get(config).ConfirmedRoot);
-                Assert.False(Directory.Exists(Path.Combine(owner, "managed-publishing")));
+                Assert.False(Directory.Exists(Path.Join(owner, "managed-publishing")));
             }
         }
 

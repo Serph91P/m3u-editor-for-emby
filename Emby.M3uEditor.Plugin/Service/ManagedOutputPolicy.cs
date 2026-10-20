@@ -145,6 +145,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
+            bool cleanupSucceeded;
             try
             {
                 Directory.CreateDirectory(probeDirectory);
@@ -170,7 +171,6 @@ namespace Emby.M3uEditor.Plugin.Service
                 File.Move(probePath, renamedPath);
                 File.Delete(renamedPath);
                 Directory.Delete(probeDirectory, false);
-                return true;
             }
             catch (ArgumentException)
             {
@@ -190,42 +190,61 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             finally
             {
-                DeleteOwnedProbeFile(probeDirectory, "probe");
-                DeleteOwnedProbeFile(probeDirectory, "renamed");
-                DeleteProbeDirectoryIfEmpty(probeDirectory);
+                cleanupSucceeded = CleanupOwnedProbeDirectory(probeDirectory);
             }
+            return cleanupSucceeded;
         }
 
-        private static void DeleteOwnedProbeFile(string probeDirectory, string name)
+        internal static bool CleanupOwnedProbeDirectory(string probeDirectory)
+        {
+            if (!Directory.Exists(probeDirectory)) return true;
+
+            // Attempt every owned cleanup even if an earlier operation failed.
+            var probeDeleted = TryDeleteOwnedProbeFile(probeDirectory, "probe");
+            var renamedDeleted = TryDeleteOwnedProbeFile(probeDirectory, "renamed");
+            var directoryDeleted = TryDeleteProbeDirectoryIfEmpty(probeDirectory);
+            return probeDeleted && renamedDeleted && directoryDeleted;
+        }
+
+        private static bool TryDeleteOwnedProbeFile(string probeDirectory, string name)
         {
             string path;
             if (!TryJoinUnderRoot(probeDirectory, name, out path))
-                return;
+                return false;
             try
             {
                 File.Delete(path);
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-
-        private static void DeleteProbeDirectoryIfEmpty(string probeDirectory)
-        {
-            try
-            {
-                if (Directory.Exists(probeDirectory) &&
-                    !Directory.EnumerateFileSystemEntries(probeDirectory).Any())
-                {
-                    Directory.Delete(probeDirectory, false);
-                }
+                return true;
             }
             catch (IOException)
             {
-                return;
+                return false;
             }
             catch (UnauthorizedAccessException)
             {
-                return;
+                return false;
+            }
+        }
+
+        private static bool TryDeleteProbeDirectoryIfEmpty(string probeDirectory)
+        {
+            try
+            {
+                if (!Directory.Exists(probeDirectory)) return true;
+                if (!Directory.EnumerateFileSystemEntries(probeDirectory).Any())
+                {
+                    Directory.Delete(probeDirectory, false);
+                    return true;
+                }
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
             }
         }
 

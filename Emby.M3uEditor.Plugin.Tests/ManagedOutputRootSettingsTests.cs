@@ -13,16 +13,16 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var temp = new TempDirectory())
             {
-                var owner = Path.Combine(temp.Path, "plugin-state");
+                var owner = Path.Join(temp.Path, "plugin-state");
                 Directory.CreateDirectory(owner);
                 var current = new PluginConfiguration { ManagedSetupReady = true, ManagedPublishingIntegrationId = 17 };
-                var root = Path.Combine(temp.Path, "media");
+                var root = Path.Join(temp.Path, "media");
                 var requested = new PluginConfiguration
                 {
-                    ManagedPublishingOutputRoot = Path.Combine(root, "."),
+                    ManagedPublishingOutputRoot = Path.Join(root, "."),
                     ManagedSetupReady = true,
                     ManagedPublishingIntegrationId = 17,
-                    ManagedApprovedOutputRoots = Path.Combine(owner, "managed-publishing")
+                    ManagedApprovedOutputRoots = Path.Join(owner, "managed-publishing")
                 };
 
                 ManagedSetupService.ValidateConfigurationChange(current, requested, owner);
@@ -53,7 +53,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 var current = new PluginConfiguration();
                 typeof(PluginConfiguration).GetProperty(property).SetValue(current, value);
-                var requested = new PluginConfiguration { ManagedPublishingOutputRoot = Path.Combine(temp.Path, "new-media") };
+                var requested = new PluginConfiguration { ManagedPublishingOutputRoot = Path.Join(temp.Path, "new-media") };
 
                 var error = Assert.Throws<InvalidOperationException>(() =>
                     ManagedSetupService.ValidateConfigurationChange(current, requested, temp.Path));
@@ -69,11 +69,11 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var temp = new TempDirectory())
             {
-                var oldRoot = Path.Combine(temp.Path, "managed-publishing");
+                var oldRoot = Path.Join(temp.Path, "managed-publishing");
                 Directory.CreateDirectory(oldRoot);
-                var sentinel = Path.Combine(oldRoot, "synthetic.strm");
+                var sentinel = Path.Join(oldRoot, "synthetic.strm");
                 File.WriteAllText(sentinel, "synthetic preserved content");
-                var requested = new PluginConfiguration { ManagedPublishingOutputRoot = Path.Combine(temp.Path, "new-media") };
+                var requested = new PluginConfiguration { ManagedPublishingOutputRoot = Path.Join(temp.Path, "new-media") };
 
                 Assert.Throws<InvalidOperationException>(() => ManagedSetupService.ValidateConfigurationChange(
                     new PluginConfiguration(), requested, temp.Path));
@@ -88,11 +88,11 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var temp = new TempDirectory())
             {
-                var root = Path.Combine(temp.Path, "managed-publishing");
+                var root = Path.Join(temp.Path, "managed-publishing");
                 var current = new PluginConfiguration { ManagedMappingsJson = "[{}]", ManagedSetupReady = true };
                 var requested = new PluginConfiguration
                 {
-                    ManagedPublishingOutputRoot = Path.Combine(root, "."),
+                    ManagedPublishingOutputRoot = Path.Join(root, "."),
                     ManagedMappingsJson = "[{}]",
                     ManagedSetupReady = true,
                     ManagedApprovedOutputRoots = root
@@ -111,7 +111,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             using (var temp = new TempDirectory())
             {
-                var target = Path.Combine(temp.Path, "existing-file");
+                var target = Path.Join(temp.Path, "existing-file");
                 File.WriteAllText(target, "synthetic preserved content");
                 var requested = new PluginConfiguration { ManagedPublishingOutputRoot = target };
 
@@ -119,6 +119,29 @@ namespace Emby.M3uEditor.Plugin.Tests
                     new PluginConfiguration(), requested, temp.Path));
 
                 Assert.Equal("synthetic preserved content", File.ReadAllText(target));
+            }
+        }
+
+        [Fact]
+        public void ProbeCleanup_ReportsFailureAttemptsBothFilesAndNeverDeletesRecursively()
+        {
+            using (var temp = new TempDirectory())
+            {
+                var probe = Path.Join(temp.Path, ".managed-write-probe-synthetic");
+                var blockedFile = Path.Join(probe, "probe");
+                var renamed = Path.Join(probe, "renamed");
+                Directory.CreateDirectory(blockedFile);
+                File.WriteAllText(renamed, "synthetic probe content");
+
+                Assert.False(ManagedOutputPolicy.CleanupOwnedProbeDirectory(probe));
+                Assert.True(Directory.Exists(blockedFile));
+                Assert.False(File.Exists(renamed));
+                Assert.True(Directory.Exists(probe));
+
+                Directory.Delete(blockedFile);
+                Assert.True(ManagedOutputPolicy.CleanupOwnedProbeDirectory(probe));
+                Assert.False(Directory.Exists(probe));
+                Assert.True(ManagedOutputPolicy.CleanupOwnedProbeDirectory(probe));
             }
         }
 
