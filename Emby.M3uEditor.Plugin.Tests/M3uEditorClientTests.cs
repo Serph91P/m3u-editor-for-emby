@@ -1099,7 +1099,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task GetCatalogAsync_OversizedDeclaredResponse_FailsClosed()
         {
-            var handler = new DeclaredLengthHandler(M3uEditorClient.MaximumResponseBytes + 1L);
+            var handler = new DeclaredLengthHandler(M3uEditorClient.MaximumCatalogResponseBytes + 1L);
             using (var httpClient = new HttpClient(handler))
             {
                 var client = new M3uEditorClient(httpClient);
@@ -1112,7 +1112,6 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         [Theory]
         [InlineData("capability", "GET")]
-        [InlineData("catalog", "GET")]
         [InlineData("callback", "POST")]
         public async Task ManagedRequests_IncrementalOversizedResponse_ReadsOnlyThroughSentinel(
             string requestPath,
@@ -1276,7 +1275,7 @@ namespace Emby.M3uEditor.Plugin.Tests
   }
 }";
 
-        private const string CatalogJson = @"{
+        internal const string CatalogJson = @"{
   ""api_version"": 1,
   ""full_snapshot"": true,
   ""revision"": ""aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"",
