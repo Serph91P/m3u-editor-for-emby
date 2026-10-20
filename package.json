@@ -10,6 +10,12 @@
     "type": "git",
     "url": "git+https://github.com/Serph91P/m3u-editor-for-emby.git"
   },
+  "overrides": {
+    "@semantic-release/npm": {
+      "npm": "11.21.1"
+    },
+    "handlebars": "4.7.10"
+  },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.0",
     "@semantic-release/exec": "^7.0.3",
