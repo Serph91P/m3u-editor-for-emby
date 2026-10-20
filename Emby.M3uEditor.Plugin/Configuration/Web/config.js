@@ -163,6 +163,7 @@ function (BaseView, loading) {
             view.querySelector('.txtLiveTvTunerCount').value = config.LiveTvTunerCount > 0
                 ? String(config.LiveTvTunerCount)
                 : '';
+            view.querySelector('.txtManagedPublishingOutputRoot').value = config.ManagedPublishingOutputRoot || '';
 
             var terms = config.ChannelRemoveTerms || '';
             view.querySelector('.txtChannelRemoveTerms').value = terms.split(',').map(function (term) {
@@ -226,14 +227,19 @@ function (BaseView, loading) {
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
             config.UseBetaChannel = view.querySelector('.chkUseBetaChannel').checked;
             config.LiveTvTunerCount = configuredCount;
+            config.ManagedPublishingOutputRoot = view.querySelector('.txtManagedPublishingOutputRoot').value.trim();
 
             if (tunerValidationElement) tunerValidationElement.innerHTML = '';
+            view.querySelector('.managedPublishingOutputRootResult').innerHTML = '';
 
             ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
                 if (typeof callback === 'function') callback();
             }, function (error) {
                 loading.hide();
+                setPillResult(view.querySelector('.managedPublishingOutputRootResult'),
+                    false,
+                    'Failed to save managed publishing output directory.' + formatError(error));
                 Dashboard.alert('Failed to save configuration.' + formatError(error));
             });
         }, function (error) {
@@ -605,9 +611,12 @@ function (BaseView, loading) {
         var nextButton = view.querySelector('.btnManagedNextPage');
         var pageElement = view.querySelector('.managedPublishingPage');
         var resultElement = view.querySelector('.managedPublishingResult');
+        var outputRootElement = view.querySelector('.managedPublishingEffectiveOutputRoot');
         var job = managed.Job || {};
         var jobRunning = job.State === 'running';
         var available = !!managed.SetupReady && !!managed.ConfigurationValid;
+
+        outputRootElement.textContent = managed.OutputRoot || 'Legacy default output directory';
 
         if (!available) {
             summaryElement.innerHTML = '<span class="status-badge idle">Awaiting managed setup</span>' +
