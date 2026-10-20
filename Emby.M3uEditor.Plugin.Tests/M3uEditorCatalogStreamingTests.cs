@@ -198,7 +198,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var stream = new PaddedStream(EmptyCatalog, EmptyCatalog.Length);
             var content = new StreamContent(stream);
-            using (var handler = new ContentHandler(content))
+            using (new ContentHandler(content))
             {
                 Assert.False(stream.Disposed);
             }
