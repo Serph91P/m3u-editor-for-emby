@@ -82,7 +82,8 @@ async function mount(options) {
         }, options.config || {}),
         dashboard: options.dashboard || {},
         updates: [],
-        alerts: []
+        alerts: [],
+        configReads: 0
     };
 
     global.window = global;
@@ -103,10 +104,18 @@ async function mount(options) {
     };
     global.loading = { show: () => {}, hide: () => {} };
     global.ApiClient = {
-        getPluginConfiguration: () => Promise.resolve(JSON.parse(JSON.stringify(state.config))),
+        getPluginConfiguration: () => {
+            state.configReads++;
+            return state.configReads === options.rejectConfigReadAt
+                ? Promise.reject(new Error('configuration unavailable'))
+                : Promise.resolve(JSON.parse(JSON.stringify(state.config)));
+        },
         updatePluginConfiguration: (_id, config) => {
             state.updates.push(JSON.parse(JSON.stringify(config)));
-            return options.rejectSave ? Promise.reject(new Error('output directory is in use')) : Promise.resolve({});
+            if (options.rejectSave) return Promise.reject(new Error('output directory is in use'));
+            state.config = JSON.parse(JSON.stringify(config));
+            if (options.normalizedRoot) state.config.ManagedPublishingOutputRoot = options.normalizedRoot;
+            return Promise.resolve({});
         },
         getJSON: () => Promise.resolve({ ManagedPublishing: state.dashboard }),
         getUrl: path => '/admin/' + path,
@@ -175,7 +184,60 @@ async function run() {
     assert.equal(mounted.view.lookup('.managedPublishingEffectiveOutputRoot').textContent, '<unsafe-root>');
     assert.equal(mounted.view.lookup('.managedPublishingEffectiveOutputRoot').innerHTML, '');
 
-    process.stdout.write('Issue105 managed-output UI harness: 8 scenarios passed; ' + uniqueControls.size + ' unique managed controls checked\n');
+    mounted = await mount({ config: { ManagedPublishingOutputRoot: '/config/managed', LiveTvTunerCount: 4 } });
+    mounted.state.config.ManagedAllowedMediaRoots = '/fresh/server/binding';
+    const beforeRootSave = JSON.parse(JSON.stringify(mounted.state.config));
+    mounted.view.lookup('.txtManagedPublishingOutputRoot').value = '/root-only/managed';
+    mounted.view.lookup('.txtLiveTvTunerCount').value = 'invalid-unsaved-value';
+    mounted.view.lookup('.txtBaseUrl').value = 'unsaved-connection-edit';
+    mounted.view.lookup('.btnManagedSaveOutputRoot').emit('click');
+    await flushPromises();
+    assert.equal(mounted.state.updates.length, 1, 'Managed tab must save its root without submitting unrelated Settings');
+    assert.deepEqual(mounted.state.updates[0], Object.assign({}, beforeRootSave, { ManagedPublishingOutputRoot: '/root-only/managed' }));
+    assert.equal(mounted.view.lookup('.txtBaseUrl').value, 'unsaved-connection-edit');
+    assert.ok(controlIdentities.some(identity => identity.includes('btnManagedSaveOutputRoot')), 'save action must actually be rendered inside the Managed tab');
+
+    mounted = await mount({ config: { ManagedPublishingOutputRoot: '/unconfirmed/managed' } });
+    assert.equal(mounted.view.lookup('.managedPublishingEffectiveOutputRoot').textContent,
+        'Not confirmed yet. Complete managed setup from m3u-editor.');
+
+    mounted = await mount({ config: { ManagedPublishingOutputRoot: '/config/managed' }, rejectSave: true });
+    mounted.view.lookup('.txtManagedPublishingOutputRoot').value = '/blocked/managed';
+    mounted.view.lookup('.btnManagedSaveOutputRoot').emit('click');
+    mounted.view.lookup('.btnManagedSaveOutputRoot').emit('click');
+    await flushPromises();
+    assert.equal(mounted.state.updates.length, 1, 'in-flight root save must not run twice');
+    assert.equal(mounted.view.lookup('.txtManagedPublishingOutputRoot').value, '/blocked/managed');
+    assert.match(mounted.view.lookup('.managedPublishingOutputRootResult').innerHTML, /Failed to save managed publishing output directory/);
+    assert.equal(mounted.view.lookup('.btnManagedSaveOutputRoot').disabled, false);
+    assert.equal(mounted.view.lookup('.txtManagedPublishingOutputRoot').disabled, false);
+
+    mounted = await mount({ normalizedRoot: '/canonical/managed' });
+    mounted.view.lookup('.txtManagedPublishingOutputRoot').value = '/canonical/managed/.';
+    mounted.view.lookup('.btnManagedSaveOutputRoot').emit('click');
+    await flushPromises();
+    assert.equal(mounted.state.configReads, 3, 'save must fetch fresh config and read back the stored result');
+    assert.equal(mounted.view.lookup('.txtManagedPublishingOutputRoot').value, '/canonical/managed');
+
+    mounted = await mount({ rejectConfigReadAt: 2 });
+    mounted.view.lookup('.txtManagedPublishingOutputRoot').value = '/retained/managed';
+    mounted.view.lookup('.btnManagedSaveOutputRoot').emit('click');
+    await flushPromises();
+    assert.equal(mounted.state.updates.length, 0);
+    assert.equal(mounted.view.lookup('.txtManagedPublishingOutputRoot').value, '/retained/managed');
+    assert.match(mounted.view.lookup('.managedPublishingOutputRootResult').innerHTML, /Failed to save/);
+    assert.equal(mounted.view.lookup('.btnManagedSaveOutputRoot').disabled, false);
+
+    mounted = await mount({ rejectConfigReadAt: 3 });
+    mounted.view.lookup('.txtManagedPublishingOutputRoot').value = '/persisted/managed';
+    mounted.view.lookup('.btnManagedSaveOutputRoot').emit('click');
+    await flushPromises();
+    assert.equal(mounted.state.updates.length, 1);
+    assert.equal(mounted.state.config.ManagedPublishingOutputRoot, '/persisted/managed');
+    assert.match(mounted.view.lookup('.managedPublishingOutputRootResult').innerHTML, /was saved, but could not be reloaded/);
+    assert.equal(mounted.state.saved, undefined, 'unverified write must not show the success toast');
+
+    process.stdout.write('Issue105 managed-output UI harness: 14 scenarios passed; ' + uniqueControls.size + ' unique managed controls checked\n');
 }
 
 run().catch(error => {

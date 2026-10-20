@@ -60,6 +60,9 @@ function (BaseView, loading) {
             }
         });
 
+        view.querySelector('.btnManagedSaveOutputRoot').addEventListener('click', function () {
+            saveManagedOutputRoot(view);
+        });
         view.querySelector('.btnManagedReconcile').addEventListener('click', function () {
             reconcileManaged(view);
         });
@@ -245,6 +248,39 @@ function (BaseView, loading) {
         }, function (error) {
             loading.hide();
             Dashboard.alert('Failed to load current configuration before saving.' + formatError(error));
+        });
+    }
+
+    function saveManagedOutputRoot(view) {
+        var input = view.querySelector('.txtManagedPublishingOutputRoot');
+        var button = view.querySelector('.btnManagedSaveOutputRoot');
+        var result = view.querySelector('.managedPublishingOutputRootResult');
+        if (button.disabled) return;
+        var requestedRoot = input.value.trim();
+        var saved = false;
+        input.disabled = true;
+        button.disabled = true;
+        result.innerHTML = '';
+        loading.show();
+        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+            config.ManagedPublishingOutputRoot = requestedRoot;
+            return ApiClient.updatePluginConfiguration(pluginId, config);
+        }).then(function () {
+            saved = true;
+            return ApiClient.getPluginConfiguration(pluginId);
+        }).then(function (config) {
+            input.value = config.ManagedPublishingOutputRoot || '';
+            setPillResult(result, true, 'Managed publishing output directory saved. Complete managed setup from m3u-editor to confirm it.');
+            Dashboard.processPluginConfigurationUpdateResult();
+            loadDashboard(view);
+        }).catch(function (error) {
+            setPillResult(result, false, (saved
+                ? 'Output directory was saved, but could not be reloaded. Reopen this page to verify it.'
+                : 'Failed to save managed publishing output directory.') + formatError(error));
+        }).then(function () {
+            input.disabled = false;
+            button.disabled = false;
+            loading.hide();
         });
     }
 
@@ -616,7 +652,7 @@ function (BaseView, loading) {
         var jobRunning = job.State === 'running';
         var available = !!managed.SetupReady && !!managed.ConfigurationValid;
 
-        outputRootElement.textContent = managed.OutputRoot || 'Legacy default output directory';
+        outputRootElement.textContent = managed.OutputRoot || 'Not confirmed yet. Complete managed setup from m3u-editor.';
 
         if (!available) {
             summaryElement.innerHTML = '<span class="status-badge idle">Awaiting managed setup</span>' +

@@ -276,6 +276,7 @@
                             <label class="inputLabel inputLabelUnfocused" for="txtManagedPublishingOutputRoot">Managed publishing output directory</label>
                             <input is="emby-input" id="txtManagedPublishingOutputRoot" class="txtManagedPublishingOutputRoot" type="text" autocomplete="off" title="Absolute container path for managed publishing output; leave blank to use the legacy default" aria-describedby="managedPublishingOutputRootHelp managedPublishingOutputRootResult" />
                             <div id="managedPublishingOutputRootHelp" class="fieldDescription">Absolute container path. Leave blank to use the legacy default. Existing mappings, managed files, and generations are not migrated automatically; the server blocks unsafe changes.</div>
+                            <button is="emby-button" type="button" class="raised button-submit btnManagedSaveOutputRoot" title="Save only the managed publishing output directory" aria-label="Save managed publishing output directory">Save output directory</button>
                             <div class="managedPublishingOutputRootResult" id="managedPublishingOutputRootResult" role="status" aria-live="polite"></div>
                         </div>
                         <div class="inputContainer" style="margin-top:0.8em;">
