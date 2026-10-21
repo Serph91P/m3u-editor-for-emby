@@ -119,7 +119,7 @@ namespace Emby.M3uEditor.Plugin.Service
         internal const int MaximumManagedSourceGroupCharacters = 128;
         internal const int MaximumManagedSourceGroupCharactersTotal = 512;
         internal const int MaximumGeneratedFileBytes = 1024 * 1024;
-        internal const long MaximumGeneratedBytes = 8L * 1024L * 1024L;
+        internal const long MaximumGeneratedBytes = 64L * 1024L * 1024L;
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> ManagedRootLocks =
             new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
 
