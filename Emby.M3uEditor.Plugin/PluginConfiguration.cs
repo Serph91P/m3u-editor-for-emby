@@ -30,6 +30,15 @@ namespace Emby.M3uEditor.Plugin
         public string ManagedLastError { get; set; } = string.Empty;
         public long ManagedLastSuccessTicks { get; set; }
 
+        // Managed playback cache is deliberately opt-in. These primitive values
+        // remain XML-compatible durable configuration, not runtime state.
+        public bool ManagedPlaybackCacheEnabled { get; set; } = false;
+        public string ManagedPlaybackCacheMode { get; set; } = "off";
+        public int ManagedPlaybackCacheNextCount { get; set; } = 1;
+        public bool ManagedPlaybackCacheDeleteAfterWatched { get; set; } = false;
+        public int ManagedPlaybackCacheDeleteGraceHours { get; set; } = 24;
+        public string[] ManagedPlaybackCacheUserIds { get; set; } = new string[0];
+
         // Live TV
         public bool EnableLiveTv { get; set; } = true;
         public string LiveTvOutputFormat { get; set; } = "ts";
