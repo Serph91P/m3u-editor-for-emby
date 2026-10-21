@@ -18,6 +18,9 @@ namespace Emby.M3uEditor.Plugin.Client
     internal sealed class M3uEditorClient
     {
         internal const int MaximumResponseBytes = 16 * 1024 * 1024;
+        // Full snapshots contain per-variant probe metadata. Stream the larger
+        // catalog budget; capability, callback and error bodies remain small.
+        internal const int MaximumCatalogResponseBytes = 256 * 1024 * 1024;
         private static readonly Regex RevisionPattern = new Regex("^[a-f0-9]{64}$", RegexOptions.Compiled);
         private static readonly Regex UrlPattern = new Regex("https?://[^\\s]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SecretPattern = new Regex(
@@ -269,7 +272,7 @@ namespace Emby.M3uEditor.Plugin.Client
                             HttpCompletionOption.ResponseHeadersRead,
                             timeout.Token).ConfigureAwait(false))
                         {
-                            if (!response.IsSuccessStatusCode)
+                            if (response.StatusCode != HttpStatusCode.OK)
                             {
                                 if ((int)response.StatusCode == 409 && attempt < 2)
                                 {
@@ -293,11 +296,18 @@ namespace Emby.M3uEditor.Plugin.Client
                             }
 
                             EnsureConfinedResponse(response, requestUrl);
-                            var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
+                            var declared = response.Content.Headers.ContentLength;
+                            if (declared.HasValue && declared.Value > MaximumCatalogResponseBytes)
+                                throw new InvalidOperationException("Managed backend response limit exceeded.");
                             M3uEditorCatalog catalog;
                             try
                             {
-                                catalog = JsonSerializer.Deserialize<M3uEditorCatalog>(body, JsonOptions);
+                                using (var stream = new LimitedResponseStream(
+                                    await response.Content.ReadAsStreamAsync().ConfigureAwait(false), MaximumCatalogResponseBytes))
+                                {
+                                    catalog = await JsonSerializer.DeserializeAsync<M3uEditorCatalog>(
+                                        stream, JsonOptions, timeout.Token).ConfigureAwait(false);
+                                }
                             }
                             catch (JsonException ex)
                             {
@@ -325,7 +335,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     {
                         throw;
                     }
-                    catch (TaskCanceledException)
+                    catch (OperationCanceledException)
                     {
                         throw new InvalidOperationException("Managed catalog request timed out.");
                     }

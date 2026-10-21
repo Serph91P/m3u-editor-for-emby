@@ -28,7 +28,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_release_uses_locked_install_and_fixed_compatible_node(self):
         self.assertIn("node-version: '22.23.2'", CI)
         self.assertIn("npm ci", CI)
-        self.assertIn("npm audit --audit-level=high", CI)
+        build = CI.split("  build-and-test:", 1)[1].split("  codeql:", 1)[0]
+        release = CI.split("  release:", 1)[1]
+        for job in (build, release):
+            self.assertIn("npm ci", job)
+            self.assertIn("npm run audit:release", job)
+            self.assertLess(job.index("npm ci"), job.index("npm run audit:release"))
+        self.assertLess(build.index("npm run audit:release"), build.index("Test release safeguards"))
         self.assertNotIn("npm ci || npm install", CI)
         self.assertIn('"node": ">=22.14.0 <23"', (ROOT / "package.json").read_text())
 
