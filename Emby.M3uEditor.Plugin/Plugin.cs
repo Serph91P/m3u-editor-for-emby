@@ -16,7 +16,7 @@ namespace Emby.M3uEditor.Plugin
 {
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
     {
-        private const string DashboardResourceRevision = "r4";
+        private const string DashboardResourceRevision = "r5";
         private static volatile Plugin _instance;
         internal static readonly object ConfigurationTransactionGate = new object();
         private readonly IApplicationHost _applicationHost;
@@ -72,6 +72,8 @@ namespace Emby.M3uEditor.Plugin
 
             lock (ConfigurationTransactionGate)
             {
+                if (configuration is PluginConfiguration requested)
+                    ManagedSetupService.ValidateConfigurationChange(Configuration, requested, DataFolderPath);
                 base.UpdateConfiguration(configuration);
 
                 if (Configuration is PluginConfiguration pluginConfig)
@@ -153,6 +155,11 @@ namespace Emby.M3uEditor.Plugin
                 },
                 new PluginPageInfo
                 {
+                    Name = "m3ueditorconfigr4",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
                     Name = "m3ueditorconfigr3",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
                 },
@@ -187,6 +194,11 @@ namespace Emby.M3uEditor.Plugin
                 new PluginPageInfo
                 {
                     Name = GetJsPageName(),
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
+                },
+                new PluginPageInfo
+                {
+                    Name = "m3ueditorconfigjsr4",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
                 },
                 new PluginPageInfo

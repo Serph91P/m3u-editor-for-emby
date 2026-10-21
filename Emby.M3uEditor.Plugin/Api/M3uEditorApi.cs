@@ -223,6 +223,7 @@ namespace Emby.M3uEditor.Plugin.Api
         public int PageSize { get; set; }
         public bool HasMore { get; set; }
         public string DryRunSummary { get; set; }
+        public string OutputRoot { get; set; }
         public int OmittedVersions { get; set; }
         public string LastError { get; set; }
         public DateTime? LastSuccess { get; set; }
@@ -269,7 +270,8 @@ namespace Emby.M3uEditor.Plugin.Api
             PluginConfiguration config,
             ManagedJobStatus job,
             int requestedPage,
-            int requestedPageSize)
+            int requestedPageSize,
+            string ownerPath = null)
         {
             var page = Math.Max(1, requestedPage);
             var pageSize = Math.Max(1, Math.Min(100, requestedPageSize));
@@ -352,6 +354,7 @@ namespace Emby.M3uEditor.Plugin.Api
                 PageSize = pageSize,
                 HasMore = page * pageSize < mappings.Count,
                 DryRunSummary = config.ManagedDryRunSummary,
+                OutputRoot = ownerPath == null ? null : new ManagedSetupService(ownerPath).Get(config).ConfirmedRoot,
                 OmittedVersions = config.ManagedOmittedVersions,
                 LastError = config.ManagedLastError,
                 LastSuccess = config.ManagedLastSuccessTicks > 0
@@ -643,7 +646,8 @@ namespace Emby.M3uEditor.Plugin.Api
                 plugin.Configuration,
                 plugin.StrmSyncService.ManagedActionJobs.GetStatus(),
                 request?.ManagedPage ?? 1,
-                request?.ManagedPageSize ?? 10);
+                request?.ManagedPageSize ?? 10,
+                plugin.DataFolderPath);
             return new DashboardResult
             {
                 PluginVersion = PluginVersionHelper.CurrentVersion,

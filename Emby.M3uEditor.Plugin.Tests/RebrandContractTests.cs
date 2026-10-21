@@ -61,7 +61,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 "ManagedActiveGeneration", "ManagedApprovedOutputRoots", "ManagedCatalogRevision",
                 "ManagedDirectoryOwnershipJson", "ManagedDryRunSummary", "ManagedLastError", "ManagedLastSuccessTicks", "ManagedMappingsJson",
                 "ManagedOmittedVersions", "ManagedPreviousGeneration", "ManagedPublishingApiVersion",
-                "ManagedPublishingEnabled", "ManagedPublishingIntegrationId", "ManagedSetupLastResult",
+                "ManagedPublishingEnabled", "ManagedPublishingIntegrationId", "ManagedPublishingOutputRoot", "ManagedSetupLastResult",
                 "ManagedSetupReady", "Password", "SelectedLiveCategoryIds", "UseBetaChannel",
                 "UseM3uLogoForAllChannelImages", "Username",
             };

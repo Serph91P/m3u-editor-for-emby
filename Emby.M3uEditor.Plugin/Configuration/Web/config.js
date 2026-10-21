@@ -60,6 +60,9 @@ function (BaseView, loading) {
             }
         });
 
+        view.querySelector('.btnManagedSaveOutputRoot').addEventListener('click', function () {
+            saveManagedOutputRoot(view);
+        });
         view.querySelector('.btnManagedReconcile').addEventListener('click', function () {
             reconcileManaged(view);
         });
@@ -163,6 +166,7 @@ function (BaseView, loading) {
             view.querySelector('.txtLiveTvTunerCount').value = config.LiveTvTunerCount > 0
                 ? String(config.LiveTvTunerCount)
                 : '';
+            view.querySelector('.txtManagedPublishingOutputRoot').value = config.ManagedPublishingOutputRoot || '';
 
             var terms = config.ChannelRemoveTerms || '';
             view.querySelector('.txtChannelRemoveTerms').value = terms.split(',').map(function (term) {
@@ -226,19 +230,57 @@ function (BaseView, loading) {
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
             config.UseBetaChannel = view.querySelector('.chkUseBetaChannel').checked;
             config.LiveTvTunerCount = configuredCount;
+            config.ManagedPublishingOutputRoot = view.querySelector('.txtManagedPublishingOutputRoot').value.trim();
 
             if (tunerValidationElement) tunerValidationElement.innerHTML = '';
+            view.querySelector('.managedPublishingOutputRootResult').innerHTML = '';
 
             ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
                 if (typeof callback === 'function') callback();
             }, function (error) {
                 loading.hide();
+                setPillResult(view.querySelector('.managedPublishingOutputRootResult'),
+                    false,
+                    'Failed to save managed publishing output directory.' + formatError(error));
                 Dashboard.alert('Failed to save configuration.' + formatError(error));
             });
         }, function (error) {
             loading.hide();
             Dashboard.alert('Failed to load current configuration before saving.' + formatError(error));
+        });
+    }
+
+    function saveManagedOutputRoot(view) {
+        var input = view.querySelector('.txtManagedPublishingOutputRoot');
+        var button = view.querySelector('.btnManagedSaveOutputRoot');
+        var result = view.querySelector('.managedPublishingOutputRootResult');
+        if (button.disabled) return;
+        var requestedRoot = input.value.trim();
+        var saved = false;
+        input.disabled = true;
+        button.disabled = true;
+        result.innerHTML = '';
+        loading.show();
+        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+            config.ManagedPublishingOutputRoot = requestedRoot;
+            return ApiClient.updatePluginConfiguration(pluginId, config);
+        }).then(function () {
+            saved = true;
+            return ApiClient.getPluginConfiguration(pluginId);
+        }).then(function (config) {
+            input.value = config.ManagedPublishingOutputRoot || '';
+            setPillResult(result, true, 'Managed publishing output directory saved. Complete managed setup from m3u-editor to confirm it.');
+            Dashboard.processPluginConfigurationUpdateResult();
+            loadDashboard(view);
+        }).catch(function (error) {
+            setPillResult(result, false, (saved
+                ? 'Output directory was saved, but could not be reloaded. Reopen this page to verify it.'
+                : 'Failed to save managed publishing output directory.') + formatError(error));
+        }).then(function () {
+            input.disabled = false;
+            button.disabled = false;
+            loading.hide();
         });
     }
 
@@ -605,9 +647,12 @@ function (BaseView, loading) {
         var nextButton = view.querySelector('.btnManagedNextPage');
         var pageElement = view.querySelector('.managedPublishingPage');
         var resultElement = view.querySelector('.managedPublishingResult');
+        var outputRootElement = view.querySelector('.managedPublishingEffectiveOutputRoot');
         var job = managed.Job || {};
         var jobRunning = job.State === 'running';
         var available = !!managed.SetupReady && !!managed.ConfigurationValid;
+
+        outputRootElement.textContent = managed.OutputRoot || 'Not confirmed yet. Complete managed setup from m3u-editor.';
 
         if (!available) {
             summaryElement.innerHTML = '<span class="status-badge idle">Awaiting managed setup</span>' +

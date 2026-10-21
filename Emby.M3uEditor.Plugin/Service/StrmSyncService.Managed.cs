@@ -607,7 +607,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 var ownerPath = ManagedOwnerPathProvider == null
                     ? Plugin.InstanceOrNull?.DataFolderPath
                     : ManagedOwnerPathProvider();
-                if (!ManagedSetupService.TryGetCandidateRoot(ownerPath, out candidate) ||
+                if (!ManagedSetupService.TryGetCandidateRoot(ownerPath, out candidate, config) ||
                     !roots.Any(value => string.Equals(value, candidate, PathComparison)))
                 {
                     error = "Managed publishing requires one companion-owned canonical root.";
