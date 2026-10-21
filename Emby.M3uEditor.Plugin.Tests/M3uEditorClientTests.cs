@@ -1031,10 +1031,83 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task GetCatalogAsync_ValidLargeFullSnapshot_DeserializesEveryItem(bool declaredLength)
+        {
+            var template = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            var mapping = template.Mappings[0];
+            var itemJson = JsonSerializer.Serialize(mapping.Items[0]);
+            mapping.Items.Clear();
+            for (var index = 0; index < 4000; index++)
+            {
+                var item = JsonSerializer.Deserialize<M3uEditorCatalogItem>(itemJson);
+                item.CanonicalId = "movie:synthetic:" + index;
+                item.RelativeFolder = "synthetic-movie-" + index;
+                item.BaseFilename = item.RelativeFolder;
+                item.Nfo.Plot = new string('a', 5000);
+                mapping.Items.Add(item);
+            }
+
+            // Prove that the untouched validator accepts the actual complete contract,
+            // not an oversized invalid body that should continue to fail closed.
+            M3uEditorCatalogValidator.Validate(template);
+            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(template));
+            Assert.True(bytes.Length > M3uEditorClient.MaximumResponseBytes);
+            using (var httpClient = new HttpClient(new IncrementalContentHandler(
+                new CatalogJsonContent(bytes, declaredLength))))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var catalog = await client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None);
+
+                Assert.Equal(4000, Assert.Single(catalog.Mappings).Items.Count);
+                Assert.Equal("movie:synthetic:3999", catalog.Mappings[0].Items[3999].CanonicalId);
+                Assert.Equal(Revision, catalog.Revision);
+            }
+        }
+
+        private sealed class CatalogJsonContent : HttpContent
+        {
+            private readonly byte[] _bytes;
+            private readonly bool _declaredLength;
+            private readonly MemoryStream _readStream;
+
+            public CatalogJsonContent(byte[] bytes, bool declaredLength)
+            {
+                _bytes = bytes;
+                _declaredLength = declaredLength;
+                _readStream = new MemoryStream(bytes, false);
+            }
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = _bytes.Length;
+                return _declaredLength;
+            }
+
+            protected override Task SerializeToStreamAsync(Stream stream, TransportContext context)
+            {
+                return stream.WriteAsync(_bytes, 0, _bytes.Length);
+            }
+
+            protected override Task<Stream> CreateContentReadStreamAsync()
+            {
+                return Task.FromResult<Stream>(_readStream);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) _readStream.Dispose();
+                base.Dispose(disposing);
+            }
+        }
+
         [Fact]
         public async Task GetCatalogAsync_OversizedDeclaredResponse_FailsClosed()
         {
-            var handler = new DeclaredLengthHandler(M3uEditorClient.MaximumResponseBytes + 1L);
+            var handler = new DeclaredLengthHandler(M3uEditorClient.MaximumCatalogResponseBytes + 1L);
             using (var httpClient = new HttpClient(handler))
             {
                 var client = new M3uEditorClient(httpClient);
@@ -1046,8 +1119,30 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
+        [InlineData(201)]
+        [InlineData(202)]
+        [InlineData(204)]
+        [InlineData(205)]
+        [InlineData(206)]
+        public async Task GetCatalogAsync_NonOkSuccessResponse_FailsClosedWithoutReadingBodyOrRetrying(int statusCode)
+        {
+            var content = new IncrementalContent(M3uEditorClient.MaximumResponseBytes + 8192);
+            var handler = new IncrementalContentHandler(content, (HttpStatusCode)statusCode);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None));
+
+                Assert.Contains("HTTP " + statusCode, error.Message);
+                Assert.Equal(1, handler.RequestCount);
+                Assert.Equal(0L, content.BytesRead);
+            }
+        }
+
+        [Theory]
         [InlineData("capability", "GET")]
-        [InlineData("catalog", "GET")]
         [InlineData("callback", "POST")]
         public async Task ManagedRequests_IncrementalOversizedResponse_ReadsOnlyThroughSentinel(
             string requestPath,
@@ -1211,7 +1306,7 @@ namespace Emby.M3uEditor.Plugin.Tests
   }
 }";
 
-        private const string CatalogJson = @"{
+        internal const string CatalogJson = @"{
   ""api_version"": 1,
   ""full_snapshot"": true,
   ""revision"": ""aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"",
@@ -1283,25 +1378,29 @@ namespace Emby.M3uEditor.Plugin.Tests
         private sealed class IncrementalContentHandler : HttpMessageHandler
         {
             private readonly HttpContent _content;
+            private readonly HttpStatusCode _statusCode;
 
-            public IncrementalContentHandler(HttpContent content)
+            public IncrementalContentHandler(HttpContent content, HttpStatusCode statusCode = HttpStatusCode.OK)
             {
                 _content = content;
+                _statusCode = statusCode;
             }
 
             public string Method { get; private set; }
+            public int RequestCount { get; private set; }
 
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
                 Method = request.Method.Method;
-                return Task.FromResult(CreateResponse(_content));
+                RequestCount++;
+                return Task.FromResult(CreateResponse(_content, _statusCode));
             }
 
-            private static HttpResponseMessage CreateResponse(HttpContent content)
+            private static HttpResponseMessage CreateResponse(HttpContent content, HttpStatusCode statusCode)
             {
-                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                return new HttpResponseMessage(statusCode)
                 {
                     Content = content
                 };
