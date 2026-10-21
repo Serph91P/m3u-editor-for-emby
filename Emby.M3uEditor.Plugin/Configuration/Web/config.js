@@ -39,6 +39,15 @@ function (BaseView, loading) {
         view.querySelector('.chkEnableChannelNameCleaning').addEventListener('change', function () {
             updateChannelNameCleaningVisibility(view);
         });
+        view.querySelector('.chkManagedPlaybackCacheEnabled').addEventListener('change', function () {
+            updateManagedPlaybackCacheVisibility(view);
+        });
+        view.querySelector('.selManagedPlaybackCacheMode').addEventListener('change', function () {
+            updateManagedPlaybackCacheVisibility(view);
+        });
+        view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').addEventListener('change', function () {
+            updateManagedPlaybackCacheVisibility(view);
+        });
         view.querySelector('.btnLoadCategories').addEventListener('click', function () {
             loadCategories(self);
         });
@@ -175,10 +184,17 @@ function (BaseView, loading) {
 
             instance.selectedCategoryIds = config.SelectedLiveCategoryIds || [];
             view.querySelector('.chkUseBetaChannel').checked = !!config.UseBetaChannel;
+            view.querySelector('.chkManagedPlaybackCacheEnabled').checked = !!config.ManagedPlaybackCacheEnabled;
+            view.querySelector('.selManagedPlaybackCacheMode').value = config.ManagedPlaybackCacheMode || 'off';
+            view.querySelector('.txtManagedPlaybackCacheNextCount').value = config.ManagedPlaybackCacheNextCount || 1;
+            view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').checked = !!config.ManagedPlaybackCacheDeleteAfterWatched;
+            view.querySelector('.txtManagedPlaybackCacheDeleteGraceHours').value = config.ManagedPlaybackCacheDeleteGraceHours || 0;
+            view.querySelector('.txtManagedPlaybackCacheUserIds').value = (config.ManagedPlaybackCacheUserIds || []).join('\n');
 
             updateUrlSecurityWarning(view);
             updateEpgVisibility(view);
             updateChannelNameCleaningVisibility(view);
+            updateManagedPlaybackCacheVisibility(view);
             renderHealthBar(view, config);
             updateDashboardEmptyState(view, config);
             loadCachedCategories(instance, config);
@@ -229,6 +245,18 @@ function (BaseView, loading) {
             config.M3UCacheMinutes = parseInt(view.querySelector('.txtM3UCacheMinutes').value, 10) || 15;
             config.SelectedLiveCategoryIds = getSelectedCategoryIds(instance);
             config.UseBetaChannel = view.querySelector('.chkUseBetaChannel').checked;
+            var cacheToggle = view.querySelector('.chkManagedPlaybackCacheEnabled');
+            var cacheActivationReady = !!view._managedPlaybackCacheActivationReady;
+            var requestedCacheEnabled = cacheToggle.checked;
+            config.ManagedPlaybackCacheEnabled = requestedCacheEnabled &&
+                (cacheActivationReady || !!config.ManagedPlaybackCacheEnabled);
+            config.ManagedPlaybackCacheMode = view.querySelector('.selManagedPlaybackCacheMode').value;
+            config.ManagedPlaybackCacheNextCount = parseInt(view.querySelector('.txtManagedPlaybackCacheNextCount').value, 10) || 1;
+            config.ManagedPlaybackCacheDeleteAfterWatched = view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').checked;
+            config.ManagedPlaybackCacheDeleteGraceHours = parseInt(view.querySelector('.txtManagedPlaybackCacheDeleteGraceHours').value, 10) || 0;
+            config.ManagedPlaybackCacheUserIds = view.querySelector('.txtManagedPlaybackCacheUserIds').value.split('\n').map(function (value) {
+                return value.trim();
+            }).filter(Boolean);
             config.LiveTvTunerCount = configuredCount;
             config.ManagedPublishingOutputRoot = view.querySelector('.txtManagedPublishingOutputRoot').value.trim();
 
@@ -333,6 +361,16 @@ function (BaseView, loading) {
     function updateChannelNameCleaningVisibility(view) {
         var enabled = view.querySelector('.chkEnableChannelNameCleaning').checked;
         view.querySelector('.channelNameCleaningSettings').style.display = enabled ? '' : 'none';
+    }
+
+    function updateManagedPlaybackCacheVisibility(view) {
+        var enabled = view.querySelector('.chkManagedPlaybackCacheEnabled').checked;
+        var mode = view.querySelector('.selManagedPlaybackCacheMode').value;
+        var deleteAfterWatched = view.querySelector('.chkManagedPlaybackCacheDeleteAfterWatched').checked;
+        view.querySelector('.managedPlaybackCacheNextCount').style.display =
+            enabled && mode === 'next_n' ? '' : 'none';
+        view.querySelector('.managedPlaybackCacheRetention').style.display =
+            enabled && deleteAfterWatched ? '' : 'none';
     }
 
     function updateUrlSecurityWarning(view) {
@@ -621,8 +659,8 @@ function (BaseView, loading) {
             sessionStorage.setItem('m3u-editor-for-emby-cache-bust', '1');
             var appVersion = document.documentElement.getAttribute('data-appversion') || '';
             Promise.all([
-                fetch('configurationpage?name=m3ueditorconfigr4&v=' + appVersion, { cache: 'reload' }),
-                fetch('configurationpage?name=m3ueditorconfigjsr4&v=' + appVersion, { cache: 'reload' })
+                fetch('configurationpage?name=m3ueditorconfigr6&v=' + appVersion, { cache: 'reload' }),
+                fetch('configurationpage?name=m3ueditorconfigjsr6&v=' + appVersion, { cache: 'reload' })
             ]).then(function () { location.reload(); });
             return;
         }
@@ -651,6 +689,22 @@ function (BaseView, loading) {
         var job = managed.Job || {};
         var jobRunning = job.State === 'running';
         var available = !!managed.SetupReady && !!managed.ConfigurationValid;
+        var cacheToggle = view.querySelector('.chkManagedPlaybackCacheEnabled');
+        var cacheStatus = view.querySelector('.managedPlaybackCacheStatus');
+        var cacheCapabilityReady = managed.CacheCapabilityReady === true;
+        var activeManifestIdentityReady = managed.ActiveManifestIdentityReady === true;
+        var cacheActivationReady = available && cacheCapabilityReady && activeManifestIdentityReady;
+        view._managedPlaybackCacheActivationReady = cacheActivationReady;
+        cacheToggle.disabled = !cacheActivationReady && !cacheToggle.checked;
+        if (!available) {
+            cacheStatus.textContent = 'Playback cache is unavailable until managed setup is ready.';
+        } else if (!cacheCapabilityReady) {
+            cacheStatus.textContent = 'Playback cache is unavailable until the server confirms cache-control capability.';
+        } else if (!activeManifestIdentityReady) {
+            cacheStatus.textContent = 'Playback cache is unavailable until a valid active managed identity is ready.';
+        } else {
+            cacheStatus.textContent = 'Active managed identity and cache-control capability are ready.';
+        }
 
         outputRootElement.textContent = managed.OutputRoot || 'Not confirmed yet. Complete managed setup from m3u-editor.';
 

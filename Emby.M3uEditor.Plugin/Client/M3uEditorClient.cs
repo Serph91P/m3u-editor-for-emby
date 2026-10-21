@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.Http;
@@ -68,6 +69,35 @@ namespace Emby.M3uEditor.Plugin.Client
                 {
                     M3uEditorPublishingCapability capability;
                     return M3uEditorPublishingCapabilityParser.TryGetPublishingCapability(document.RootElement, out capability)
+                        ? capability
+                        : null;
+                }
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        public async Task<M3uEditorCacheControlCapability> DiscoverCacheControlCapabilityAsync(
+            string baseUrl,
+            string username,
+            string password,
+            CancellationToken cancellationToken)
+        {
+            var body = await GetPanelResponseAsync(baseUrl, username, password, cancellationToken)
+                .ConfigureAwait(false);
+            if (body == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                using (var document = JsonDocument.Parse(body))
+                {
+                    return M3uEditorPublishingCapabilityParser.TryGetCacheControlCapability(
+                        document.RootElement, out var capability)
                         ? capability
                         : null;
                 }
@@ -457,6 +487,162 @@ namespace Emby.M3uEditor.Plugin.Client
             {
                 return false;
             }
+        }
+
+        public Task<M3uEditorCacheControlResponse> SendCachePrefetchAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            CancellationToken cancellationToken)
+        {
+            return SendCacheControlAsync(
+                baseUrl, username, password, cacheRequest, "m3u_editor_cache_prefetch", cancellationToken);
+        }
+
+        public Task<M3uEditorCacheControlResponse> SendCachePlaybackAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            CancellationToken cancellationToken)
+        {
+            return SendCacheControlAsync(
+                baseUrl, username, password, cacheRequest, "m3u_editor_cache_playback", cancellationToken);
+        }
+
+        public Task<M3uEditorCacheControlResponse> SendCacheReleaseAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            CancellationToken cancellationToken)
+        {
+            return SendCacheControlAsync(
+                baseUrl, username, password, cacheRequest, "m3u_editor_cache_release", cancellationToken);
+        }
+
+        private async Task<M3uEditorCacheControlResponse> SendCacheControlAsync(
+            string baseUrl,
+            string username,
+            string password,
+            M3uEditorCacheControlRequest cacheRequest,
+            string action,
+            CancellationToken cancellationToken)
+        {
+            Guid mappingUuid;
+            Guid requestId;
+            if (cacheRequest == null || cacheRequest.IntegrationId < 1 ||
+                !Guid.TryParse(cacheRequest.MappingUuid, out mappingUuid) ||
+                !Guid.TryParse(cacheRequest.RequestId, out requestId) ||
+                string.IsNullOrEmpty(cacheRequest.Revision) || !RevisionPattern.IsMatch(cacheRequest.Revision) ||
+                string.IsNullOrEmpty(cacheRequest.ConsumerId) || !Regex.IsMatch(cacheRequest.ConsumerId, "^[a-f0-9]{64}$") ||
+                cacheRequest.Targets == null || cacheRequest.Targets.Count == 0 || cacheRequest.Targets.Count > 100 ||
+                cacheRequest.Targets.Any(target => target == null || string.IsNullOrWhiteSpace(target.CanonicalId) || string.IsNullOrWhiteSpace(target.VariantKey)) ||
+                !IsValidCacheActionPayload(cacheRequest, action))
+            {
+                throw new InvalidOperationException("Managed cache-control identity is invalid.");
+            }
+
+            var fields = new Dictionary<string, string>
+            {
+                ["username"] = username ?? string.Empty,
+                ["password"] = password ?? string.Empty,
+                ["action"] = action,
+                ["api_version"] = "1",
+                ["integration_id"] = cacheRequest.IntegrationId.ToString(CultureInfo.InvariantCulture),
+                ["mapping_uuid"] = cacheRequest.MappingUuid,
+                ["revision"] = cacheRequest.Revision,
+                ["request_id"] = cacheRequest.RequestId,
+                ["consumer_id"] = cacheRequest.ConsumerId
+            };
+            if (string.Equals(action, "m3u_editor_cache_playback", StringComparison.Ordinal))
+            {
+                fields["session_id"] = cacheRequest.SessionId;
+                fields["sequence"] = cacheRequest.Sequence.Value.ToString(CultureInfo.InvariantCulture);
+                fields["state"] = cacheRequest.State;
+            }
+            else if (string.Equals(action, "m3u_editor_cache_release", StringComparison.Ordinal))
+            {
+                fields["watched"] = cacheRequest.Watched.Value ? "1" : "0";
+                fields["delete_after_hours"] = cacheRequest.DeleteAfterHours.Value.ToString(CultureInfo.InvariantCulture);
+                fields["cohort_complete"] = cacheRequest.CohortComplete.Value ? "1" : "0";
+            }
+            for (var index = 0; index < cacheRequest.Targets.Count; index++)
+            {
+                fields["targets[" + index + "][canonical_id]"] = cacheRequest.Targets[index].CanonicalId;
+                fields["targets[" + index + "][variant_key]"] = cacheRequest.Targets[index].VariantKey;
+            }
+
+            var endpoint = await ResolveEndpointAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+            var requestUrl = endpoint.RequestBaseUrl + "/player_api.php?action=" + Uri.EscapeDataString(action);
+            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    using (var content = new FormUrlEncodedContent(fields))
+                    using (var request = CreateRequest(HttpMethod.Post, requestUrl, endpoint.HostHeader))
+                    {
+                        request.Content = content;
+                        using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
+                        {
+                            if (!response.IsSuccessStatusCode)
+                            {
+                                if (attempt == 0 && ((int)response.StatusCode == 429 || (int)response.StatusCode == 503))
+                                    continue;
+                                throw new InvalidOperationException("Managed cache prefetch request failed with HTTP " + (int)response.StatusCode + ".");
+                            }
+                            EnsureConfinedResponse(response, requestUrl);
+                            var body = await ReadLimitedBodyAsync(response, timeout.Token).ConfigureAwait(false);
+                            var envelope = JsonSerializer.Deserialize<M3uEditorResponse<M3uEditorCacheControlResponse>>(body, JsonOptions);
+                            if (envelope == null || envelope.ApiVersion != 1 || envelope.Data == null ||
+                                !string.Equals(envelope.Data.RequestId, cacheRequest.RequestId, StringComparison.OrdinalIgnoreCase))
+                                throw new InvalidOperationException("Managed cache prefetch response identity is invalid.");
+                            return envelope.Data;
+                        }
+                    }
+                }
+            }
+
+            throw new InvalidOperationException("Managed cache prefetch request failed.");
+        }
+
+        private static bool IsValidCacheActionPayload(
+            M3uEditorCacheControlRequest cacheRequest,
+            string action)
+        {
+            if (string.Equals(action, "m3u_editor_cache_prefetch", StringComparison.Ordinal))
+            {
+                return string.IsNullOrEmpty(cacheRequest.SessionId) &&
+                    !cacheRequest.Sequence.HasValue && string.IsNullOrEmpty(cacheRequest.State) &&
+                    !cacheRequest.Watched.HasValue && !cacheRequest.DeleteAfterHours.HasValue &&
+                    !cacheRequest.CohortComplete.HasValue;
+            }
+
+            if (string.Equals(action, "m3u_editor_cache_playback", StringComparison.Ordinal))
+            {
+                Guid sessionId;
+                return cacheRequest.Targets.Count == 1 &&
+                    Guid.TryParse(cacheRequest.SessionId, out sessionId) &&
+                    cacheRequest.Sequence.HasValue && cacheRequest.Sequence.Value > 0 &&
+                    (string.Equals(cacheRequest.State, "start", StringComparison.Ordinal) ||
+                     string.Equals(cacheRequest.State, "heartbeat", StringComparison.Ordinal) ||
+                     string.Equals(cacheRequest.State, "stop", StringComparison.Ordinal)) &&
+                    !cacheRequest.Watched.HasValue && !cacheRequest.DeleteAfterHours.HasValue &&
+                    !cacheRequest.CohortComplete.HasValue;
+            }
+
+            if (string.Equals(action, "m3u_editor_cache_release", StringComparison.Ordinal))
+            {
+                return cacheRequest.Targets.Count == 1 &&
+                    cacheRequest.Watched.HasValue && cacheRequest.DeleteAfterHours.HasValue &&
+                    cacheRequest.DeleteAfterHours.Value >= 0 && cacheRequest.DeleteAfterHours.Value <= 168 &&
+                    cacheRequest.CohortComplete.HasValue && string.IsNullOrEmpty(cacheRequest.SessionId) &&
+                    !cacheRequest.Sequence.HasValue && string.IsNullOrEmpty(cacheRequest.State);
+            }
+
+            return false;
         }
 
         public async Task<M3uEditorSyncResult> ReportSyncResultAsync(

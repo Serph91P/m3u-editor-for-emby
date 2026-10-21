@@ -43,5 +43,18 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.Null(capability);
             }
         }
+
+        [Fact]
+        public void TryGetCacheControlCapability_ExactVersionOneContract_IsAcceptedWithoutChangingPublishing()
+        {
+            var json = "{\"m3u_editor\":{\"library_publishing\":{\"cache_control\":{\"api_version\":1,\"actions\":{\"prefetch\":\"m3u_editor_cache_prefetch\",\"playback\":\"m3u_editor_cache_playback\",\"release\":\"m3u_editor_cache_release\"},\"max_targets\":100,\"heartbeat_seconds\":30,\"lease_seconds\":120}}}}";
+            using (var doc = JsonDocument.Parse(json))
+            {
+                Assert.True(M3uEditorPublishingCapabilityParser.TryGetCacheControlCapability(doc.RootElement, out var capability));
+                Assert.Equal(1, capability.ApiVersion);
+                Assert.Equal(100, capability.MaxTargets);
+                Assert.Equal("m3u_editor_cache_playback", capability.PlaybackAction);
+            }
+        }
     }
 }

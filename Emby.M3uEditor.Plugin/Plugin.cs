@@ -16,7 +16,7 @@ namespace Emby.M3uEditor.Plugin
 {
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
     {
-        private const string DashboardResourceRevision = "r5";
+        private const string DashboardResourceRevision = "r6";
         private static volatile Plugin _instance;
         internal static readonly object ConfigurationTransactionGate = new object();
         private readonly IApplicationHost _applicationHost;
@@ -70,6 +70,12 @@ namespace Emby.M3uEditor.Plugin
                 throw new ArgumentOutOfRangeException(nameof(requestedConfig.LiveTvTunerCount));
             }
 
+            if (configuration is PluginConfiguration cacheConfig &&
+                !ManagedPlaybackCacheConfiguration.IsValid(cacheConfig))
+            {
+                throw new ArgumentException("Managed playback cache configuration is invalid.", nameof(configuration));
+            }
+
             lock (ConfigurationTransactionGate)
             {
                 if (configuration is PluginConfiguration requested)
@@ -83,6 +89,8 @@ namespace Emby.M3uEditor.Plugin
                         pluginConfig.EnableLiveTv,
                         pluginConfig.LiveTvTunerCount,
                         _reconcileLogger);
+                    ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(
+                        pluginConfig.ManagedPlaybackCacheEnabled);
                 }
             }
         }
@@ -155,6 +163,11 @@ namespace Emby.M3uEditor.Plugin
                 },
                 new PluginPageInfo
                 {
+                    Name = "m3ueditorconfigr5",
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
+                },
+                new PluginPageInfo
+                {
                     Name = "m3ueditorconfigr4",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.html",
                 },
@@ -194,6 +207,11 @@ namespace Emby.M3uEditor.Plugin
                 new PluginPageInfo
                 {
                     Name = GetJsPageName(),
+                    EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
+                },
+                new PluginPageInfo
+                {
+                    Name = "m3ueditorconfigjsr5",
                     EmbeddedResourcePath = "Emby.M3uEditor.Plugin.Configuration.Web.config.js",
                 },
                 new PluginPageInfo
