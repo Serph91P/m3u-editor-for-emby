@@ -100,6 +100,97 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void ParseProgramme_OrderedHorizontalHierarchy_ReachesPrimaryBackdropAndThumb()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""series"">
+    <image type=""backdrop"" orient=""L"">https://example.com/show-main.jpg</image>
+    <image type=""backdrop"" orient=""L"">https://example.com/generic-backdrop.jpg</image>
+    <image type=""backdrop"" orient=""L"">https://example.com/show-main.jpg</image>
+    <image type=""still"" orient=""L"">https://example.com/episode.jpg</image>
+    <image type=""poster"" orient=""P"">https://example.com/portrait.jpg</image>
+    <icon src=""https://example.com/portrait.jpg"" width=""500"" height=""750"" />
+  </programme>
+  <programme start=""20250101130000 +0000"" stop=""20250101140000 +0000"" channel=""episode-only"">
+    <image type=""still"" orient=""L"">https://example.com/episode-only.jpg</image>
+  </programme>
+  <programme start=""20250101140000 +0000"" stop=""20250101150000 +0000"" channel=""logo-only"">
+    <icon src=""https://example.com/channel-logo.png"" type=""logo"" />
+  </programme>
+</tv>";
+
+            var programs = Parse(xml);
+            var series = Assert.Single(programs["series"]);
+            Assert.Equal("https://example.com/portrait.jpg", series.ImageUrl);
+            Assert.Equal("https://example.com/show-main.jpg", series.BackdropImageUrl);
+            Assert.Equal("https://example.com/episode.jpg", series.ThumbImageUrl);
+
+            var episodeOnly = Assert.Single(programs["episode-only"]);
+            Assert.Equal("https://example.com/episode-only.jpg", episodeOnly.ImageUrl);
+            Assert.Null(episodeOnly.BackdropImageUrl);
+            Assert.Equal("https://example.com/episode-only.jpg", episodeOnly.ThumbImageUrl);
+
+            var logoOnly = Assert.Single(programs["logo-only"]);
+            Assert.Equal("https://example.com/channel-logo.png", logoOnly.ImageUrl);
+            Assert.Equal("https://example.com/channel-logo.png", logoOnly.LogoImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_ArtworkLanguageAttributes_DoNotChangeRolePriority()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""localized"">
+    <image type=""poster"" orient=""P"" lang=""de"">https://example.com/poster-de.jpg</image>
+    <icon src=""https://example.com/poster-de.jpg"" width=""500"" height=""750"" />
+    <image type=""backdrop"" orient=""L"" lang=""en"">https://example.com/backdrop-en.jpg</image>
+    <image type=""still"" orient=""L"" lang=""fr"">https://example.com/still-fr.jpg</image>
+  </programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["localized"]);
+
+            Assert.Equal("https://example.com/poster-de.jpg", program.ImageUrl);
+            Assert.Equal("https://example.com/backdrop-en.jpg", program.BackdropImageUrl);
+            Assert.Equal("https://example.com/still-fr.jpg", program.ThumbImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_QualifiedPosterWinsPrimaryOverEpisodeStill()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""episode-with-poster"">
+    <image type=""poster"" orient=""P"">https://example.com/portrait.jpg</image>
+    <icon src=""https://example.com/portrait.jpg"" width=""500"" height=""750"" />
+    <image type=""still"" orient=""L"">https://example.com/episode.jpg</image>
+  </programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["episode-with-poster"]);
+
+            Assert.Equal("https://example.com/portrait.jpg", program.ImageUrl);
+            Assert.Equal("https://example.com/episode.jpg", program.ThumbImageUrl);
+            Assert.Equal("https://example.com/portrait.jpg", program.PosterUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_PosterOnlyFeedPreservesLegacyPrimaryCompatibility()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""poster-only"">
+    <image type=""poster"" orient=""P"">https://example.com/portrait.jpg</image>
+    <icon src=""https://example.com/portrait.jpg"" width=""500"" height=""750"" />
+  </programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["poster-only"]);
+
+            Assert.Equal("https://example.com/portrait.jpg", program.ImageUrl);
+            Assert.Equal(500, program.ImageWidth);
+            Assert.Equal(750, program.ImageHeight);
+            Assert.Equal("https://example.com/portrait.jpg", program.PosterUrl);
+        }
+
+        [Fact]
         public void ParseProgramme_ExactCoreExportFromSerializedEnricherOutput_ReachesPrimaryProgramInfo()
         {
             var xmlPath = System.Environment.GetEnvironmentVariable("CROSS_REPO_CORE_XML");
@@ -110,31 +201,53 @@ namespace Emby.M3uEditor.Plugin.Tests
             using var enricherOutput = JsonDocument.Parse(File.ReadAllBytes(enricherOutputPath));
             var root = enricherOutput.RootElement;
             var expectedTitle = root.GetProperty("programme_before").GetProperty("title").GetString();
-            var expectedPoster = root.GetProperty("host_changes").GetProperty("images")[0];
-            var expectedUrl = expectedPoster.GetProperty("url").GetString();
-            var expectedWidth = expectedPoster.GetProperty("width").GetInt32();
-            var expectedHeight = expectedPoster.GetProperty("height").GetInt32();
+            var hostChanges = root.GetProperty("host_changes");
+            var expectedImages = hostChanges.TryGetProperty("images", out var images)
+                ? images
+                : hostChanges.GetProperty("images_append");
+            var expectedBackdrops = expectedImages.EnumerateArray()
+                .Where(image => string.Equals(image.GetProperty("type").GetString(), "backdrop", System.StringComparison.OrdinalIgnoreCase))
+                .Select(image => image.GetProperty("url").GetString())
+                .ToArray();
+            var expectedStills = expectedImages.EnumerateArray()
+                .Where(image => string.Equals(image.GetProperty("type").GetString(), "still", System.StringComparison.OrdinalIgnoreCase))
+                .Select(image => image.GetProperty("url").GetString())
+                .ToArray();
+            var expectedPosters = expectedImages.EnumerateArray()
+                .Where(image => string.Equals(image.GetProperty("type").GetString(), "poster", System.StringComparison.OrdinalIgnoreCase))
+                .Select(image => image.GetProperty("url").GetString())
+                .ToArray();
+
+            Assert.NotEmpty(expectedStills);
+            Assert.NotEmpty(expectedPosters);
 
             using var stream = File.OpenRead(xmlPath);
             var programmes = XmltvParser.Parse(stream, null, null);
             var program = Assert.Single(programmes.Values.SelectMany(value => value).Where(value => value.Title == expectedTitle));
             var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
 
-            if (string.Equals(System.Environment.GetEnvironmentVariable("CROSS_REPO_EXPECT_EMBY_PRIMARY"), "false", System.StringComparison.OrdinalIgnoreCase))
+            Assert.Equal(expectedStills[expectedStills.Length - 1], program.ThumbImageUrl);
+            Assert.Equal(expectedPosters[0], program.ImageUrl);
+            Assert.Equal(expectedStills[expectedStills.Length - 1], info.ThumbImageUrl);
+            if (expectedBackdrops.Length == 0)
             {
-                Assert.Null(program.ImageUrl);
-                Assert.Equal(0, program.ImageWidth);
-                Assert.Equal(0, program.ImageHeight);
-                Assert.Null(info.ImageUrl);
-                return;
+                Assert.Equal(expectedPosters[0], program.ImageUrl);
+                Assert.Null(program.BackdropImageUrl);
+                Assert.Equal(expectedPosters[0], info.ImageUrl);
             }
-
-            Assert.Equal(expectedUrl, program.ImageUrl);
-            Assert.Equal(expectedWidth, program.ImageWidth);
-            Assert.Equal(expectedHeight, program.ImageHeight);
-            Assert.Equal(expectedUrl, info.ImageUrl);
-            Assert.Equal(expectedWidth, info.ImageWidth);
-            Assert.Equal(expectedHeight, info.ImageHeight);
+            else
+            {
+                Assert.True(expectedBackdrops.Length >= 2, "Producer artifact must carry distinct primary and secondary horizontal backdrops.");
+                Assert.NotEqual(expectedBackdrops[0], expectedBackdrops[1]);
+                Assert.Equal(expectedPosters[0], program.ImageUrl);
+                Assert.Equal(expectedBackdrops[0], program.BackdropImageUrl);
+                Assert.Equal(expectedPosters[0], info.ImageUrl);
+                Assert.Equal(expectedBackdrops[0], info.BackdropImageUrl);
+            }
+            Assert.True(program.ImageWidth > 0);
+            Assert.True(program.ImageHeight > program.ImageWidth);
+            Assert.Equal(program.ImageWidth, info.ImageWidth);
+            Assert.Equal(program.ImageHeight, info.ImageHeight);
         }
 
         [Fact]
@@ -251,8 +364,6 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var prog = Assert.Single(Parse(xml)["ch1"]);
 
-            // Standard poster URLs carry no intrinsic dimensions in the XMLTV DTD, so
-            // the measured legacy portrait poster remains the safe primary candidate.
             Assert.Equal("https://example.com/legacy-poster.jpg", prog.ImageUrl);
             Assert.Equal(500, prog.ImageWidth);
             Assert.Equal(750, prog.ImageHeight);
@@ -270,7 +381,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             var program = Assert.Single(Parse(xml)["ordered"]);
             var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "ordered", program.Title, program.Description);
 
+            Assert.Equal("https://example.com/canonical-backdrop.jpg", program.ImageUrl);
             Assert.Equal("https://example.com/canonical-backdrop.jpg", program.BackdropImageUrl);
+            Assert.Equal("https://example.com/canonical-backdrop.jpg", info.ImageUrl);
             Assert.Equal("https://example.com/canonical-backdrop.jpg", info.BackdropImageUrl);
         }
 
@@ -287,12 +400,31 @@ namespace Emby.M3uEditor.Plugin.Tests
             var programs = Parse(xml);
             Assert.Equal("https://example.com/eligible.jpg", Assert.Single(programs["conflict-first"]).BackdropImageUrl);
             Assert.Null(Assert.Single(programs["all-conflicting"]).BackdropImageUrl);
+            Assert.Equal("https://example.com/canonical.jpg", Assert.Single(programs["duplicate"]).ImageUrl);
             Assert.Equal("https://example.com/canonical.jpg", Assert.Single(programs["duplicate"]).BackdropImageUrl);
 
             var otherRoles = Assert.Single(programs["other-roles"]);
+            Assert.Equal("https://example.com/standard-first.jpg", otherRoles.ImageUrl);
             Assert.Equal("https://example.com/standard-first.jpg", otherRoles.BackdropImageUrl);
             Assert.Equal("https://example.com/still-last.jpg", otherRoles.ThumbImageUrl);
             Assert.Equal("https://example.com/logo-last.png", otherRoles.LogoImageUrl);
+        }
+
+        [Fact]
+        public void ParseProgramme_ConflictingStandardBackdropFallsBackToIndependentLegacyBackdrop()
+        {
+            const string xml = @"<tv>
+  <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""fallback"">
+    <image type=""backdrop"" orient=""L"">https://example.com/conflicting.jpg</image>
+    <image type=""poster"" orient=""P"">https://example.com/conflicting.jpg</image>
+    <icon src=""https://example.com/legacy-backdrop.jpg"" type=""backdrop"" />
+  </programme>
+</tv>";
+
+            var program = Assert.Single(Parse(xml)["fallback"]);
+
+            Assert.Equal("https://example.com/legacy-backdrop.jpg", program.ImageUrl);
+            Assert.Equal("https://example.com/legacy-backdrop.jpg", program.BackdropImageUrl);
         }
 
         [Fact]
@@ -329,7 +461,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var prog = Assert.Single(Parse(xml)["ch1"]);
 
-            Assert.Null(prog.ImageUrl);
+            Assert.Equal("https://example.com/legacy-backdrop.jpg", prog.ImageUrl);
             Assert.Equal("https://example.com/legacy-backdrop.jpg", prog.BackdropImageUrl);
             Assert.Equal("https://example.com/legacy-still.jpg", prog.ThumbImageUrl);
         }
@@ -348,7 +480,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var prog = Assert.Single(Parse(xml)["ch1"]);
             var info = M3uEditorTunerHost.BuildProgramInfo(prog, 1, "ch1", prog.Title, prog.Description);
 
-            Assert.Null(info.ImageUrl);
+            Assert.Equal("https://example.com/backdrop.jpg", info.ImageUrl);
             Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
             Assert.Equal("https://example.com/still.jpg", info.ThumbImageUrl);
         }
@@ -464,12 +596,14 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("https://example.com/duplicate.jpg", duplicate.ImageUrl);
             Assert.Equal("https://example.com/duplicate.jpg", duplicate.BackdropImageUrl);
 
-            foreach (var channelId in new[] { "alternatives", "conflict", "typed" })
+            foreach (var channelId in new[] { "alternatives", "conflict" })
             {
                 var program = Assert.Single(programs[channelId]);
                 Assert.Null(program.ImageUrl);
             }
-            Assert.Equal("https://example.com/backdrop.jpg", Assert.Single(programs["typed"]).BackdropImageUrl);
+            var typed = Assert.Single(programs["typed"]);
+            Assert.Equal("https://example.com/backdrop.jpg", typed.ImageUrl);
+            Assert.Equal("https://example.com/backdrop.jpg", typed.BackdropImageUrl);
         }
 
         [Fact]
@@ -641,7 +775,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             foreach (var channelId in new[] { "valid-first", "valid-last" })
             {
                 var program = Assert.Single(programs[channelId]);
-                Assert.Null(program.ImageUrl);
+                Assert.Equal("https://example.com/valid.jpg", program.ImageUrl);
                 Assert.Equal("https://example.com/valid.jpg", program.BackdropImageUrl);
             }
         }

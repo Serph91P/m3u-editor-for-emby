@@ -378,6 +378,21 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
         }
 
+        [Fact]
+        public void ArtworkPrimaryFallback_UsesBackdropThenStillThenConsumerLogo()
+        {
+            Assert.Equal("https://example.com/backdrop.jpg", Build(MakeProgram(
+                backdropImageUrl: "https://example.com/backdrop.jpg",
+                thumbImageUrl: "https://example.com/still.jpg",
+                logoImageUrl: "https://example.com/logo.png")).ImageUrl);
+            Assert.Equal("https://example.com/still.jpg", Build(MakeProgram(
+                thumbImageUrl: "https://example.com/still.jpg",
+                logoImageUrl: "https://example.com/logo.png")).ImageUrl);
+            Assert.Equal("https://example.com/logo.png", Build(MakeProgram(
+                logoImageUrl: "https://example.com/logo.png")).ImageUrl);
+            Assert.Null(Build(MakeProgram()).ImageUrl);
+        }
+
         [Theory]
         [InlineData(750, 750)]
         [InlineData(1280, 720)]

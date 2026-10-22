@@ -348,15 +348,20 @@ namespace Emby.M3uEditor.Plugin.Service
             var isSports = cats != null && cats.Exists(c =>
                 c.IndexOf("sport", System.StringComparison.OrdinalIgnoreCase) >= 0);
             var isSeries = !isMovie && !isSports;
-            var imageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl);
-            var imageWidth = p.ImageWidth > 0 ? p.ImageWidth : 0;
-            var imageHeight = p.ImageHeight > 0 ? p.ImageHeight : 0;
-            if (imageUrl == null && IsValidPortrait(p.PosterUrl, p.PosterWidth, p.PosterHeight))
-            {
-                imageUrl = Util.UrlValidator.SanitizeHttpUrl(p.PosterUrl);
-                imageWidth = p.PosterWidth;
-                imageHeight = p.PosterHeight;
-            }
+            var hasPortraitPoster = IsValidPortrait(p.PosterUrl, p.PosterWidth, p.PosterHeight);
+            var imageUrl = hasPortraitPoster
+                ? Util.UrlValidator.SanitizeHttpUrl(p.PosterUrl)
+                : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl)
+                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
+                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl)
+                    ?? Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl)
+                    ?? Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl);
+            var imageWidth = hasPortraitPoster
+                ? p.PosterWidth
+                : p.ImageWidth > 0 ? p.ImageWidth : 0;
+            var imageHeight = hasPortraitPoster
+                ? p.PosterHeight
+                : p.ImageHeight > 0 ? p.ImageHeight : 0;
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
             var showId = ToStableIdentity("program", p.ContentId)

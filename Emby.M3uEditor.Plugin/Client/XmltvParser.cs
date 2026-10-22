@@ -315,32 +315,55 @@ namespace Emby.M3uEditor.Plugin.Client
             {
                 // The matching untyped icon attests reported portrait geometry only;
                 // the parser does not fetch remote image bytes for verification.
-                program.ImageUrl = pairedPosters[0].Url;
-                program.ImageWidth = pairedPosters[0].Width;
-                program.ImageHeight = pairedPosters[0].Height;
+                program.PosterUrl = pairedPosters[0].Url;
+                program.PosterWidth = pairedPosters[0].Width;
+                program.PosterHeight = pairedPosters[0].Height;
             }
             else if (pairedPosters.Count == 0)
             {
                 var legacyPoster = FindSingleValidTypedPoster(typedPosterCandidates, conflictingArtworkUrls);
                 if (legacyPoster != null)
                 {
-                    program.ImageUrl = legacyPoster.Url;
-                    program.ImageWidth = legacyPoster.Width;
-                    program.ImageHeight = legacyPoster.Height;
+                    program.PosterUrl = legacyPoster.Url;
+                    program.PosterWidth = legacyPoster.Width;
+                    program.PosterHeight = legacyPoster.Height;
                 }
             }
-            // Enrichers emit ordered backdrop candidates with the canonical image first.
-            // Preserve that priority only for the backdrop contract; thumbnails and logos
-            // retain their historical last-candidate behavior below.
-            program.BackdropImageUrl = SelectFirstNonConflictingArtwork(
+            // Keep each qualified artwork role separate. A portrait poster is Emby's
+            // primary programme image; backdrop and episode still retain their own
+            // slots. If no poster is available, primary falls back through those roles.
+            var orderedBackdrops = SelectDistinctNonConflictingArtwork(
                 standardBackdropCandidates,
-                conflictingArtworkUrls)
-                ?? SelectFirstNonConflictingArtwork(legacyBackdropCandidates, conflictingArtworkUrls);
+                conflictingArtworkUrls);
+            if (orderedBackdrops.Count == 0)
+            {
+                orderedBackdrops = SelectDistinctNonConflictingArtwork(
+                    legacyBackdropCandidates,
+                    conflictingArtworkUrls);
+            }
+            if (orderedBackdrops.Count > 0)
+            {
+                program.BackdropImageUrl = orderedBackdrops[0];
+            }
             program.ThumbImageUrl = SelectLastNonConflictingArtwork(
                 standardThumbCandidates,
                 conflictingArtworkUrls)
                 ?? SelectLastNonConflictingArtwork(legacyThumbCandidates, conflictingArtworkUrls);
             program.LogoImageUrl = SelectLastNonConflictingArtwork(legacyLogoCandidates, conflictingArtworkUrls);
+            if (program.PosterUrl != null)
+            {
+                program.ImageUrl = program.PosterUrl;
+                program.ImageWidth = program.PosterWidth;
+                program.ImageHeight = program.PosterHeight;
+            }
+            else
+            {
+                program.ImageUrl = program.BackdropImageUrl
+                    ?? program.ThumbImageUrl
+                    ?? program.LogoImageUrl;
+                program.ImageWidth = 0;
+                program.ImageHeight = 0;
+            }
 
             if (!hasTypedArtworkRole)
             {
@@ -535,6 +558,20 @@ namespace Emby.M3uEditor.Plugin.Client
             }
 
             return null;
+        }
+
+        private static List<string> SelectDistinctNonConflictingArtwork(
+            List<string> candidates,
+            HashSet<string> conflictingArtworkUrls)
+        {
+            var selected = new List<string>();
+            foreach (var candidate in candidates)
+            {
+                if (!conflictingArtworkUrls.Contains(candidate) && !selected.Contains(candidate))
+                    selected.Add(candidate);
+            }
+
+            return selected;
         }
 
         private static void AddArtworkEvidence(
