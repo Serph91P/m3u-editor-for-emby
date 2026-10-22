@@ -1,8 +1,11 @@
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
+using System.Xml.Linq;
 using Emby.M3uEditor.Plugin.Service;
 using Emby.M3uEditor.Plugin.Tests.Fakes;
 using MediaBrowser.Model.Logging;
@@ -54,12 +57,248 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public async Task XmltvReExport_ProducesCompleteDocumentAcceptedByPinnedDtd()
+        {
+            var start = DateTimeOffset.UtcNow.AddMinutes(5);
+            var stop = start.AddHours(1);
+            const string channels = "[{\"num\":7,\"name\":\"Synthetic Channel\",\"stream_id\":42," +
+                "\"stream_icon\":\"https://art.example.test/channel.png\",\"epg_channel_id\":\"synthetic.example\"}]";
+            var sourceXml = string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<tv>
+  <programme start=""{0}"" stop=""{1}"" channel=""synthetic.example"">
+    <title>Synthetic programme</title>
+    <desc>Synthetic description</desc>
+    <icon src=""https://art.example.test/poster.jpg"" width=""500"" height=""750"" />
+    <episode-num system=""m3u-editor:content-id"">episode-12</episode-num>
+    <episode-num system=""m3u-editor:series-id"">series-4</episode-num>
+    <previously-shown />
+    <premiere />
+    <new />
+    <live />
+    <image type=""poster"" orient=""P"">https://art.example.test/poster.jpg</image>
+    <image type=""backdrop"" orient=""L"">https://art.example.test/backdrop.jpg</image>
+    <image type=""still"" orient=""L"">https://art.example.test/still.jpg</image>
+  </programme>
+</tv>",
+                start.ToString("yyyyMMddHHmmss zzz").Replace(":", string.Empty),
+                stop.ToString("yyyyMMddHHmmss zzz").Replace(":", string.Empty));
+            var handler = new FakeHttpHandler();
+            using (var sourceStream = new MemoryStream(Encoding.UTF8.GetBytes(sourceXml)))
+            {
+                var sourceProgram = Assert.Single(Emby.M3uEditor.Plugin.Client.XmltvParser.Parse(sourceStream, null, null)["synthetic.example"]);
+                Assert.Equal(start.ToUnixTimeSeconds(), sourceProgram.StartTimestamp);
+                Assert.Equal(stop.ToUnixTimeSeconds(), sourceProgram.StopTimestamp);
+            }
+            using (var filteredSourceStream = new MemoryStream(Encoding.UTF8.GetBytes(sourceXml)))
+            {
+                Assert.Contains(
+                    "synthetic.example",
+                    Emby.M3uEditor.Plugin.Client.XmltvParser.Parse(
+                        filteredSourceStream,
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeSeconds()).Keys);
+            }
+            handler.RespondWithSequence("action=get_live_streams", new[] { channels, channels });
+            handler.RespondWith("https://guide.example.test/xmltv.xml", sourceXml);
+            var logger = new NullLogger();
+            var configuration = new PluginConfiguration
+            {
+                BaseUrl = "https://editor.example.test",
+                Username = "synthetic-user",
+                Password = "synthetic-password",
+                EnableLiveTv = true,
+                EpgSource = EpgSourceMode.CustomUrl,
+                CustomEpgUrl = "https://guide.example.test/xmltv.xml",
+                IncludeAdultChannels = true,
+                EpgDaysToFetch = 1,
+                EnableDiagnosticsLogging = true,
+            };
+
+            string xmltv;
+            using (var service = new LiveTvService(
+                logger,
+                _ => new HttpClient(handler, false),
+                () => configuration,
+                () => { }))
+            {
+                xmltv = await service.GetXmltvEpgAsync(CancellationToken.None);
+            }
+
+            var document = XDocument.Parse(xmltv);
+            var programmes = document.Root.Elements("programme");
+            Assert.True(System.Linq.Enumerable.Count(programmes) == 1, xmltv + Environment.NewLine + logger.Messages + Environment.NewLine + string.Join(Environment.NewLine, handler.ReceivedUrls));
+            var programme = System.Linq.Enumerable.Single(programmes);
+            Assert.Equal(
+                new[] { "title", "desc", "icon", "episode-num", "episode-num", "previously-shown", "premiere", "new", "image", "image", "image" },
+                System.Linq.Enumerable.Select(programme.Elements(), element => element.Name.LocalName));
+            Assert.Equal("https://art.example.test/poster.jpg", programme.Element("icon").Attribute("src").Value);
+            Assert.Equal("500", programme.Element("icon").Attribute("width").Value);
+            Assert.Equal("750", programme.Element("icon").Attribute("height").Value);
+            Assert.Equal("episode-12", System.Linq.Enumerable.First(programme.Elements("episode-num")).Value);
+            Assert.Equal("series-4", System.Linq.Enumerable.Last(programme.Elements("episode-num")).Value);
+            Assert.DoesNotContain(programme.Elements(), element => element.Name.LocalName == "live");
+
+            ValidateWithPinnedXmltvDtd(document);
+
+            var invalidOldOrder = new XDocument(document);
+            var invalidProgramme = Assert.Single(invalidOldOrder.Root.Elements("programme"));
+            var invalidIcon = invalidProgramme.Element("icon");
+            invalidIcon.Remove();
+            System.Linq.Enumerable.Last(invalidProgramme.Elements("episode-num")).AddAfterSelf(invalidIcon);
+            Assert.Throws<XmlException>(() => ValidateWithPinnedXmltvDtd(invalidOldOrder));
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task XtreamEpgExport_PreservesArtworkThroughPreferredSourceAndWarmedCache(bool xmltvAvailable)
+        {
+            var start = DateTimeOffset.UtcNow.AddMinutes(5);
+            var stop = start.AddHours(1);
+            const string channels = "[{\"name\":\"Artwork Channel\",\"stream_id\":42,\"epg_channel_id\":\"art.example\"}]";
+            const string poster = "https://art.example.test/poster.jpg?x=1&y=2";
+            const string backdrop = "https://art.example.test/backdrop.jpg";
+            const string still = "https://art.example.test/still.jpg";
+            var sourceXml = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "<tv><programme start=\"{0}\" stop=\"{1}\" channel=\"art.example\">" +
+                "<title>XMLTV preferred</title><icon src=\"{2}\" width=\"500\" height=\"750\" />" +
+                "<image type=\"poster\" orient=\"P\">{2}</image>" +
+                "<image type=\"backdrop\" orient=\"L\">{3}</image>" +
+                "<image type=\"still\" orient=\"L\">{4}</image></programme></tv>",
+                start.UtcDateTime.ToString("yyyyMMddHHmmss") + " +0000",
+                stop.UtcDateTime.ToString("yyyyMMddHHmmss") + " +0000",
+                poster.Replace("&", "&amp;"), backdrop, still);
+            var json = "{\"epg_listings\":[{\"title\":\"SlNPTiBmYWxsYmFjaw==\"," +
+                "\"start_timestamp\":" + start.ToUnixTimeSeconds() + ",\"stop_timestamp\":" + stop.ToUnixTimeSeconds() +
+                ",\"poster_url\":\"" + poster + "\",\"poster_width\":500,\"poster_height\":750," +
+                "\"backdrop_url\":\"" + backdrop + "\"}]}";
+            var handler = new FakeHttpHandler();
+            handler.RespondWithSequence("action=get_live_streams", new[] { channels, channels });
+            handler.RespondWith("/xmltv.php?", xmltvAvailable ? sourceXml : "unavailable",
+                xmltvAvailable ? System.Net.HttpStatusCode.OK : System.Net.HttpStatusCode.ServiceUnavailable);
+            handler.RespondWith("action=get_simple_data_table&stream_id=42", json);
+            var configuration = new PluginConfiguration
+            {
+                BaseUrl = "https://editor.example.test",
+                Username = "synthetic-user",
+                Password = "synthetic-password",
+                EnableLiveTv = true,
+                EpgSource = EpgSourceMode.XtreamServer,
+                IncludeAdultChannels = true,
+                EpgDaysToFetch = 1,
+                EpgCacheMinutes = 30,
+            };
+
+            using (var service = new LiveTvService(new NullLogger(), _ => new HttpClient(handler, false),
+                () => configuration, () => { }))
+            {
+                var exported = XDocument.Parse(await service.GetXmltvEpgAsync(CancellationToken.None));
+                var programme = Assert.Single(exported.Root.Elements("programme"));
+                Assert.Equal(xmltvAvailable ? "XMLTV preferred" : "JSON fallback", programme.Element("title").Value);
+                Assert.Equal(poster, programme.Element("icon").Attribute("src").Value);
+                Assert.Equal("500", programme.Element("icon").Attribute("width").Value);
+                Assert.Equal("750", programme.Element("icon").Attribute("height").Value);
+                Assert.Contains(programme.Elements("image"), image =>
+                    (string)image.Attribute("type") == "poster" && image.Value == poster);
+                Assert.Contains(programme.Elements("image"), image =>
+                    (string)image.Attribute("type") == "backdrop" && image.Value == backdrop);
+                if (xmltvAvailable)
+                    Assert.Contains(programme.Elements("image"), image =>
+                        (string)image.Attribute("type") == "still" && image.Value == still);
+                ValidateWithPinnedXmltvDtd(exported);
+
+                // The direct export must not poison the native tuner cache with the
+                // poorer JSON source, or make the next tuner read fetch again.
+                var requestCount = handler.ReceivedUrls.Count;
+                var cached = Assert.Single(await service.FetchEpgForChannelCachedAsync(42, CancellationToken.None));
+                var native = M3uEditorTunerHost.BuildProgramInfo(cached, 42, "42", "Artwork programme", "");
+                Assert.Equal(poster, native.ImageUrl);
+                Assert.Equal(backdrop, native.BackdropImageUrl);
+                Assert.Equal(xmltvAvailable ? still : null, native.ThumbImageUrl);
+                Assert.Equal(requestCount, handler.ReceivedUrls.Count);
+                Assert.Single(System.Linq.Enumerable.Where(handler.ReceivedUrls, url => url.Contains("/xmltv.php?")));
+                Assert.Equal(xmltvAvailable ? 0 : 1, System.Linq.Enumerable.Count(handler.ReceivedUrls,
+                    url => url.Contains("action=get_simple_data_table")));
+                handler.AssertNoUnhandledRequests();
+            }
+        }
+
+        private static void ValidateWithPinnedXmltvDtd(XDocument document)
+        {
+            var dtdPath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "xmltv", "xmltv.dtd");
+            var validatedDocument = new XDocument(document);
+            validatedDocument.AddFirst(new XDocumentType("tv", null, "xmltv.dtd", null));
+
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Parse,
+                ValidationType = ValidationType.DTD,
+                XmlResolver = new PinnedFileXmlResolver(dtdPath),
+            };
+            settings.ValidationEventHandler += (sender, args) => throw new XmlException(args.Message, args.Exception);
+
+            using (var stringReader = new StringReader(validatedDocument.ToString(SaveOptions.DisableFormatting)))
+            using (var reader = XmlReader.Create(stringReader, settings, "file:///synthetic/xmltv.xml"))
+            {
+                while (reader.Read()) { }
+            }
+        }
+
+        private sealed class PinnedFileXmlResolver : XmlResolver
+        {
+            private readonly Uri _allowedDtd;
+
+            public PinnedFileXmlResolver(string dtdPath)
+            {
+                _allowedDtd = new Uri(Path.GetFullPath(dtdPath));
+            }
+
+            public override System.Net.ICredentials Credentials
+            {
+                set { }
+            }
+
+            public override object GetEntity(Uri absoluteUri, string role, Type ofObjectToReturn)
+            {
+                if (absoluteUri != _allowedDtd)
+                    throw new XmlException("Only the pinned local XMLTV DTD may be resolved.");
+
+                return File.OpenRead(_allowedDtd.LocalPath);
+            }
+
+            public override Uri ResolveUri(Uri baseUri, string relativeUri)
+            {
+                if (string.IsNullOrEmpty(relativeUri))
+                    return baseUri;
+                if (string.Equals(relativeUri, "file:///synthetic/xmltv.xml", StringComparison.Ordinal))
+                    return new Uri(relativeUri);
+                if (!string.Equals(relativeUri, "xmltv.dtd", StringComparison.Ordinal))
+                    throw new XmlException("Only the pinned local XMLTV DTD may be resolved.");
+
+                return _allowedDtd;
+            }
+        }
+
         private sealed class NullLogger : ILogger
         {
-            public void Info(string message, params object[] paramList) { }
+            public string Messages { get; private set; } = string.Empty;
+
+            public void Info(string message, params object[] paramList)
+            {
+                Messages += string.Format(message, paramList) + Environment.NewLine;
+            }
             public void Error(string message, params object[] paramList) { }
-            public void Warn(string message, params object[] paramList) { }
-            public void Debug(string message, params object[] paramList) { }
+            public void Warn(string message, params object[] paramList)
+            {
+                Messages += string.Format(message, paramList) + Environment.NewLine;
+            }
+            public void Debug(string message, params object[] paramList)
+            {
+                Messages += string.Format(message, paramList) + Environment.NewLine;
+            }
             public void Fatal(string message, params object[] paramList) { }
             public void FatalException(string message, Exception exception, params object[] paramList) { }
             public void ErrorException(string message, Exception exception, params object[] paramList) { }

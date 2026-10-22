@@ -21,4 +21,10 @@
     <ProjectReference Include="..\Emby.M3uEditor.Plugin\Emby.M3uEditor.Plugin.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Fixtures\xmltv\xmltv.dtd">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

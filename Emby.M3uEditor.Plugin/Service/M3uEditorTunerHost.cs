@@ -348,6 +348,20 @@ namespace Emby.M3uEditor.Plugin.Service
             var isSports = cats != null && cats.Exists(c =>
                 c.IndexOf("sport", System.StringComparison.OrdinalIgnoreCase) >= 0);
             var isSeries = !isMovie && !isSports;
+            var imageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl);
+            var imageWidth = p.ImageWidth > 0 ? p.ImageWidth : 0;
+            var imageHeight = p.ImageHeight > 0 ? p.ImageHeight : 0;
+            if (imageUrl == null && IsValidPortrait(p.PosterUrl, p.PosterWidth, p.PosterHeight))
+            {
+                imageUrl = Util.UrlValidator.SanitizeHttpUrl(p.PosterUrl);
+                imageWidth = p.PosterWidth;
+                imageHeight = p.PosterHeight;
+            }
+            var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
+                ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
+            var showId = ToStableIdentity("program", p.ContentId)
+                ?? ToOccurrenceIdentity(streamId, p.StartTimestamp);
+            var seriesId = ToStableIdentity("series", p.SeriesId);
 
             return new ProgramInfo
             {
@@ -361,10 +375,10 @@ namespace Emby.M3uEditor.Plugin.Service
                 IsLive = p.IsLive,
                 IsRepeat = p.IsPreviouslyShown,
                 IsPremiere = p.IsNew || p.IsPremiere,
-                ImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl),
-                ImageWidth = p.ImageWidth > 0 ? p.ImageWidth : 0,
-                ImageHeight = p.ImageHeight > 0 ? p.ImageHeight : 0,
-                BackdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl),
+                ImageUrl = imageUrl,
+                ImageWidth = imageWidth,
+                ImageHeight = imageHeight,
+                BackdropImageUrl = backdropImageUrl,
                 ThumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl),
                 LogoImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl),
                 Genres = cats ?? new List<string>(),
@@ -376,8 +390,35 @@ namespace Emby.M3uEditor.Plugin.Service
                     c.IndexOf("children", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                     c.IndexOf("kids", System.StringComparison.OrdinalIgnoreCase) >= 0),
                 IsSeries = isSeries,
-                SeriesId = isSeries && !string.IsNullOrEmpty(title) ? title.ToLowerInvariant() : null,
+                // Emby uses ShowId for its exact other-airings lookup. Generic
+                // source ids and display titles cannot prove content equality, so
+                // unknown records get an occurrence-only identity rather than null.
+                ShowId = showId,
+                SeriesId = isSeries ? seriesId : null,
             };
+        }
+
+        private static string ToStableIdentity(string type, string sourceId)
+        {
+            if (string.IsNullOrWhiteSpace(sourceId))
+            {
+                return null;
+            }
+
+            return string.Concat("xtream:", type, ":", sourceId.Trim());
+        }
+
+        private static string ToOccurrenceIdentity(int streamId, long startTimestamp)
+        {
+            return string.Format(CultureInfo.InvariantCulture,
+                "xtream:occurrence:{0}:{1}", streamId, startTimestamp);
+        }
+
+        private static bool IsValidPortrait(string url, int width, int height)
+        {
+            return Util.UrlValidator.SanitizeHttpUrl(url) != null
+                && width > 0
+                && height > width;
         }
 
         internal static void ApplyChannelLogoVariants(ChannelInfo channelInfo, string imageUrl, bool useM3uLogoForAllChannelImages)
