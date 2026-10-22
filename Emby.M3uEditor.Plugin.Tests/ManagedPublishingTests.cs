@@ -14,8 +14,29 @@ using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class ManagedPublishingTests : SyncTestBase
     {
+        [Fact]
+        public async Task PublishManagedMappingAsync_StrmManifestStoresIdentityWithoutPlaybackUrl()
+        {
+            var mapping = MovieMapping(1);
+
+            var result = await MakeService().PublishManagedMappingAsync(mapping, None);
+
+            Assert.True(result.Success, result.Error);
+            using (var manifest = JsonDocument.Parse(File.ReadAllText(Path.Join(
+                TempDir.Path, ".m3u-editor-for-emby", "active.json"))))
+            {
+                var strm = manifest.RootElement.GetProperty("Files")
+                    .EnumerateArray().Single(file => file.GetProperty("RelativePath").GetString().EndsWith(".strm"));
+                Assert.Equal("movie:tmdb:603", strm.GetProperty("CanonicalId").GetString());
+                Assert.Equal("v00", strm.GetProperty("VariantKey").GetString());
+                Assert.Equal(1, strm.GetProperty("SourceId").GetInt32());
+                Assert.False(strm.TryGetProperty("PlaybackUrl", out _));
+            }
+        }
+
         [Fact]
         public async Task PublishManagedMappingAsync_UnapprovedOutputRoot_FailsBeforeWriting()
         {
@@ -30,12 +51,17 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*", SearchOption.AllDirectories));
         }
 
-        [Fact]
-        public async Task PublishManagedMappingAsync_MissingOwnedMappingLeaf_IsProvisionedOnFirstReconcile()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task PublishManagedMappingAsync_MissingOwnedMappingLeaf_IsProvisionedOnFirstReconcile(bool explicitOutput)
         {
             using (var owner = new TempDirectory())
             {
-                var config = new PluginConfiguration();
+                var config = new PluginConfiguration
+                {
+                    ManagedPublishingOutputRoot = explicitOutput ? Path.Join(TempDir.Path, "custom-publishing") : string.Empty
+                };
                 Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
                 var libraries = new ManagedLibraryProvisioningService(owner.Path);
                 var operation = Guid.NewGuid().ToString("D");

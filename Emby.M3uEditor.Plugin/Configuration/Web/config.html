@@ -4,7 +4,7 @@
      data-forcescrollbar="true"
      data-centerfocus="true"
      data-bindheader="true"
-     data-controller="__plugin/m3ueditorconfigjsr4"
+     data-controller="__plugin/m3ueditorconfigjsr6"
      data-title="m3u-editor for Emby">
 
   <div class="scrollSlider flex-grow flex-direction-column padded-left padded-left-page padded-right padded-top-page padded-bottom-page">
@@ -200,7 +200,7 @@
                             style="padding:0.6em 1.5em; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; color:inherit; font-size:1em; opacity:0.7;">
                         Dashboard
                     </button>
-                    <button type="button" class="tabBtn tabBtnManagedPublishing" data-tab="managedPublishing"
+                    <button type="button" class="tabBtn tabBtnManagedPublishing" data-tab="managedPublishing" title="View managed publishing status and configure its output directory" aria-label="Managed Publishing tab"
                             style="padding:0.6em 1.5em; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; color:inherit; font-size:1em; opacity:0.7;">
                         Managed Publishing
                     </button>
@@ -252,7 +252,7 @@
                     <div class="managedPublishingSummary dashboard-card" style="margin-bottom:1.2em;">
                         <h3>Managed Publishing</h3>
                         <div class="managedPublishingSummaryStatus" style="opacity:0.7;">Checking managed publishing status...</div>
-                        <button class="btnOpenManagedPublishing raised button-secondary" is="emby-button" type="button" style="margin-top:0.8em;">Open Managed Publishing</button>
+                        <button class="btnOpenManagedPublishing raised button-secondary" is="emby-button" type="button" style="margin-top:0.8em;" title="Open the Managed Publishing tab" aria-label="Open Managed Publishing">Open Managed Publishing</button>
                     </div>
 
                     <div class="dashboard-card" style="margin-bottom:1.2em;">
@@ -272,19 +272,31 @@
                     <div class="verticalSection managedPublishingCard">
                         <h2 class="sectionTitle">Managed m3u-editor Publishing</h2>
                         <div class="fieldDescription" style="margin-bottom:0.8em;">Managed by m3u-editor. Connection readiness and publishing status are read-only here.</div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtManagedPublishingOutputRoot">Managed publishing output directory</label>
+                            <input is="emby-input" id="txtManagedPublishingOutputRoot" class="txtManagedPublishingOutputRoot" type="text" autocomplete="off" title="Absolute container path for managed publishing output; leave blank to use the legacy default" aria-describedby="managedPublishingOutputRootHelp managedPublishingOutputRootResult" />
+                            <div id="managedPublishingOutputRootHelp" class="fieldDescription">Absolute container path. Leave blank to use the legacy default. Existing mappings, managed files, and generations are not migrated automatically; the server blocks unsafe changes.</div>
+                            <button is="emby-button" type="button" class="raised button-submit btnManagedSaveOutputRoot" title="Save only the managed publishing output directory" aria-label="Save managed publishing output directory">Save output directory</button>
+                            <div class="managedPublishingOutputRootResult" id="managedPublishingOutputRootResult" role="status" aria-live="polite"></div>
+                        </div>
+                        <div class="inputContainer" style="margin-top:0.8em;">
+                            <label class="inputLabel inputLabelUnfocused" for="managedPublishingEffectiveOutputRoot">Effective managed output directory</label>
+                            <div id="managedPublishingEffectiveOutputRoot" class="managedPublishingEffectiveOutputRoot" role="status" aria-live="polite" aria-label="Effective managed publishing output directory" title="Server-confirmed effective managed publishing output directory">Checking server-confirmed output directory...</div>
+                            <div class="fieldDescription">Read-only server-confirmed path used by managed publishing.</div>
+                        </div>
                         <div class="managedPublishingViews managedViewTabs" aria-label="Managed publishing views">
-                            <button class="managedViewBtn active" data-managed-view="overview" type="button" aria-pressed="true">Overview</button>
-                            <button class="managedViewBtn" data-managed-view="movies" type="button" aria-pressed="false">Movies</button>
-                            <button class="managedViewBtn" data-managed-view="series" type="button" aria-pressed="false">Series</button>
+                            <button class="managedViewBtn active" data-managed-view="overview" type="button" aria-pressed="true" title="Show managed publishing overview" aria-label="Show managed publishing overview">Overview</button>
+                            <button class="managedViewBtn" data-managed-view="movies" type="button" aria-pressed="false" title="Show managed movie mappings" aria-label="Show managed movie mappings">Movies</button>
+                            <button class="managedViewBtn" data-managed-view="series" type="button" aria-pressed="false" title="Show managed series mappings" aria-label="Show managed series mappings">Series</button>
                         </div>
                         <div class="managedViewPanel managedOverview" data-managed-panel="overview">
                             <div class="managedPublishingStatus" style="opacity:0.7;">Checking versioned capability...</div>
                             <div class="managedPublishingDetails" style="margin-top:0.7em; font-size:0.9em;"></div>
                             <div class="managedPublishingMappings" style="margin-top:0.7em;"></div>
                             <div class="managedPublishingPagination" style="display:flex; align-items:center; gap:0.5em; margin-top:0.5em;">
-                                <button class="btnManagedPreviousPage raised button-secondary" is="emby-button" type="button" disabled>Previous</button>
+                                <button class="btnManagedPreviousPage raised button-secondary" is="emby-button" type="button" disabled title="Show previous managed mapping page" aria-label="Show previous managed mapping page">Previous</button>
                                 <span class="managedPublishingPage" style="opacity:0.65;"></span>
-                                <button class="btnManagedNextPage raised button-secondary" is="emby-button" type="button" disabled>Next</button>
+                                <button class="btnManagedNextPage raised button-secondary" is="emby-button" type="button" disabled title="Show next managed mapping page" aria-label="Show next managed mapping page">Next</button>
                             </div>
                         </div>
                         <div class="managedViewPanel managedMovies" data-managed-panel="movies" style="display:none;">
@@ -299,10 +311,29 @@
                         </div>
                         <div class="managedPublishingWarning" style="display:none; margin-top:0.7em; color:#e6a23c;"></div>
                         <div class="managedPublishingError" style="display:none; margin-top:0.7em; color:#cc4444;"></div>
+                        <details class="settings-collapsible" data-collapse-key="managed.playback-cache" style="margin-top:1em;">
+                            <summary>Playback cache (advanced)</summary>
+                            <div class="fieldDescription">Optional cache prefetch for managed media only. It remains off until explicitly enabled.</div>
+                            <div class="managedPlaybackCacheStatus fieldDescription" style="margin-top:0.7em;">Capability, active identity, and provider budget are checked fail-closed before cache work is accepted.</div>
+                            <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:0.7em;">
+                                <label><input class="chkManagedPlaybackCacheEnabled" type="checkbox" is="emby-checkbox" /> <span>Enable managed playback cache</span></label>
+                            </div>
+                            <div class="selectContainer">
+                                <select class="selManagedPlaybackCacheMode" is="emby-select" label="Prefetch mode">
+                                    <option value="off">Off</option><option value="next">Next episode</option><option value="next_n">Next episodes</option><option value="remaining_season">Remaining season</option><option value="whole_season">Whole season</option>
+                                </select>
+                            </div>
+                            <div class="inputContainer managedPlaybackCacheNextCount"><input class="txtManagedPlaybackCacheNextCount" type="number" min="1" max="10" is="emby-input" label="Next episode count" /></div>
+                            <div class="checkboxContainer"><label><input class="chkManagedPlaybackCacheDeleteAfterWatched" type="checkbox" is="emby-checkbox" /> <span>Release after watched by selected profiles</span></label></div>
+                            <div class="managedPlaybackCacheRetention">
+                                <div class="inputContainer"><input class="txtManagedPlaybackCacheDeleteGraceHours" type="number" min="0" max="168" is="emby-input" label="Release grace period (hours)" /></div>
+                                <div class="inputContainer"><textarea class="txtManagedPlaybackCacheUserIds" is="emby-input" rows="3" label="Selected Emby profile IDs (one per line)"></textarea></div>
+                            </div>
+                        </details>
                         <div style="display:flex; align-items:center; gap:0.5em; flex-wrap:wrap; margin-top:0.9em;">
-                            <button class="btnManagedReconcile raised button-submit" is="emby-button" type="button" disabled>Reconcile Now</button>
-                            <select is="emby-select" class="managedRollbackMapping" style="min-width:14em;"></select>
-                            <button class="btnManagedRollback raised button-secondary" is="emby-button" type="button" disabled>Rollback Previous Generation</button>
+                            <button class="btnManagedReconcile raised button-submit" is="emby-button" type="button" disabled title="Reconcile the managed publishing catalog now" aria-label="Reconcile managed publishing catalog now">Reconcile Now</button>
+                            <select is="emby-select" class="managedRollbackMapping" style="min-width:14em;" title="Select the managed library mapping to roll back" aria-label="Managed library mapping to roll back"></select>
+                            <button class="btnManagedRollback raised button-secondary" is="emby-button" type="button" disabled title="Roll back the selected mapping to its previous generation" aria-label="Roll back selected mapping to previous generation">Rollback Previous Generation</button>
                         </div>
                         <div class="managedPublishingResult" style="margin-top:0.5em;"></div>
                     </div>

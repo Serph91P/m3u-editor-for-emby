@@ -22,11 +22,22 @@ namespace Emby.M3uEditor.Plugin
         public string ManagedPreviousGeneration { get; set; } = string.Empty;
         public string ManagedMappingsJson { get; set; } = string.Empty;
         public string ManagedApprovedOutputRoots { get; set; } = string.Empty;
+        // Empty preserves the legacy DataFolderPath/managed-publishing location.
+        public string ManagedPublishingOutputRoot { get; set; } = string.Empty;
         public string ManagedDirectoryOwnershipJson { get; set; } = string.Empty;
         public string ManagedDryRunSummary { get; set; } = string.Empty;
         public int ManagedOmittedVersions { get; set; }
         public string ManagedLastError { get; set; } = string.Empty;
         public long ManagedLastSuccessTicks { get; set; }
+
+        // Managed playback cache is deliberately opt-in. These primitive values
+        // remain XML-compatible durable configuration, not runtime state.
+        public bool ManagedPlaybackCacheEnabled { get; set; } = false;
+        public string ManagedPlaybackCacheMode { get; set; } = "off";
+        public int ManagedPlaybackCacheNextCount { get; set; } = 1;
+        public bool ManagedPlaybackCacheDeleteAfterWatched { get; set; } = false;
+        public int ManagedPlaybackCacheDeleteGraceHours { get; set; } = 24;
+        public string[] ManagedPlaybackCacheUserIds { get; set; } = new string[0];
 
         // Live TV
         public bool EnableLiveTv { get; set; } = true;

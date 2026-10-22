@@ -86,6 +86,13 @@ namespace Emby.M3uEditor.Plugin.Service
         public string RelativePath { get; set; }
         public string Sha256 { get; set; }
         public long Length { get; set; }
+        public string CanonicalId { get; set; }
+        public string VariantKey { get; set; }
+        public int? SourceId { get; set; }
+        public int? PlaylistId { get; set; }
+        public string SeriesCanonicalId { get; set; }
+        public int? SeasonNumber { get; set; }
+        public int? EpisodeNumber { get; set; }
     }
 
     internal sealed class ManagedPlannedFile
@@ -94,6 +101,13 @@ namespace Emby.M3uEditor.Plugin.Service
         public string Content { get; set; }
         public string Sha256 { get; set; }
         public bool IsNfo { get; set; }
+        public string CanonicalId { get; set; }
+        public string VariantKey { get; set; }
+        public int? SourceId { get; set; }
+        public int? PlaylistId { get; set; }
+        public string SeriesCanonicalId { get; set; }
+        public int? SeasonNumber { get; set; }
+        public int? EpisodeNumber { get; set; }
     }
 
     public partial class StrmSyncService
@@ -499,7 +513,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     config.ManagedLastSuccessTicks = DateTime.UtcNow.Ticks;
                 }
 
-                saveConfig?.Invoke();
+                PersistManagedConfiguration(config, saveConfig);
                 progress?.Report(100);
                 return result;
             }
@@ -607,7 +621,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 var ownerPath = ManagedOwnerPathProvider == null
                     ? Plugin.InstanceOrNull?.DataFolderPath
                     : ManagedOwnerPathProvider();
-                if (!ManagedSetupService.TryGetCandidateRoot(ownerPath, out candidate) ||
+                if (!ManagedSetupService.TryGetCandidateRoot(ownerPath, out candidate, config) ||
                     !roots.Any(value => string.Equals(value, candidate, PathComparison)))
                 {
                     error = "Managed publishing requires one companion-owned canonical root.";
@@ -710,8 +724,18 @@ namespace Emby.M3uEditor.Plugin.Service
             result.Error = error;
             config.ManagedPublishingEnabled = false;
             config.ManagedLastError = error;
-            saveConfig?.Invoke();
+            PersistManagedConfiguration(config, saveConfig);
             return result;
+        }
+
+        private static void PersistManagedConfiguration(PluginConfiguration config, Action saveConfig)
+        {
+            // SaveConfiguration does not invoke Plugin.UpdateConfiguration on Emby.
+            // Publish the final mapping snapshot to the running lifecycle before the
+            // persisted state can be observed by a later user-data callback.
+            ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(
+                config != null && config.ManagedPlaybackCacheEnabled);
+            saveConfig?.Invoke();
         }
 
         private void RemoveOnlyManagedGeneration(
@@ -1142,7 +1166,14 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         RelativePath = file.RelativePath,
                         Sha256 = file.Sha256,
-                        Length = Encoding.UTF8.GetByteCount(file.Content)
+                        Length = Encoding.UTF8.GetByteCount(file.Content),
+                        CanonicalId = file.IsNfo ? null : file.CanonicalId,
+                        VariantKey = file.IsNfo ? null : file.VariantKey,
+                        SourceId = file.IsNfo ? null : file.SourceId,
+                        PlaylistId = file.IsNfo ? null : file.PlaylistId,
+                        SeriesCanonicalId = file.IsNfo ? null : file.SeriesCanonicalId,
+                        SeasonNumber = file.IsNfo ? null : file.SeasonNumber,
+                        EpisodeNumber = file.IsNfo ? null : file.EpisodeNumber
                     }).ToList()
                 };
                 InvokeManagedPhase("before-manifest");
@@ -1302,7 +1333,18 @@ namespace Emby.M3uEditor.Plugin.Service
                 var filename = versionsEnabled
                     ? item.BaseFilename + " - " + variant.Key + ".strm"
                     : item.BaseFilename + ".strm";
-                AddPlanFile(plan, CombineRelative(folder, filename), variant.Preferred.PlaybackUrl.Trim() + "\n", false);
+                AddPlanFile(
+                    plan,
+                    CombineRelative(folder, filename),
+                    variant.Preferred.PlaybackUrl.Trim() + "\n",
+                    false,
+                    item.CanonicalId,
+                    variant.Key,
+                    variant.Preferred.SourceId,
+                    variant.Preferred.PlaylistId,
+                    item.SeriesCanonicalId,
+                    item.SeasonNumber,
+                    item.EpisodeNumber);
             }
         }
 
@@ -1310,14 +1352,28 @@ namespace Emby.M3uEditor.Plugin.Service
             List<ManagedPlannedFile> plan,
             string relativePath,
             string content,
-            bool isNfo)
+            bool isNfo,
+            string canonicalId = null,
+            string variantKey = null,
+            int? sourceId = null,
+            int? playlistId = null,
+            string seriesCanonicalId = null,
+            int? seasonNumber = null,
+            int? episodeNumber = null)
         {
             plan.Add(new ManagedPlannedFile
             {
                 RelativePath = relativePath,
                 Content = content,
                 Sha256 = ComputeManagedHash(content),
-                IsNfo = isNfo
+                IsNfo = isNfo,
+                CanonicalId = canonicalId,
+                VariantKey = variantKey,
+                SourceId = sourceId,
+                PlaylistId = playlistId,
+                SeriesCanonicalId = seriesCanonicalId,
+                SeasonNumber = seasonNumber,
+                EpisodeNumber = episodeNumber
             });
         }
 
@@ -1456,7 +1512,14 @@ namespace Emby.M3uEditor.Plugin.Service
                     RelativePath = staleFile.RelativePath,
                     Content = content,
                     Sha256 = staleFile.Sha256,
-                    IsNfo = staleFile.RelativePath.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase)
+                    IsNfo = staleFile.RelativePath.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase),
+                    CanonicalId = staleFile.CanonicalId,
+                    VariantKey = staleFile.VariantKey,
+                    SourceId = staleFile.SourceId,
+                    PlaylistId = staleFile.PlaylistId,
+                    SeriesCanonicalId = staleFile.SeriesCanonicalId,
+                    SeasonNumber = staleFile.SeasonNumber,
+                    EpisodeNumber = staleFile.EpisodeNumber
                 });
             }
 
