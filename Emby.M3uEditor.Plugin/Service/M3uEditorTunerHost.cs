@@ -349,19 +349,44 @@ namespace Emby.M3uEditor.Plugin.Service
                 c.IndexOf("sport", System.StringComparison.OrdinalIgnoreCase) >= 0);
             var isSeries = !isMovie && !isSports;
             var hasPortraitPoster = IsValidPortrait(p.PosterUrl, p.PosterWidth, p.PosterHeight);
+            var thumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl);
+            // Preserve a direct legacy scalar, but never manufacture Primary from
+            // a known secondary role. Its geometry must belong to the selected image.
             var imageUrl = hasPortraitPoster
                 ? Util.UrlValidator.SanitizeHttpUrl(p.PosterUrl)
-                : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl);
+                : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl);
             var imageWidth = hasPortraitPoster
                 ? p.PosterWidth
-                : p.ImageWidth > 0 ? p.ImageWidth : 0;
+                : imageUrl != null ? Math.Max(0, p.ImageWidth) : 0;
             var imageHeight = hasPortraitPoster
                 ? p.PosterHeight
-                : p.ImageHeight > 0 ? p.ImageHeight : 0;
+                : imageUrl != null ? Math.Max(0, p.ImageHeight) : 0;
+            var preservedPrimaryUrl = Util.UrlValidator.SanitizeHttpUrl(p.PreservedPrimaryUrl);
+            if (preservedPrimaryUrl != null)
+            {
+                imageUrl = preservedPrimaryUrl;
+                imageWidth = 0;
+                imageHeight = 0;
+                var conflictingGeometry = false;
+                foreach (var candidate in new[] {
+                    (Url: p.ImageUrl, Width: p.ImageWidth, Height: p.ImageHeight),
+                    (Url: p.PosterUrl, Width: p.PosterWidth, Height: p.PosterHeight),
+                    (Url: p.ThumbImageUrl, Width: p.ThumbWidth, Height: p.ThumbHeight) })
+                {
+                    if (!string.Equals(candidate.Url, preservedPrimaryUrl, StringComparison.Ordinal)
+                        || candidate.Width <= 0 || candidate.Height <= 0)
+                        continue;
+                    if (imageWidth > 0 && (imageWidth != candidate.Width || imageHeight != candidate.Height))
+                        conflictingGeometry = true;
+                    imageWidth = candidate.Width;
+                    imageHeight = candidate.Height;
+                }
+                if (conflictingGeometry)
+                {
+                    imageWidth = 0;
+                    imageHeight = 0;
+                }
+            }
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
             var showId = ToStableIdentity("program", p.ContentId)
@@ -384,7 +409,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 ImageWidth = imageWidth,
                 ImageHeight = imageHeight,
                 BackdropImageUrl = backdropImageUrl,
-                ThumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl),
+                ThumbImageUrl = thumbImageUrl,
                 LogoImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl),
                 Genres = cats ?? new List<string>(),
                 IsSports = isSports,
