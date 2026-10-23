@@ -31,7 +31,105 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
-        [InlineData("still_only", "https://example.com/still.jpg", null)]
+        [InlineData("backdrop", false)]
+        [InlineData("backdrop", true)]
+        [InlineData("still", false)]
+        [InlineData("still", true)]
+        [InlineData("logo", false)]
+        [InlineData("logo", true)]
+        public void Xmltv_ExplicitSecondaryRoleDoesNotPopulatePrimary(string role, bool scalarDuplicate)
+        {
+            var xml = ProducerXml();
+            var programme = xml.Root.Element("programme");
+            programme.Elements().Where(e => e.Name == "icon" || e.Name == "image").Remove();
+            var url = "https://example.com/secondary.jpg";
+            programme.Add(new XElement("icon", new XAttribute("src", url),
+                new XAttribute("type", role), new XAttribute("width", 1920), new XAttribute("height", 1080)));
+            if (scalarDuplicate)
+                programme.Add(new XElement("icon", new XAttribute("src", url)));
+
+            foreach (var reverse in new[] { false, true })
+            {
+                if (reverse)
+                    programme.ReplaceNodes(programme.Elements().Reverse().ToArray());
+                var program = Parse(xml);
+                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
+                Assert.Null(program.ImageUrl);
+                Assert.Null(info.ImageUrl);
+                Assert.Equal(0, info.ImageWidth);
+                Assert.Equal(0, info.ImageHeight);
+                Assert.Equal(role == "backdrop" ? url : null, info.BackdropImageUrl);
+                Assert.Equal(role == "still" ? url : null, info.ThumbImageUrl);
+                Assert.Equal(role == "logo" ? url : null, info.LogoImageUrl);
+            }
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("unknown")]
+        public void Xmltv_ProtectedLegacyScalarRemainsDirectPrimary(string type)
+        {
+            // Overwrite-off producers may retain a historical scalar with unknown
+            // geometry/role. The consumer must not reinterpret or delete that value.
+            var xml = ProducerXml();
+            var programme = xml.Root.Element("programme");
+            programme.Elements().Where(e => e.Name == "icon" || e.Name == "image").Remove();
+            var icon = new XElement("icon", new XAttribute("src", "https://example.com/protected.jpg"));
+            if (type != null)
+                icon.SetAttributeValue("type", type);
+            programme.Add(icon);
+            var program = Parse(xml);
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
+
+            Assert.Equal("https://example.com/protected.jpg", info.ImageUrl);
+            Assert.Equal(0, info.ImageWidth);
+            Assert.Equal(0, info.ImageHeight);
+            Assert.Null(info.BackdropImageUrl);
+            Assert.Null(info.ThumbImageUrl);
+            Assert.Null(info.LogoImageUrl);
+        }
+
+        [Fact]
+        public void DirectLegacyScalarIsPreservedEvenWhenAlsoSuppliedAsBackdrop()
+        {
+            // Do not confuse preserving an explicit primary with synthesizing one.
+            var program = new EpgProgram
+            {
+                ImageUrl = "https://example.com/legacy.jpg",
+                ImageWidth = 1280,
+                ImageHeight = 720,
+                BackdropImageUrl = "https://example.com/legacy.jpg",
+                ThumbImageUrl = "https://example.com/still.jpg",
+                ThumbWidth = 1920,
+                ThumbHeight = 1080,
+            };
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
+
+            Assert.Equal(program.ImageUrl, info.ImageUrl);
+            Assert.Equal(1280, info.ImageWidth);
+            Assert.Equal(720, info.ImageHeight);
+            Assert.Equal(program.BackdropImageUrl, info.BackdropImageUrl);
+            Assert.Equal(program.ThumbImageUrl, info.ThumbImageUrl);
+        }
+
+        [Fact]
+        public void ProducerJson_BackdropOnlyDoesNotPopulatePrimary()
+        {
+            var json = JsonNode.Parse(ProducerJson("control")).AsObject();
+            json.Remove("poster_url");
+            json.Remove("poster_width");
+            json.Remove("poster_height");
+            var program = JsonSerializer.Deserialize<EpgProgram>(json.ToJsonString());
+            var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
+
+            Assert.Null(info.ImageUrl);
+            Assert.Equal(0, info.ImageWidth);
+            Assert.Equal(0, info.ImageHeight);
+            Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
+        }
+
+        [Theory]
+        [InlineData("still_only", null, null)]
         [InlineData("still_larger_than_backdrop", "https://example.com/poster.jpg", "https://example.com/backdrop.jpg")]
         public void ProducerXml_PreservesSeparatedArtworkRoles(string name, string primary, string backdrop)
         {
@@ -54,7 +152,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Theory]
         [InlineData("control", "https://example.com/poster.jpg", 500, 750)]
         [InlineData("provider_larger_poster", "https://example.com/foreign.jpg", 1000, 1500)]
-        [InlineData("portrait_orientation_only", "https://example.com/backdrop.jpg", 0, 0)]
+        [InlineData("portrait_orientation_only", null, 0, 0)]
         public void ProducerJson_UsesOnlyAttestedPortraitGeometry(string name, string expected, int width, int height)
         {
             var program = JsonSerializer.Deserialize<EpgProgram>(ProducerJson(name));
@@ -68,7 +166,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
-        public void ProducerJson_WithoutQualifiedPosterKeepsBackdropAheadOfStill(bool oldPayload)
+        public void ProducerJson_WithoutQualifiedPosterKeepsOnlySecondaryRoles(bool oldPayload)
         {
             var json = JsonNode.Parse(ProducerJson("still_larger_than_backdrop")).AsObject();
             json.Remove("poster_width");
@@ -82,7 +180,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var program = JsonSerializer.Deserialize<EpgProgram>(json.ToJsonString());
             var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
 
-            Assert.Equal("https://example.com/backdrop.jpg", info.ImageUrl);
+            Assert.Null(info.ImageUrl);
             Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
             Assert.Equal(oldPayload ? null : "https://example.com/still.jpg", info.ThumbImageUrl);
             Assert.Equal(0, info.ImageWidth);
@@ -125,14 +223,16 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ProducerJson_StillOnlyIsLastImageFallbackWithReportedDimensions()
+        public void ProducerJson_StillOnlyRemainsThumbWithoutPrimaryGeometry()
         {
             var program = JsonSerializer.Deserialize<EpgProgram>(ProducerJson("still_only"));
             var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
 
-            Assert.Equal("https://example.com/still.jpg", info.ImageUrl);
-            Assert.Equal(1920, info.ImageWidth);
-            Assert.Equal(1080, info.ImageHeight);
+            Assert.Null(info.ImageUrl);
+            Assert.Equal(1920, program.ThumbWidth);
+            Assert.Equal(1080, program.ThumbHeight);
+            Assert.Equal(0, info.ImageWidth);
+            Assert.Equal(0, info.ImageHeight);
             Assert.Equal("https://example.com/still.jpg", info.ThumbImageUrl);
             Assert.Null(info.BackdropImageUrl);
         }
@@ -184,7 +284,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                 var program = Parse(xml);
                 var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "synthetic", program.Title, program.Description);
                 Assert.Null(program.PosterUrl);
-                Assert.Equal("https://example.com/backdrop.jpg", info.ImageUrl);
+                Assert.Null(info.ImageUrl);
+                Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
                 Assert.Equal(0, info.ImageWidth);
                 Assert.Equal(0, info.ImageHeight);
             }

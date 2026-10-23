@@ -126,12 +126,12 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("https://example.com/episode.jpg", series.ThumbImageUrl);
 
             var episodeOnly = Assert.Single(programs["episode-only"]);
-            Assert.Equal("https://example.com/episode-only.jpg", episodeOnly.ImageUrl);
+            Assert.Null(episodeOnly.ImageUrl);
             Assert.Null(episodeOnly.BackdropImageUrl);
             Assert.Equal("https://example.com/episode-only.jpg", episodeOnly.ThumbImageUrl);
 
             var logoOnly = Assert.Single(programs["logo-only"]);
-            Assert.Equal("https://example.com/channel-logo.png", logoOnly.ImageUrl);
+            Assert.Null(logoOnly.ImageUrl);
             Assert.Equal("https://example.com/channel-logo.png", logoOnly.LogoImageUrl);
         }
 
@@ -382,9 +382,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             var program = Assert.Single(Parse(xml)["ordered"]);
             var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, "ordered", program.Title, program.Description);
 
-            Assert.Equal("https://example.com/canonical-backdrop.jpg", program.ImageUrl);
+            Assert.Null(program.ImageUrl);
             Assert.Equal("https://example.com/canonical-backdrop.jpg", program.BackdropImageUrl);
-            Assert.Equal("https://example.com/canonical-backdrop.jpg", info.ImageUrl);
+            Assert.Null(info.ImageUrl);
             Assert.Equal("https://example.com/canonical-backdrop.jpg", info.BackdropImageUrl);
         }
 
@@ -401,11 +401,11 @@ namespace Emby.M3uEditor.Plugin.Tests
             var programs = Parse(xml);
             Assert.Equal("https://example.com/eligible.jpg", Assert.Single(programs["conflict-first"]).BackdropImageUrl);
             Assert.Null(Assert.Single(programs["all-conflicting"]).BackdropImageUrl);
-            Assert.Equal("https://example.com/canonical.jpg", Assert.Single(programs["duplicate"]).ImageUrl);
+            Assert.Null(Assert.Single(programs["duplicate"]).ImageUrl);
             Assert.Equal("https://example.com/canonical.jpg", Assert.Single(programs["duplicate"]).BackdropImageUrl);
 
             var otherRoles = Assert.Single(programs["other-roles"]);
-            Assert.Equal("https://example.com/standard-first.jpg", otherRoles.ImageUrl);
+            Assert.Null(otherRoles.ImageUrl);
             Assert.Equal("https://example.com/standard-first.jpg", otherRoles.BackdropImageUrl);
             Assert.Equal("https://example.com/still-last.jpg", otherRoles.ThumbImageUrl);
             Assert.Equal("https://example.com/logo-last.png", otherRoles.LogoImageUrl);
@@ -424,7 +424,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var program = Assert.Single(Parse(xml)["fallback"]);
 
-            Assert.Equal("https://example.com/legacy-backdrop.jpg", program.ImageUrl);
+            Assert.Null(program.ImageUrl);
             Assert.Equal("https://example.com/legacy-backdrop.jpg", program.BackdropImageUrl);
         }
 
@@ -462,7 +462,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var prog = Assert.Single(Parse(xml)["ch1"]);
 
-            Assert.Equal("https://example.com/legacy-backdrop.jpg", prog.ImageUrl);
+            Assert.Null(prog.ImageUrl);
             Assert.Equal("https://example.com/legacy-backdrop.jpg", prog.BackdropImageUrl);
             Assert.Equal("https://example.com/legacy-still.jpg", prog.ThumbImageUrl);
         }
@@ -481,7 +481,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var prog = Assert.Single(Parse(xml)["ch1"]);
             var info = M3uEditorTunerHost.BuildProgramInfo(prog, 1, "ch1", prog.Title, prog.Description);
 
-            Assert.Equal("https://example.com/backdrop.jpg", info.ImageUrl);
+            Assert.Null(info.ImageUrl);
             Assert.Equal("https://example.com/backdrop.jpg", info.BackdropImageUrl);
             Assert.Equal("https://example.com/still.jpg", info.ThumbImageUrl);
         }
@@ -603,7 +603,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.Null(program.ImageUrl);
             }
             var typed = Assert.Single(programs["typed"]);
-            Assert.Equal("https://example.com/backdrop.jpg", typed.ImageUrl);
+            Assert.Null(typed.ImageUrl);
             Assert.Equal("https://example.com/backdrop.jpg", typed.BackdropImageUrl);
         }
 
@@ -775,7 +775,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             foreach (var channelId in new[] { "valid-first", "valid-last" })
             {
                 var program = Assert.Single(programs[channelId]);
-                Assert.Equal("https://example.com/valid.jpg", program.ImageUrl);
+                Assert.Null(program.ImageUrl);
                 Assert.Equal("https://example.com/valid.jpg", program.BackdropImageUrl);
             }
         }

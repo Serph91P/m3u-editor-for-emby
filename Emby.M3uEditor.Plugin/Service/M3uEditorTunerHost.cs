@@ -350,23 +350,17 @@ namespace Emby.M3uEditor.Plugin.Service
             var isSeries = !isMovie && !isSports;
             var hasPortraitPoster = IsValidPortrait(p.PosterUrl, p.PosterWidth, p.PosterHeight);
             var thumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl);
+            // Preserve a direct legacy scalar, but never manufacture Primary from
+            // a known secondary role. Its geometry must belong to the selected image.
             var imageUrl = hasPortraitPoster
                 ? Util.UrlValidator.SanitizeHttpUrl(p.PosterUrl)
-                : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl)
-                    ?? thumbImageUrl
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl);
-            var usesThumbGeometry = !hasPortraitPoster && thumbImageUrl != null
-                && string.Equals(imageUrl, thumbImageUrl, StringComparison.Ordinal);
+                : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl);
             var imageWidth = hasPortraitPoster
                 ? p.PosterWidth
-                : usesThumbGeometry ? Math.Max(0, p.ThumbWidth)
-                : p.ImageWidth > 0 ? p.ImageWidth : 0;
+                : imageUrl != null ? Math.Max(0, p.ImageWidth) : 0;
             var imageHeight = hasPortraitPoster
                 ? p.PosterHeight
-                : usesThumbGeometry ? Math.Max(0, p.ThumbHeight)
-                : p.ImageHeight > 0 ? p.ImageHeight : 0;
+                : imageUrl != null ? Math.Max(0, p.ImageHeight) : 0;
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
             var showId = ToStableIdentity("program", p.ContentId)

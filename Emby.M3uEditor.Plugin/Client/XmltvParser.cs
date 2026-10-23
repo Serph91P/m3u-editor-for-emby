@@ -325,7 +325,7 @@ namespace Emby.M3uEditor.Plugin.Client
             }
             // Keep each qualified artwork role separate. A portrait poster is Emby's
             // primary programme image; backdrop and episode still retain their own
-            // slots. If no poster is available, primary falls back through those roles.
+            // slots; known secondary roles must not manufacture a primary image.
             var orderedBackdrops = SelectDistinctNonConflictingArtwork(
                 standardBackdropCandidates,
                 conflictingArtworkUrls);
@@ -352,9 +352,7 @@ namespace Emby.M3uEditor.Plugin.Client
             }
             else
             {
-                program.ImageUrl = program.BackdropImageUrl
-                    ?? program.ThumbImageUrl
-                    ?? program.LogoImageUrl;
+                program.ImageUrl = null;
                 program.ImageWidth = 0;
                 program.ImageHeight = 0;
             }
