@@ -303,7 +303,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ParseProgramme_StandardPosterPairRejectsUnattestedOrAmbiguousPrimary()
+        public void ParseProgramme_StandardPosterPairRejectsUnattestedOrConflictingPrimary()
         {
             const string xml = @"<tv>
   <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""square""><image type=""poster"" orient=""P"">https://example.com/square.jpg</image><icon src=""https://example.com/square.jpg"" width=""750"" height=""750"" /></programme>
@@ -317,7 +317,8 @@ namespace Emby.M3uEditor.Plugin.Tests
 </tv>";
 
             var programs = Parse(xml);
-            foreach (var channelId in new[] { "square", "landscape", "missing", "mismatch", "scheme", "nested", "orient", "conflict" })
+            Assert.Equal("https://example.com/legacy.jpg", Assert.Single(programs["conflict"]).ImageUrl);
+            foreach (var channelId in new[] { "square", "landscape", "missing", "mismatch", "scheme", "nested", "orient" })
             {
                 var program = Assert.Single(programs[channelId]);
                 Assert.Null(program.ImageUrl);
@@ -626,7 +627,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ParseProgramme_TypedPosterAlternatives_DeduplicateOrAbstainDeterministically()
+        public void ParseProgramme_TypedPosterAlternatives_SelectDeterministicallyWithoutAcceptingConflicts()
         {
             const string xml = @"<tv>
   <programme start=""20250101120000 +0000"" stop=""20250101130000 +0000"" channel=""duplicates""><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" /><icon src=""https://example.com/one.jpg"" type=""poster"" width=""500"" height=""750"" /></programme>
@@ -640,14 +641,13 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("https://example.com/one.jpg", duplicate.ImageUrl);
             Assert.Equal("https://example.com/one.jpg", M3uEditorTunerHost.BuildProgramInfo(duplicate, 1, "duplicates", duplicate.Title, duplicate.Description).ImageUrl);
 
-            foreach (var channelId in new[] { "distinct", "conflicting", "orientation-conflict" })
-            {
-                var program = Assert.Single(programs[channelId]);
-                var info = M3uEditorTunerHost.BuildProgramInfo(program, 1, channelId, program.Title, program.Description);
-
-                Assert.Null(program.ImageUrl);
-                Assert.Null(info.ImageUrl);
-            }
+            Assert.Equal("https://example.com/one.jpg", Assert.Single(programs["distinct"]).ImageUrl);
+            Assert.Equal("https://example.com/two.jpg", Assert.Single(programs["conflicting"]).ImageUrl);
+            var orientationConflict = Assert.Single(programs["orientation-conflict"]);
+            var conflictInfo = M3uEditorTunerHost.BuildProgramInfo(orientationConflict, 1,
+                "orientation-conflict", orientationConflict.Title, orientationConflict.Description);
+            Assert.Null(orientationConflict.ImageUrl);
+            Assert.Null(conflictInfo.ImageUrl);
         }
 
         [Fact]

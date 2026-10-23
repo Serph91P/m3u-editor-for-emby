@@ -57,6 +57,12 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         public int PosterHeight { get; set; }
         [JsonPropertyName("backdrop_url")]
         public string BackdropUrl { get; set; }
+        [JsonPropertyName("still_url")]
+        public string ThumbImageUrl { get; set; }
+        [JsonPropertyName("still_width")]
+        public int ThumbWidth { get; set; }
+        [JsonPropertyName("still_height")]
+        public int ThumbHeight { get; set; }
 
         // Not from JSON - populated by XMLTV parser only
         [JsonIgnore] public bool IsLive { get; set; }
@@ -68,7 +74,6 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonIgnore] public int ImageWidth { get; set; }
         [JsonIgnore] public int ImageHeight { get; set; }
         [JsonIgnore] public string BackdropImageUrl { get; set; }
-        [JsonIgnore] public string ThumbImageUrl { get; set; }
         [JsonIgnore] public string LogoImageUrl { get; set; }
         [JsonIgnore] public List<string> Categories { get; set; }
         [JsonIgnore] public string SubTitle { get; set; }

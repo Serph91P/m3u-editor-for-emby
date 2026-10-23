@@ -349,18 +349,23 @@ namespace Emby.M3uEditor.Plugin.Service
                 c.IndexOf("sport", System.StringComparison.OrdinalIgnoreCase) >= 0);
             var isSeries = !isMovie && !isSports;
             var hasPortraitPoster = IsValidPortrait(p.PosterUrl, p.PosterWidth, p.PosterHeight);
+            var thumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl);
             var imageUrl = hasPortraitPoster
                 ? Util.UrlValidator.SanitizeHttpUrl(p.PosterUrl)
                 : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl)
                     ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                     ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl)
+                    ?? thumbImageUrl
                     ?? Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl);
+            var usesThumbGeometry = !hasPortraitPoster && thumbImageUrl != null
+                && string.Equals(imageUrl, thumbImageUrl, StringComparison.Ordinal);
             var imageWidth = hasPortraitPoster
                 ? p.PosterWidth
+                : usesThumbGeometry ? Math.Max(0, p.ThumbWidth)
                 : p.ImageWidth > 0 ? p.ImageWidth : 0;
             var imageHeight = hasPortraitPoster
                 ? p.PosterHeight
+                : usesThumbGeometry ? Math.Max(0, p.ThumbHeight)
                 : p.ImageHeight > 0 ? p.ImageHeight : 0;
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
@@ -384,7 +389,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 ImageWidth = imageWidth,
                 ImageHeight = imageHeight,
                 BackdropImageUrl = backdropImageUrl,
-                ThumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl),
+                ThumbImageUrl = thumbImageUrl,
                 LogoImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl),
                 Genres = cats ?? new List<string>(),
                 IsSports = isSports,
