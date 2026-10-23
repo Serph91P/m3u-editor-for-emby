@@ -361,6 +361,32 @@ namespace Emby.M3uEditor.Plugin.Service
             var imageHeight = hasPortraitPoster
                 ? p.PosterHeight
                 : imageUrl != null ? Math.Max(0, p.ImageHeight) : 0;
+            var preservedPrimaryUrl = Util.UrlValidator.SanitizeHttpUrl(p.PreservedPrimaryUrl);
+            if (preservedPrimaryUrl != null)
+            {
+                imageUrl = preservedPrimaryUrl;
+                imageWidth = 0;
+                imageHeight = 0;
+                var conflictingGeometry = false;
+                foreach (var candidate in new[] {
+                    (Url: p.ImageUrl, Width: p.ImageWidth, Height: p.ImageHeight),
+                    (Url: p.PosterUrl, Width: p.PosterWidth, Height: p.PosterHeight),
+                    (Url: p.ThumbImageUrl, Width: p.ThumbWidth, Height: p.ThumbHeight) })
+                {
+                    if (!string.Equals(candidate.Url, preservedPrimaryUrl, StringComparison.Ordinal)
+                        || candidate.Width <= 0 || candidate.Height <= 0)
+                        continue;
+                    if (imageWidth > 0 && (imageWidth != candidate.Width || imageHeight != candidate.Height))
+                        conflictingGeometry = true;
+                    imageWidth = candidate.Width;
+                    imageHeight = candidate.Height;
+                }
+                if (conflictingGeometry)
+                {
+                    imageWidth = 0;
+                    imageHeight = 0;
+                }
+            }
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
             var showId = ToStableIdentity("program", p.ContentId)

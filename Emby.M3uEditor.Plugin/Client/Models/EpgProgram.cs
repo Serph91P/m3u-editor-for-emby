@@ -49,6 +49,9 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonConverter(typeof(IntAsBoolConverter))]
         public bool HasArchive { get; set; }
 
+        [JsonPropertyName("preserved_primary_url")]
+        public string PreservedPrimaryUrl { get; set; }
+
         [JsonPropertyName("poster_url")]
         public string PosterUrl { get; set; }
         [JsonPropertyName("poster_width")]

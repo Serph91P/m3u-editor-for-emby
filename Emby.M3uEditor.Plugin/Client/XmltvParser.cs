@@ -108,13 +108,31 @@ namespace Emby.M3uEditor.Plugin.Client
             var untypedIcons = new List<ArtworkCandidate>();
             var typedPosterCandidates = new List<ArtworkCandidate>();
             var artworkByUrl = new Dictionary<string, ArtworkEvidence>(StringComparer.Ordinal);
+            var preserveNextIcon = false;
+            var preservationMarkers = 0;
+            string preservedPrimaryUrl = null;
             while (reader.Read())
             {
                 if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth)
                     break;
-                if (reader.NodeType != XmlNodeType.Element || reader.Depth != depth + 1) continue;
+                if (reader.Depth == depth + 1 && reader.NodeType == XmlNodeType.ProcessingInstruction)
+                {
+                    preserveNextIcon = reader.Name == "m3ue-preserved-primary" && reader.Value.Length == 0;
+                    if (reader.Name == "m3ue-preserved-primary")
+                        preservationMarkers++;
+                    continue;
+                }
+                if (reader.NodeType != XmlNodeType.Element || reader.Depth != depth + 1)
+                {
+                    if (reader.Depth == depth + 1 && reader.NodeType != XmlNodeType.Whitespace
+                        && reader.NodeType != XmlNodeType.Comment)
+                        preserveNextIcon = false;
+                    continue;
+                }
 
                 var name = reader.Name;
+                var isPreservedIcon = preserveNextIcon && name == "icon";
+                preserveNextIcon = false;
 
                 if (string.Equals(name, "title", StringComparison.OrdinalIgnoreCase))
                 {
@@ -198,6 +216,8 @@ namespace Emby.M3uEditor.Plugin.Client
                     var sanitized = Util.UrlValidator.SanitizeHttpUrl(src);
                     if (sanitized == null)
                         continue;
+                    if (isPreservedIcon)
+                        preservedPrimaryUrl = sanitized;
 
                     AddArtworkEvidence(
                         artworkByUrl,
@@ -382,6 +402,15 @@ namespace Emby.M3uEditor.Plugin.Client
                     program.ImageWidth = legacyImageWidth;
                     program.ImageHeight = legacyImageHeight;
                 }
+            }
+
+            if (preservationMarkers == 1 && preservedPrimaryUrl != null)
+            {
+                program.PreservedPrimaryUrl = preservedPrimaryUrl;
+                program.ImageUrl = preservedPrimaryUrl;
+                var evidence = artworkByUrl[preservedPrimaryUrl];
+                program.ImageWidth = evidence.Width;
+                program.ImageHeight = evidence.Height;
             }
 
             return program;
@@ -624,6 +653,8 @@ namespace Emby.M3uEditor.Plugin.Client
             private bool _hasCompleteGeometry;
 
             public bool IsConflicting { get; private set; }
+            public int Width => !IsConflicting && _hasCompleteGeometry ? _width : 0;
+            public int Height => !IsConflicting && _hasCompleteGeometry ? _height : 0;
 
             public void Add(string role, string orient, int width, int height)
             {
