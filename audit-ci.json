@@ -12,6 +12,27 @@
         "expiry": "2026-11-19T00:00:00Z",
         "notes": "Temporary accepted risk for private release tooling only; no patched braces release exists. Branch patterns and commit-analyzer rule patterns are repository-controlled constants, not media/user input. All other high/critical advisories remain blocking. See scripts/release/SECURITY.md and PR #106; remove when an upstream fix is available."
       }
+    },
+    {
+      "GHSA-2m5v-pch6-74hx": {
+        "active": true,
+        "expiry": "2026-11-07T00:00:00Z",
+        "notes": "Accepted risk only for private release tooling: npm 11.21.1 bundles undici 6.29.0 via node-gyp; native npm update fixes the nonbundled paths only. Custom TLS verification callbacks are not configured by this release tooling. Not a security fix; other high/critical advisories remain blocking. See scripts/release/SECURITY.md; remove on patched npm bundle, do not extend."
+      }
+    },
+    {
+      "GHSA-qrxm-fqhp-jwvm": {
+        "active": true,
+        "expiry": "2026-11-07T00:00:00Z",
+        "notes": "Accepted risk only for private release tooling: npm 11.21.1 bundles undici 6.29.0 via node-gyp. A compromised HTTPS endpoint could crash the tooling through TLS 1.2 renegotiation. The npm publish plugin is not configured, but remains installed transitively. Not a security fix; other high/critical advisories remain blocking. See scripts/release/SECURITY.md; remove on patched npm bundle, do not extend."
+      }
+    },
+    {
+      "GHSA-xjj6-f33q-929c": {
+        "active": true,
+        "expiry": "2026-11-07T00:00:00Z",
+        "notes": "Accepted risk only for private release tooling: npm 11.21.1 bundles undici 6.29.0 via node-gyp. A malicious HTTP response could crash the tooling through excessive content encodings. The npm publish plugin is not configured, but remains installed transitively. Not a security fix; other high/critical advisories remain blocking. See scripts/release/SECURITY.md; remove on patched npm bundle, do not extend."
+      }
     }
   ]
 }

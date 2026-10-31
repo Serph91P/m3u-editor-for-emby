@@ -3,4 +3,5 @@ mediabrowser.common.4.8.0.80.nupkg c95800595be134231b7a00d71f9cc929464b56b3769dc
 emby-server-deb_4.9.5.0_amd64.deb 1d718ffa0169c393de3eafda65b1b057a3db4ead93ffeb5883abd01735de9843 https://github.com/MediaBrowser/Emby.Releases/releases/download/4.9.5.0/emby-server-deb_4.9.5.0_amd64.deb
 emby-server-deb_4.10.0.40_amd64.deb 0e23e480d3607bef8c5439ca2fb5a04191194e6c40531ec4a8b0946c3d666487 https://github.com/MediaBrowser/Emby.Releases/releases/download/4.10.0.40/emby-server-deb_4.10.0.40_amd64.deb
 emby-server-deb_4.10.1.0_amd64.deb 9be753b074e8cf9d8874dabc82942e175feb6337aa9803da232c370172e905ed https://github.com/MediaBrowser/Emby.Releases/releases/download/4.10.1.0/emby-server-deb_4.10.1.0_amd64.deb
+emby-server-deb_4.10.2.0_amd64.deb 80c8666fc6f6143558c235c57932189a3f0b3f899b44519fc4621dd7dea16e32 https://github.com/MediaBrowser/Emby.Releases/releases/download/4.10.2.0/emby-server-deb_4.10.2.0_amd64.deb
 Emby.M3uEditor.Plugin.v1.5.0.dll a982dc4a36be782a4696afe33a078f32bb177326e18d4727fbe21d80d71cb4ba https://github.com/Serph91P/m3u-editor-for-emby/releases/download/v1.5.0/Emby.M3uEditor.Plugin.dll
