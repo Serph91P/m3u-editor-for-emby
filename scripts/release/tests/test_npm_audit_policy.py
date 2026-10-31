@@ -10,6 +10,39 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 POLICY = ROOT / "audit-ci.json"
 ADVISORY = "GHSA-vfj7-8cjw-p6xm"
+UNDICI_ADVISORIES = (
+    "GHSA-2m5v-pch6-74hx",
+    "GHSA-qrxm-fqhp-jwvm",
+    "GHSA-xjj6-f33q-929c",
+)
+
+
+def undici_report(advisories, severity="high"):
+    """Synthetic npm v2 report for the remaining bundled development dependency."""
+    vulnerabilities = {}
+    for name, via, effects in [
+        ("undici", [{
+            "source": index + 10, "name": "undici", "dependency": "undici",
+            "title": "Synthetic bundled undici advisory",
+            "url": f"https://github.com/advisories/{advisory}",
+            "severity": severity, "range": "<6.29.1",
+        } for index, advisory in enumerate(advisories)], ["node-gyp"]),
+        ("node-gyp", ["undici"], ["npm"]),
+        ("npm", ["node-gyp"], ["@semantic-release/npm"]),
+        ("@semantic-release/npm", ["npm"], ["semantic-release"]),
+        ("semantic-release", ["@semantic-release/npm"], []),
+    ]:
+        vulnerabilities[name] = {
+            "name": name, "severity": severity, "isDirect": name == "semantic-release",
+            "via": via, "effects": effects, "range": "*", "fixAvailable": False,
+            "nodes": [f"node_modules/npm/node_modules/{name}" if name in ("undici", "node-gyp")
+                      else f"node_modules/{name}"],
+        }
+    return {"auditReportVersion": 2, "vulnerabilities": vulnerabilities,
+            "metadata": {"vulnerabilities": {
+                "info": 0, "low": 0, "moderate": 0,
+                "high": 5 if severity == "high" else 0,
+                "critical": 5 if severity == "critical" else 0, "total": 5}}}
 
 
 def report(extra_advisory=None):
@@ -75,7 +108,14 @@ class NpmAuditPolicyTests(unittest.TestCase):
         self.assertFalse(policy["skip-dev"])
         self.assertFalse(policy["pass-enoaudit"])
         self.assertEqual(policy["package-manager"], "npm")
-        self.assertEqual(len(policy["allowlist"]), 1)
+        self.assertEqual(len(policy["allowlist"]), 4)
+        self.assertEqual({key for entry in policy["allowlist"] for key in entry},
+                         {ADVISORY, *UNDICI_ADVISORIES})
+        for advisory in UNDICI_ADVISORIES:
+            record = next(entry[advisory] for entry in policy["allowlist"] if advisory in entry)
+            self.assertTrue(record["active"])
+            self.assertEqual(record["expiry"], "2026-11-07T00:00:00Z")
+            self.assertIn("private release tooling", record["notes"].lower())
         exception = policy["allowlist"][0]
         self.assertEqual(list(exception), [ADVISORY])
         self.assertTrue(exception[ADVISORY]["active"])
@@ -92,6 +132,31 @@ class NpmAuditPolicyTests(unittest.TestCase):
         analyzer = next(p[1] for p in config["plugins"] if p[0] == "@semantic-release/commit-analyzer")
         self.assertTrue(all(set(rule) == {"type", "release"} for rule in analyzer["releaseRules"]))
         self.assertTrue(all(rule["type"].isalpha() for rule in analyzer["releaseRules"]))
+        self.assertNotIn("@semantic-release/npm", [p[0] if isinstance(p, list) else p
+                                                for p in config["plugins"]])
+
+    def test_accepts_each_approved_bundled_undici_advisory_and_combination(self):
+        for advisories in [(advisory,) for advisory in UNDICI_ADVISORIES] + [UNDICI_ADVISORIES]:
+            with self.subTest(advisories=advisories):
+                result = self.run_audit(undici_report(advisories))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_each_undici_exception_fails_closed_when_expired_or_inactive(self):
+        for advisory in UNDICI_ADVISORIES:
+            for changes in ({"expiry": "2000-01-01T00:00:00Z"}, {"active": False}):
+                with self.subTest(advisory=advisory, changes=changes):
+                    policy = self.policy()
+                    record = next(entry[advisory] for entry in policy["allowlist"] if advisory in entry)
+                    record.update(changes)
+                    result = self.run_audit(undici_report(UNDICI_ADVISORIES), policy)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rejects_unapproved_undici_high_or_critical_in_development_dependencies(self):
+        for advisory in ("GHSA-4w7w-5xrc-9h26", "GHSA-xxxx-yyyy-zzzz"):
+            for severity in ("high", "critical"):
+                with self.subTest(advisory=advisory, severity=severity):
+                    result = self.run_audit(undici_report((*UNDICI_ADVISORIES, advisory), severity))
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_accepts_only_approved_advisory_and_derived_peer_cycle(self):
         result = self.run_audit(report())
