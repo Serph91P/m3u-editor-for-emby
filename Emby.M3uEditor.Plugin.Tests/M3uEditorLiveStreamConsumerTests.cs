@@ -24,7 +24,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void ConsumerCallbacks_CountEveryCall_AndNeverUnderflow()
+        public void ConsumerCallbacks_ReleaseOnlyMatchingRegistrations()
         {
             using (var stream = CreateLiveStream(new TrackingHttpHandler()))
             {
@@ -39,8 +39,71 @@ namespace Emby.M3uEditor.Plugin.Tests
 
                 removeConsumer.Invoke(stream, new object[] { "same-consumer" });
                 removeConsumer.Invoke(stream, new object[] { "missing-consumer" });
+                Assert.Equal(2, stream.ConsumerCount);
                 removeConsumer.Invoke(stream, new object[] { "another-consumer" });
                 removeConsumer.Invoke(stream, new object[] { "another-consumer" });
+                Assert.Equal(1, stream.ConsumerCount);
+                removeConsumer.Invoke(stream, new object[] { "same-consumer" });
+                removeConsumer.Invoke(stream, new object[] { "same-consumer" });
+                Assert.Equal(0, stream.ConsumerCount);
+            }
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("probe")]
+        public void ConsumerCallbacks_ProbeStopCannotReleasePlayback(string probeId)
+        {
+            using (var stream = CreateLiveStream(new TrackingHttpHandler()))
+            {
+                stream.AddConsumer(probeId);
+                stream.AddConsumer("playback");
+                stream.RemoveConsumer(probeId);
+                stream.RemoveConsumer(probeId);
+                stream.RemoveConsumer("foreign");
+                Assert.Equal(1, stream.ConsumerCount);
+                stream.RemoveConsumer("playback");
+                Assert.Equal(0, stream.ConsumerCount);
+            }
+        }
+
+        [Fact]
+        public void ConsumerCallbacks_ConcurrentStopsPreserveRemainingMemberships()
+        {
+            using (var stream = CreateLiveStream(new TrackingHttpHandler()))
+            {
+                Parallel.For(0, 1000, i => stream.AddConsumer("viewer-" + i));
+                Assert.Equal(1000, stream.ConsumerCount);
+                Parallel.For(0, 500, i =>
+                {
+                    stream.RemoveConsumer("viewer-" + i);
+                    stream.RemoveConsumer("viewer-" + i);
+                    stream.RemoveConsumer("foreign");
+                });
+                Assert.Equal(500, stream.ConsumerCount);
+                Parallel.For(500, 1000, i => stream.RemoveConsumer("viewer-" + i));
+                Assert.Equal(0, stream.ConsumerCount);
+            }
+        }
+
+        [Fact]
+        public void ConsumerCallbacks_LegacySetterRemainsWritableWithoutGivingForeignStopsOwnership()
+        {
+            using (var stream = CreateLiveStream(new TrackingHttpHandler()))
+            {
+                stream.ConsumerCount = 2;
+                stream.RemoveConsumer("foreign");
+                Assert.Equal(2, stream.ConsumerCount);
+                stream.AddConsumer("registered");
+                stream.ConsumerCount = 5;
+                stream.RemoveConsumer("registered");
+                stream.RemoveConsumer("registered");
+                Assert.Equal(4, stream.ConsumerCount);
+                stream.ConsumerCount--;
+                Assert.Equal(3, stream.ConsumerCount);
+                stream.ConsumerCount = 0;
+                stream.RemoveConsumer(null);
                 Assert.Equal(0, stream.ConsumerCount);
             }
         }

@@ -23,9 +23,9 @@ namespace Emby.RuntimeCompatibility
 
             Console.WriteLine("Runtime ABI harness executing on .NET " + runtimeVersion + ".");
 
-            if (args.Length != 6)
+            if (args.Length != 7)
             {
-                Console.Error.WriteLine("Usage: RuntimeAbiHarness <candidate> <released> <sdk> <server-4.9> <server-4.10.0.40> <server-4.10.1.0>");
+                Console.Error.WriteLine("Usage: RuntimeAbiHarness <candidate> <released> <sdk> <server-4.9> <server-4.10.0.40> <server-4.10.1.0> <server-4.10.2.0>");
                 return 2;
             }
 
@@ -35,6 +35,7 @@ namespace Emby.RuntimeCompatibility
                 VerifyCandidate(args[0], "Emby Server 4.9.5.0", args[3]);
                 VerifyCandidate(args[0], "Emby Server 4.10.0.40", args[4]);
                 VerifyCandidate(args[0], "Emby Server 4.10.1.0", args[5]);
+                VerifyCandidate(args[0], "Emby Server 4.10.2.0", args[6]);
                 VerifyHistoricalFailure(args[1], args[4]);
                 Console.WriteLine("Runtime ABI compatibility checks passed.");
                 return 0;
@@ -48,7 +49,7 @@ namespace Emby.RuntimeCompatibility
 
         private static void VerifyCandidate(string pluginPath, string runtimeName, string runtimeDirectory)
         {
-            using (var context = new ServerAssemblyLoadContext(runtimeDirectory, Path.GetDirectoryName(pluginPath)))
+            using (var context = new ServerAssemblyLoadContext(runtimeDirectory, Path.GetDirectoryName(pluginPath), runtimeName != "Emby Server 4.10.2.0"))
             {
                 var controller = context.LoadFromAssemblyPath(Path.Combine(runtimeDirectory, "MediaBrowser.Controller.dll"));
                 VerifyPlaybackLifecycleContract(controller, runtimeName);
@@ -72,6 +73,8 @@ namespace Emby.RuntimeCompatibility
                     InvokeConsumer(map, liveStreamType, instance, "RemoveConsumer");
                     AssertConsumerCount(liveStreamType, instance, 0, runtimeName + " after RemoveConsumer");
                     Console.WriteLine(runtimeName + ": candidate mapped " + map.InterfaceMethods.Length + " ILiveStream members.");
+                    if (runtimeName == "Emby Server 4.10.2.0")
+                        RegistryLifecycleTests.Run(context, plugin);
                 }
                 finally
                 {
@@ -197,8 +200,8 @@ namespace Emby.RuntimeCompatibility
     {
         private readonly string _pluginDirectory;
 
-        public ServerAssemblyLoadContext(string runtimeDirectory, string pluginDirectory)
-            : base("emby-runtime-" + Path.GetFileName(runtimeDirectory), true)
+        public ServerAssemblyLoadContext(string runtimeDirectory, string pluginDirectory, bool collectible = true)
+            : base("emby-runtime-" + Path.GetFileName(runtimeDirectory), collectible)
         {
             RuntimeDirectory = runtimeDirectory;
             _pluginDirectory = pluginDirectory;
@@ -231,7 +234,7 @@ namespace Emby.RuntimeCompatibility
 
         public void Dispose()
         {
-            Unload();
+            if (IsCollectible) Unload();
         }
     }
 }

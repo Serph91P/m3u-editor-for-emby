@@ -21,6 +21,83 @@ namespace Emby.M3uEditor.Plugin.Tests
     [Collection(PluginSingletonCollection.Name)]
     public class M3uEditorTunerHostTests
     {
+        [Fact]
+        public async System.Threading.Tasks.Task OpenedStreams_IsolateLifecycleIdentityWithoutChangingDiscoveryOrSource()
+        {
+            using (var environment = new PluginTestEnvironment(new PluginConfiguration
+            {
+                BaseUrl = "https://source.example.test", Username = "synthetic", Password = "synthetic",
+                HttpUserAgent = "SyntheticPlayer/1.0"
+            }, new LiveTvOptions()))
+            {
+                environment.CreatePlugin();
+                var host = MakeBareHost();
+                SetField(host, "_streamStats", new Dictionary<int, StreamStatsInfo>
+                {
+                    { 42, new StreamStatsInfo { VideoCodec = "h264", Resolution = "1920x1080", AudioCodec = "aac" } }
+                });
+                typeof(BaseTunerHost).GetField("Logger", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .SetValue(host, DispatchProxy.Create<ILogger, TestLogger>());
+                var tuner = new TunerHostInfo { Id = "synthetic-tuner" };
+                var channel = new ChannelInfo { Id = "42", Name = "Synthetic channel" };
+                var discoveryMethod = typeof(M3uEditorTunerHost).GetMethod("GetChannelStreamMediaSources", BindingFlags.NonPublic | BindingFlags.Instance);
+                var openMethod = typeof(M3uEditorTunerHost).GetMethod("GetChannelStream", BindingFlags.NonPublic | BindingFlags.Instance);
+                async System.Threading.Tasks.Task<MediaBrowser.Model.Dto.MediaSourceInfo> Discover()
+                {
+                    return Assert.Single(await (System.Threading.Tasks.Task<List<MediaBrowser.Model.Dto.MediaSourceInfo>>)discoveryMethod.Invoke(
+                        host, new object[] { tuner, null, channel, System.Threading.CancellationToken.None }));
+                }
+                async System.Threading.Tasks.Task<MediaBrowser.Controller.Library.ILiveStream> Open()
+                {
+                    return await (System.Threading.Tasks.Task<MediaBrowser.Controller.Library.ILiveStream>)openMethod.Invoke(
+                        host, new object[] { tuner, null, channel, "xtream_live_42", System.Threading.CancellationToken.None });
+                }
+                var discovery = await Discover();
+                Assert.Equal("xtream_live_42", discovery.Id);
+                var a = await Open();
+                var b = await Open();
+                try
+                {
+                    Assert.NotEqual(a.MediaSource.Id, b.MediaSource.Id);
+                    foreach (var stream in new[] { a, b })
+                    {
+                        Assert.Equal(stream.UniqueId, stream.MediaSource.Id);
+                        Assert.Equal(discovery.Id, stream.OriginalStreamId);
+                        Assert.Equal(discovery.Path, stream.MediaSource.Path);
+                        Assert.Equal("SyntheticPlayer/1.0", stream.MediaSource.RequiredHttpHeaders["User-Agent"]);
+                        Assert.Equal("mpegts", stream.MediaSource.Container);
+                        Assert.True(stream.MediaSource.RequiresOpening);
+                        Assert.True(stream.MediaSource.RequiresClosing);
+                        Assert.Equal(1920, stream.MediaSource.MediaStreams[0].Width);
+                        Assert.Equal("aac", stream.MediaSource.MediaStreams[1].Codec);
+                        Assert.False(stream.EnableStreamSharing);
+                        await stream.Open(System.Threading.CancellationToken.None);
+                    }
+                    Assert.Equal("xtream_live_42", (await Discover()).Id);
+                    await a.Close();
+                    await b.Close();
+                    var restarted = await Open();
+                    try
+                    {
+                        Assert.NotEqual(a.MediaSource.Id, restarted.MediaSource.Id);
+                        Assert.NotEqual(b.MediaSource.Id, restarted.MediaSource.Id);
+                        Assert.Equal(discovery.Id, restarted.OriginalStreamId);
+                    }
+                    finally { await restarted.Close(); }
+                    channel.Id = "43";
+                    var other = await Open();
+                    try
+                    {
+                        Assert.Equal("xtream_live_43", other.OriginalStreamId);
+                        Assert.NotEqual(b.MediaSource.Id, other.MediaSource.Id);
+                        Assert.NotEqual(discovery.Path, other.MediaSource.Path);
+                    }
+                    finally { await other.Close(); }
+                }
+                finally { await a.Close(); await b.Close(); }
+            }
+        }
+
         private static M3uEditorTunerHost MakeBareHost()
         {
             return (M3uEditorTunerHost)RuntimeHelpers.GetUninitializedObject(
