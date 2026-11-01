@@ -208,7 +208,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 HttpCompletionOption.ResponseHeadersRead);
             var content = Assert.Single(handler.Contents);
             Assert.False(content.Disposed);
-            try
+            using (response)
             {
                 if (disposeBeforeRead)
                 {
@@ -221,7 +221,6 @@ namespace Emby.M3uEditor.Plugin.Tests
                     Assert.False(content.Disposed);
                 }
             }
-            finally { response.Dispose(); }
             Assert.True(content.Disposed);
         }
 
