@@ -42,6 +42,72 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Issue125_ExportChannelAssociationDoesNotMutateCurrentJsonCache(bool obsoleteExport)
+        {
+            var handler = new GuideHandler { JsonFallback = true };
+            var config = Configuration();
+            config.EnableDiagnosticsLogging = true;
+            var logger = System.Reflection.DispatchProxy.Create<ILogger, ExportBarrierLogger>();
+            var barrier = (ExportBarrierLogger)logger;
+            barrier.Enabled = obsoleteExport;
+            using (var service = new LiveTvService(logger, _ => new HttpClient(handler, false), () => config, () => { }))
+            {
+                var old = obsoleteExport ? Task.Run(() => service.GetXmltvEpgAsync(CancellationToken.None)) : null;
+                try
+                {
+                    if (old != null) await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                    service.InvalidateCache();
+                    handler.GuideId = "guide-b";
+                    await service.GetFilteredChannelsAsync(CancellationToken.None);
+                    var current = Assert.Single(await service.FetchEpgForChannelCachedAsync(42, CancellationToken.None));
+                    Assert.True(string.IsNullOrEmpty(current.ChannelId));
+
+                    barrier.Release.Set();
+                    if (old != null)
+                    {
+                        await old.WaitAsync(TimeSpan.FromSeconds(3));
+                        Assert.False(service.HasCachedEpgXml);
+                    }
+                    Assert.Same(current, Assert.Single(await service.FetchEpgForChannelCachedAsync(42, CancellationToken.None)));
+                    Assert.True(string.IsNullOrEmpty(current.ChannelId), "Obsolete export must not mutate the current JSON cache.");
+
+                    var xml = System.Xml.Linq.XDocument.Parse(await service.GetXmltvEpgAsync(CancellationToken.None));
+                    Assert.Equal("guide-b", (string)Assert.Single(xml.Root.Elements("channel")).Attribute("id"));
+                    Assert.Equal("guide-b", (string)Assert.Single(xml.Root.Elements("programme")).Attribute("channel"));
+                    Assert.True(string.IsNullOrEmpty(current.ChannelId), "Current export must also keep its association output-local.");
+                    Assert.True(service.HasCachedEpgXml);
+                    Assert.Equal(xml.ToString(), System.Xml.Linq.XDocument.Parse(await service.GetXmltvEpgAsync(CancellationToken.None)).ToString());
+                }
+                finally
+                {
+                    barrier.Release.Set();
+                    if (old != null) await old.WaitAsync(TimeSpan.FromSeconds(3));
+                    barrier.Release.Dispose();
+                }
+            }
+        }
+
+        public class ExportBarrierLogger : System.Reflection.DispatchProxy
+        {
+            public bool Enabled;
+            public TaskCompletionSource<bool> Entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            public ManualResetEventSlim Release = new ManualResetEventSlim(false);
+            private int _blocked;
+            protected override object Invoke(System.Reflection.MethodInfo method, object[] args)
+            {
+                if (Enabled && args.Length > 0 && args[0] is string text
+                    && text.Contains("xmltv-build sourceChannels=") && Interlocked.Exchange(ref _blocked, 1) == 0)
+                {
+                    Entered.TrySetResult(true);
+                    if (!Release.Wait(TimeSpan.FromSeconds(3))) throw new TimeoutException("Export barrier was not released.");
+                }
+                return null;
+            }
+        }
+
         [Fact]
         public async Task Issue126_SameStreamIdRemappingAndRecyclingEvictGuide()
         {

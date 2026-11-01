@@ -582,17 +582,15 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 var epgData = await FetchEpgDataAsync(channels, config, cancellationToken).ConfigureAwait(false);
 
-                foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
+                foreach (var entry in epgData.OrderBy(p => p.Program.StartTimestamp))
                 {
+                    var program = entry.Program;
                     var startStr = FormatXmltvTime(program.StartTimestamp);
                     var stopStr = FormatXmltvTime(program.StopTimestamp);
-                    var channelId = !string.IsNullOrEmpty(program.ChannelId)
-                        ? program.ChannelId
-                        : program.EpgId;
 
                     sb.AppendFormat(CultureInfo.InvariantCulture,
                         "  <programme start=\"{0}\" stop=\"{1}\" channel=\"{2}\">\n",
-                        startStr, stopStr, EscapeXml(channelId));
+                        startStr, stopStr, EscapeXml(entry.ChannelId));
                     var titleText = program.IsPlainText ? program.Title : DecodeBase64(program.Title);
                     sb.AppendFormat(CultureInfo.InvariantCulture,
                         "    <title>{0}</title>\n", EscapeXml(titleText));
@@ -709,12 +707,12 @@ namespace Emby.M3uEditor.Plugin.Service
             }
         }
 
-        private async Task<List<EpgProgram>> FetchEpgDataAsync(
+        private async Task<List<(EpgProgram Program, string ChannelId)>> FetchEpgDataAsync(
             List<LiveStreamInfo> channels,
             PluginConfiguration config,
             CancellationToken cancellationToken)
         {
-            var allPrograms = new List<EpgProgram>();
+            var allPrograms = new List<(EpgProgram Program, string ChannelId)>();
             var now = DateTimeOffset.UtcNow;
             var endTime = now.AddDays(config.EpgDaysToFetch);
 
@@ -733,22 +731,19 @@ namespace Emby.M3uEditor.Plugin.Service
                             {
                                 _logger.Info("[livetv-diag] epg-data stream={0} listings=null", channel.StreamId);
                             }
-                            return new List<EpgProgram>();
+                            return new List<(EpgProgram Program, string ChannelId)>();
                         }
 
                         var channelId = !string.IsNullOrEmpty(channel.EpgChannelId)
                             ? channel.EpgChannelId
                             : channel.StreamId.ToString(CultureInfo.InvariantCulture);
 
-                        foreach (var program in programs.Where(p => string.IsNullOrEmpty(p.ChannelId)))
-                        {
-                            program.ChannelId = channelId;
-                        }
-
                         var nowUnix = now.ToUnixTimeSeconds();
                         var endUnix = endTime.ToUnixTimeSeconds();
+                        // Export association is local: an obsolete snapshot must never mutate cache-owned programmes.
                         var filtered = programs
                             .Where(p => p.StopTimestamp > nowUnix && p.StartTimestamp < endUnix)
+                            .Select(p => (Program: p, ChannelId: string.IsNullOrEmpty(p.ChannelId) ? channelId : p.ChannelId))
                             .ToList();
                         if (IsLiveTvDiagnosticsEnabled())
                         {
@@ -768,22 +763,22 @@ namespace Emby.M3uEditor.Plugin.Service
                     catch (HttpRequestException ex)
                     {
                         _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
-                        return new List<EpgProgram>();
+                        return new List<(EpgProgram Program, string ChannelId)>();
                     }
                     catch (TaskCanceledException ex)
                     {
                         _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
-                        return new List<EpgProgram>();
+                        return new List<(EpgProgram Program, string ChannelId)>();
                     }
                     catch (STJ.JsonException ex)
                     {
                         _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
-                        return new List<EpgProgram>();
+                        return new List<(EpgProgram Program, string ChannelId)>();
                     }
                     catch (InvalidOperationException ex)
                     {
                         _logger.Debug("Failed to fetch EPG for channel {0}: {1}", channel.StreamId, ex.Message);
-                        return new List<EpgProgram>();
+                        return new List<(EpgProgram Program, string ChannelId)>();
                     }
                     finally
                     {
