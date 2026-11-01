@@ -65,6 +65,9 @@ namespace Emby.M3uEditor.Plugin
 
         public override void UpdateConfiguration(BasePluginConfiguration configuration)
         {
+            if (configuration is PluginConfiguration epgConfig && epgConfig.EpgSource == EpgSourceMode.CustomUrl
+                && string.IsNullOrWhiteSpace(epgConfig.CustomEpgUrl))
+                throw new ArgumentException("Custom EPG URL is required when Custom URL mode is selected.", nameof(configuration));
             if (configuration is PluginConfiguration requestedConfig && requestedConfig.LiveTvTunerCount < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(requestedConfig.LiveTvTunerCount));
@@ -81,6 +84,7 @@ namespace Emby.M3uEditor.Plugin
                 if (configuration is PluginConfiguration requested)
                     ManagedSetupService.ValidateConfigurationChange(Configuration, requested, DataFolderPath);
                 base.UpdateConfiguration(configuration);
+                _liveTvService?.RefreshConfiguration();
 
                 if (Configuration is PluginConfiguration pluginConfig)
                 {

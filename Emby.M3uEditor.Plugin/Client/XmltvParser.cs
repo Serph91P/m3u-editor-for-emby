@@ -108,13 +108,31 @@ namespace Emby.M3uEditor.Plugin.Client
             var untypedIcons = new List<ArtworkCandidate>();
             var typedPosterCandidates = new List<ArtworkCandidate>();
             var artworkByUrl = new Dictionary<string, ArtworkEvidence>(StringComparer.Ordinal);
+            var preserveNextIcon = false;
+            var preservationMarkers = 0;
+            string preservedPrimaryUrl = null;
             while (reader.Read())
             {
                 if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth)
                     break;
-                if (reader.NodeType != XmlNodeType.Element || reader.Depth != depth + 1) continue;
+                if (reader.Depth == depth + 1 && reader.NodeType == XmlNodeType.ProcessingInstruction)
+                {
+                    preserveNextIcon = reader.Name == "m3ue-preserved-primary" && reader.Value.Length == 0;
+                    if (reader.Name == "m3ue-preserved-primary")
+                        preservationMarkers++;
+                    continue;
+                }
+                if (reader.NodeType != XmlNodeType.Element || reader.Depth != depth + 1)
+                {
+                    if (reader.Depth == depth + 1 && reader.NodeType != XmlNodeType.Whitespace
+                        && reader.NodeType != XmlNodeType.Comment)
+                        preserveNextIcon = false;
+                    continue;
+                }
 
                 var name = reader.Name;
+                var isPreservedIcon = preserveNextIcon && name == "icon";
+                preserveNextIcon = false;
 
                 if (string.Equals(name, "title", StringComparison.OrdinalIgnoreCase))
                 {
@@ -198,6 +216,8 @@ namespace Emby.M3uEditor.Plugin.Client
                     var sanitized = Util.UrlValidator.SanitizeHttpUrl(src);
                     if (sanitized == null)
                         continue;
+                    if (isPreservedIcon)
+                        preservedPrimaryUrl = sanitized;
 
                     AddArtworkEvidence(
                         artworkByUrl,
@@ -308,30 +328,24 @@ namespace Emby.M3uEditor.Plugin.Client
                     pairedPosters.Add(pairedPoster);
             }
 
-            if (pairedPosters.Count == 1 && !HasConflictingTypedPoster(
-                pairedPosters[0].Url,
-                typedPosterCandidates,
-                conflictingArtworkUrls))
+            foreach (var typedPoster in typedPosterCandidates)
             {
-                // The matching untyped icon attests reported portrait geometry only;
-                // the parser does not fetch remote image bytes for verification.
-                program.PosterUrl = pairedPosters[0].Url;
-                program.PosterWidth = pairedPosters[0].Width;
-                program.PosterHeight = pairedPosters[0].Height;
+                if (!conflictingArtworkUrls.Contains(typedPoster.Url)
+                    && IsPortraitPoster(typedPoster.Width, typedPoster.Height, typedPoster.Orient)
+                    && !ContainsUrl(pairedPosters, typedPoster.Url))
+                    pairedPosters.Add(typedPoster);
             }
-            else if (pairedPosters.Count == 0)
+
+            var selectedPoster = SelectQualifiedPoster(pairedPosters, untypedIcons);
+            if (selectedPoster != null)
             {
-                var legacyPoster = FindSingleValidTypedPoster(typedPosterCandidates, conflictingArtworkUrls);
-                if (legacyPoster != null)
-                {
-                    program.PosterUrl = legacyPoster.Url;
-                    program.PosterWidth = legacyPoster.Width;
-                    program.PosterHeight = legacyPoster.Height;
-                }
+                program.PosterUrl = selectedPoster.Url;
+                program.PosterWidth = selectedPoster.Width;
+                program.PosterHeight = selectedPoster.Height;
             }
             // Keep each qualified artwork role separate. A portrait poster is Emby's
             // primary programme image; backdrop and episode still retain their own
-            // slots. If no poster is available, primary falls back through those roles.
+            // slots; known secondary roles must not manufacture a primary image.
             var orderedBackdrops = SelectDistinctNonConflictingArtwork(
                 standardBackdropCandidates,
                 conflictingArtworkUrls);
@@ -358,9 +372,7 @@ namespace Emby.M3uEditor.Plugin.Client
             }
             else
             {
-                program.ImageUrl = program.BackdropImageUrl
-                    ?? program.ThumbImageUrl
-                    ?? program.LogoImageUrl;
+                program.ImageUrl = null;
                 program.ImageWidth = 0;
                 program.ImageHeight = 0;
             }
@@ -390,6 +402,15 @@ namespace Emby.M3uEditor.Plugin.Client
                     program.ImageWidth = legacyImageWidth;
                     program.ImageHeight = legacyImageHeight;
                 }
+            }
+
+            if (preservationMarkers == 1 && preservedPrimaryUrl != null)
+            {
+                program.PreservedPrimaryUrl = preservedPrimaryUrl;
+                program.ImageUrl = preservedPrimaryUrl;
+                var evidence = artworkByUrl[preservedPrimaryUrl];
+                program.ImageWidth = evidence.Width;
+                program.ImageHeight = evidence.Height;
             }
 
             return program;
@@ -461,7 +482,12 @@ namespace Emby.M3uEditor.Plugin.Client
                 if (!string.Equals(icon.Url, posterUrl, StringComparison.Ordinal))
                     continue;
 
-                if (!IsPortraitPoster(icon.Width, icon.Height, null))
+                // A scalar icon repeats the selected URL without adding geometry.
+                // Missing evidence must not contradict a complete portrait pair.
+                if (icon.Width == 0 && icon.Height == 0)
+                    continue;
+
+                if (!IsPortraitPoster(icon.Width, icon.Height, icon.Orient))
                     return null;
 
                 if (pair == null)
@@ -487,51 +513,45 @@ namespace Emby.M3uEditor.Plugin.Client
             return pair;
         }
 
-        private static bool HasConflictingTypedPoster(
-            string posterUrl,
-            List<ArtworkCandidate> typedPosterCandidates,
-            HashSet<string> conflictingArtworkUrls)
+        private static ArtworkCandidate SelectQualifiedPoster(
+            List<ArtworkCandidate> candidates, List<ArtworkCandidate> untypedIcons)
         {
-            if (conflictingArtworkUrls.Contains(posterUrl))
-                return true;
-
-            foreach (var typedPoster in typedPosterCandidates)
+            // A unique scalar URL is the producer's explicit selection, but only
+            // among posters whose role and portrait geometry are already attested.
+            ArtworkCandidate scalarSelection = null;
+            var ambiguousSelection = false;
+            foreach (var icon in untypedIcons)
             {
-                if (!string.Equals(typedPoster.Url, posterUrl, StringComparison.Ordinal))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static ArtworkCandidate FindSingleValidTypedPoster(
-            List<ArtworkCandidate> typedPosterCandidates,
-            HashSet<string> conflictingArtworkUrls)
-        {
-            ArtworkCandidate candidate = null;
-            foreach (var typedPoster in typedPosterCandidates)
-            {
-                if (conflictingArtworkUrls.Contains(typedPoster.Url))
+                if (icon.Width != 0 || icon.Height != 0)
                     continue;
-
-                if (!IsPortraitPoster(typedPoster.Width, typedPoster.Height, typedPoster.Orient))
-                    return null;
-
-                if (candidate == null)
+                foreach (var candidate in candidates)
                 {
-                    candidate = typedPoster;
-                }
-                else if (!string.Equals(candidate.Url, typedPoster.Url, StringComparison.Ordinal)
-                    || candidate.Width != typedPoster.Width
-                    || candidate.Height != typedPoster.Height)
-                {
-                    // Different legacy typed posters are alternatives without a
-                    // programme-specific pairing signal, so fail closed.
-                    return null;
+                    if (!string.Equals(icon.Url, candidate.Url, StringComparison.Ordinal))
+                        continue;
+                    if (scalarSelection != null
+                        && !string.Equals(scalarSelection.Url, candidate.Url, StringComparison.Ordinal))
+                        ambiguousSelection = true;
+                    scalarSelection = candidate;
                 }
             }
+            if (scalarSelection != null && !ambiguousSelection)
+                return scalarSelection;
 
-            return candidate;
+            // Otherwise rank reported pixel area, height, then URL for stable ties.
+            // No dimensions are inferred from role, orientation, title or URL.
+            ArtworkCandidate selected = null;
+            foreach (var candidate in candidates)
+            {
+                var area = (long)candidate.Width * candidate.Height;
+                var selectedArea = selected == null ? 0 : (long)selected.Width * selected.Height;
+                if (selected == null || area > selectedArea
+                    || (area == selectedArea && candidate.Height > selected.Height)
+                    || (area == selectedArea && candidate.Height == selected.Height
+                        && string.CompareOrdinal(candidate.Url, selected.Url) < 0))
+                    selected = candidate;
+            }
+
+            return selected;
         }
 
         private static string SelectLastNonConflictingArtwork(
@@ -633,6 +653,8 @@ namespace Emby.M3uEditor.Plugin.Client
             private bool _hasCompleteGeometry;
 
             public bool IsConflicting { get; private set; }
+            public int Width => !IsConflicting && _hasCompleteGeometry ? _width : 0;
+            public int Height => !IsConflicting && _hasCompleteGeometry ? _height : 0;
 
             public void Add(string role, string orient, int width, int height)
             {
@@ -708,7 +730,9 @@ namespace Emby.M3uEditor.Plugin.Client
             var datePart = spaceIdx > 0 ? value.Substring(0, spaceIdx) : value;
             var tzPart = spaceIdx > 0 ? value.Substring(spaceIdx + 1).Trim() : null;
 
-            if (datePart.Length < 14)
+            if (datePart.Length == 12)
+                datePart += "00";
+            if (datePart.Length != 14)
                 return 0;
 
             int year, month, day, hour, minute, second;

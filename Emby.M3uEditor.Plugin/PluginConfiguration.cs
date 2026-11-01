@@ -47,10 +47,21 @@ namespace Emby.M3uEditor.Plugin
         public bool EnableLiveTvDiagnostics { get; set; }
 
         // EPG / Guide Data
-        public EpgSourceMode EpgSource { get; set; } = EpgSourceMode.XtreamServer;
+        private EpgSourceMode? _epgSource;
+        private bool _enableEpg = true;
+        // A setter invocation proves modern XML/JSON presence, independent of element order.
+        public EpgSourceMode EpgSource
+        {
+            get => _epgSource ?? (_enableEpg ? EpgSourceMode.XtreamServer : EpgSourceMode.Disabled);
+            set => _epgSource = value;
+        }
         public string CustomEpgUrl { get; set; } = string.Empty;
         // Back-compat: migrate EnableEpg (bool) → EpgSource on first load
-        [Obsolete("Use EpgSource instead")] public bool EnableEpg { get; set; } = true;
+        [Obsolete("Use EpgSource instead")] public bool EnableEpg
+        {
+            get => _enableEpg;
+            set => _enableEpg = value;
+        }
         public int EpgCacheMinutes { get; set; } = 30;
         public int EpgDaysToFetch { get; set; } = 2;
         public int M3UCacheMinutes { get; set; } = 15;
