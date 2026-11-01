@@ -214,7 +214,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
             using (var httpClient = _httpClientFactory(10))
             {
-                var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
+                var json = await GetStringAsync(httpClient, url, cancellationToken).ConfigureAwait(false);
                 var categories = STJ.JsonSerializer.Deserialize<List<Category>>(json, JsonOptions)
                     ?? new List<Category>();
                 if (IsLiveTvDiagnosticsEnabled())
@@ -265,6 +265,7 @@ namespace Emby.M3uEditor.Plugin.Service
             List<LiveStreamInfo> allChannels;
 
             allChannels = await FetchAllChannelsAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (diagnostics)
             {
                 _logger.Info("[livetv-diag] all-channel-fetch rawChannels={0}", allChannels.Count);
@@ -412,7 +413,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
             using (var httpClient = _httpClientFactory(30))
             {
-                var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
+                var json = await GetStringAsync(httpClient, url, cancellationToken).ConfigureAwait(false);
                 var channels = STJ.JsonSerializer.Deserialize<List<LiveStreamInfo>>(json, JsonOptions)
                     ?? new List<LiveStreamInfo>();
                 if (IsLiveTvDiagnosticsEnabled())
@@ -750,6 +751,9 @@ namespace Emby.M3uEditor.Plugin.Service
         internal async Task<List<EpgProgram>> FetchEpgForChannelCachedAsync(int streamId, CancellationToken cancellationToken)
         {
             var config = GetConfiguration();
+            if (config.EpgSource == EpgSourceMode.CustomUrl && string.IsNullOrWhiteSpace(config.CustomEpgUrl))
+                throw new InvalidOperationException("Custom EPG URL is required when Custom URL mode is selected.");
+            if (config.EpgSource == EpgSourceMode.Disabled) return new List<EpgProgram>();
             var cacheTtl = TimeSpan.FromMinutes(config.EpgCacheMinutes);
 
             // 1. Check per-channel cache (fastest path)
@@ -869,7 +873,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     return true;
 
                 string url;
-                if (config.EpgSource == EpgSourceMode.CustomUrl && !string.IsNullOrWhiteSpace(config.CustomEpgUrl))
+                if (config.EpgSource == EpgSourceMode.CustomUrl)
                 {
                     url = config.CustomEpgUrl;
                     _logger.Info("Fetching bulk XMLTV EPG from custom URL");
@@ -906,12 +910,16 @@ namespace Emby.M3uEditor.Plugin.Service
                     Dictionary<string, List<EpgProgram>> xmltvData;
                     using (var httpClient = _httpClientFactory(180))
                     {
-                        using (var stream = await httpClient.GetStreamAsync(url).ConfigureAwait(false))
+                        // ResponseContentRead keeps the caller token active through body buffering.
+                        using (var response = await httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false))
                         {
-                            xmltvData = XmltvParser.Parse(stream, now.ToUnixTimeSeconds(), filterEndUnix);
+                            response.EnsureSuccessStatusCode();
+                            using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                                xmltvData = XmltvParser.Parse(stream, now.ToUnixTimeSeconds(), filterEndUnix);
                         }
                     }
 
+                    cancellationToken.ThrowIfCancellationRequested();
                     _xmltvCache = xmltvData;
                     _epgChannelIdByStreamId = mapping;
                     _xmltvCacheTime = DateTime.UtcNow;
@@ -921,7 +929,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     _logger.Info("XMLTV EPG fetched: {0} channels with program data", _xmltvCache.Count);
                     return true;
                 }
-                catch (Exception ex) when (!(ex is OperationCanceledException))
+                catch (Exception ex) when (!(ex is OperationCanceledException) || !cancellationToken.IsCancellationRequested)
                 {
                     _xmltvFailed = true;
                     _xmltvFailedTime = DateTime.UtcNow;
@@ -948,8 +956,19 @@ namespace Emby.M3uEditor.Plugin.Service
 
             using (var httpClient = _httpClientFactory(10))
             {
-                var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
+                var json = await GetStringAsync(httpClient, url, cancellationToken).ConfigureAwait(false);
                 return STJ.JsonSerializer.Deserialize<EpgListings>(json, JsonOptions);
+            }
+        }
+
+        private static async Task<string> GetStringAsync(HttpClient client, string url, CancellationToken cancellationToken)
+        {
+            using (var response = await client.GetAsync(url, cancellationToken).ConfigureAwait(false))
+            {
+                response.EnsureSuccessStatusCode();
+                var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                return text;
             }
         }
 

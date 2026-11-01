@@ -632,6 +632,57 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData("<EnableEpg>false</EnableEpg>", EpgSourceMode.Disabled)]
+        [InlineData("<EnableEpg>true</EnableEpg>", EpgSourceMode.XtreamServer)]
+        [InlineData("", EpgSourceMode.XtreamServer)]
+        [InlineData("<EnableEpg>false</EnableEpg><EpgSource>XtreamServer</EpgSource>", EpgSourceMode.XtreamServer)]
+        [InlineData("<EpgSource>CustomUrl</EpgSource><EnableEpg>false</EnableEpg>", EpgSourceMode.CustomUrl)]
+        [InlineData("<EpgSource>Disabled</EpgSource><EnableEpg>true</EnableEpg>", EpgSourceMode.Disabled)]
+        public async System.Threading.Tasks.Task Issue134_RealXmlIsConsumedByPluginStartupAndStableOnReload(string elements, EpgSourceMode expected)
+        {
+            using (var env = new PluginTestEnvironment(new PluginConfiguration(), new LiveTvOptions()))
+            {
+                env.XmlSerializer.ConfigurationXml = "<PluginConfiguration>" + elements + "</PluginConfiguration>";
+                var plugin = env.CreatePlugin();
+                Assert.True(env.XmlSerializer.DeserializeCalls > 0);
+                Assert.Equal(expected, plugin.Configuration.EpgSource);
+                Assert.Equal(expected != EpgSourceMode.Disabled, MakeBareHost().SupportsGuideData(new TunerHostInfo()));
+                if (expected == EpgSourceMode.Disabled)
+                {
+                    var handler = new FakeHttpHandler();
+                    using (var service = new LiveTvService(DispatchProxy.Create<ILogger, TestLogger>(),
+                        _ => new System.Net.Http.HttpClient(handler, false), () => plugin.Configuration, () => { }))
+                    {
+                        Assert.Empty(await service.FetchEpgForChannelCachedAsync(42, System.Threading.CancellationToken.None));
+                        Assert.Empty(handler.ReceivedUrls);
+                    }
+                }
+                var serializer = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
+                using (var text = new StringWriter())
+                {
+                    serializer.Serialize(text, plugin.Configuration);
+                    using (var reader = new StringReader(text.ToString()))
+                        Assert.Equal(expected, ((PluginConfiguration)serializer.Deserialize(reader)).EpgSource);
+                }
+            }
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
+        public void Issue132_ConfigurationUpdateRejectsBlankCustomSource(string url)
+        {
+            using (var env = new PluginTestEnvironment(new PluginConfiguration(), new LiveTvOptions()))
+            {
+                var plugin = env.CreatePlugin();
+                var error = Assert.Throws<ArgumentException>(() => plugin.UpdateConfiguration(new PluginConfiguration
+                    { EpgSource = EpgSourceMode.CustomUrl, CustomEpgUrl = url }));
+                Assert.Contains("Custom EPG URL", error.Message);
+                Assert.Equal(EpgSourceMode.XtreamServer, plugin.Configuration.EpgSource);
+            }
+        }
+
         private sealed class PluginTestEnvironment : IDisposable
         {
             private readonly TempDirectory _directory;
@@ -748,6 +799,8 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         private class TestXmlSerializer : DispatchProxy
         {
+            public string ConfigurationXml { get; set; }
+            public int DeserializeCalls { get; private set; }
             public PluginConfiguration ConfigurationToLoad { get; set; }
             public int SerializeToFileCalls { get; private set; }
             public object LastSerializedConfiguration { get; private set; }
@@ -762,6 +815,12 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 if (string.Equals(targetMethod.Name, "DeserializeFromFile", StringComparison.Ordinal))
                 {
+                    DeserializeCalls++;
+                    if (ConfigurationXml != null)
+                    {
+                        using (var reader = new StringReader(ConfigurationXml))
+                            return new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration)).Deserialize(reader);
+                    }
                     return ConfigurationToLoad;
                 }
 

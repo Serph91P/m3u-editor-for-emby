@@ -158,6 +158,85 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Issue133_CanceledCopyReconnectsBothOverloads(bool pipe)
+        {
+            var previousPlugin = SetTestPluginInstance();
+            var handler = new ReconnectHandler();
+            try
+            {
+                using (var stream = CreateLiveStream(handler))
+                using (var cancellation = new CancellationTokenSource())
+                {
+                    await stream.Open(CancellationToken.None);
+                    Assert.Equal(0, handler.Requests);
+                    Task Copy(CancellationToken token, MemoryStream output) => pipe
+                        ? stream.CopyToAsync(System.IO.Pipelines.PipeWriter.Create(output, new System.IO.Pipelines.StreamPipeWriterOptions(leaveOpen: true)), token)
+                        : stream.CopyToAsync(output, null, null, token);
+                    using (var first = new MemoryStream())
+                    {
+                        var copy = Copy(cancellation.Token, first);
+                        await handler.Aborted.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                        cancellation.Cancel();
+                        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => copy.WaitAsync(TimeSpan.FromSeconds(3)));
+                    }
+                    using (var second = new MemoryStream())
+                    {
+                        await Copy(CancellationToken.None, second);
+                        Assert.Equal(new byte[] { 1, 2, 3 }, second.ToArray());
+                    }
+                    Assert.Equal(2, handler.Requests);
+                    Assert.True(handler.Aborted.Disposed);
+                    await stream.Close();
+                    Assert.True(handler.Disposed);
+                    Assert.True(handler.LastStreamDisposed);
+                }
+            }
+            finally { SetPluginInstance(previousPlugin); }
+        }
+
+        private sealed class AbortingStream : Stream
+        {
+            public TaskCompletionSource<bool> Entered { get; } = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            public bool Disposed { get; private set; }
+            public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken token)
+            {
+                if (Disposed) throw new ObjectDisposedException(nameof(AbortingStream));
+                Entered.TrySetResult(true);
+                try { await Task.Delay(Timeout.Infinite, token); return 0; }
+                catch (OperationCanceledException) { Disposed = true; throw; }
+            }
+            protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override int Read(byte[] b, int o, int c) => throw new NotSupportedException();
+            public override long Seek(long o, SeekOrigin s) => throw new NotSupportedException();
+            public override void SetLength(long l) => throw new NotSupportedException();
+            public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
+        }
+
+        private sealed class ReconnectHandler : HttpMessageHandler
+        {
+            public AbortingStream Aborted { get; } = new AbortingStream();
+            public int Requests { get; private set; }
+            public bool Disposed { get; private set; }
+            private TrackingStream _last;
+            public bool LastStreamDisposed => _last?.DisposeCount == 1;
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+            {
+                Requests++;
+                Stream body = Requests == 1 ? Aborted : (_last = new TrackingStream());
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(body) });
+            }
+            protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+        }
+
         private static M3uEditorLiveStream CreateLiveStream(HttpMessageHandler handler)
         {
             return new M3uEditorLiveStream(

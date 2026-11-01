@@ -251,10 +251,20 @@ namespace Emby.M3uEditor.Plugin.Service
             Action<SegmentedStreamSegmentInfo> onSegmentWritten,
             CancellationToken cancellationToken)
         {
-            if (_stream == null)
+            if (_stream == null && !_needsReconnect)
                 await ConnectAsync(cancellationToken).ConfigureAwait(false);
+            if (_needsReconnect)
+                await ReopenStreamAsync(cancellationToken).ConfigureAwait(false);
 
-            await _stream.CopyToAsync(writer, 262144, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _stream.CopyToAsync(writer, 262144, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                _needsReconnect = true;
+                throw;
+            }
         }
 
         public void Dispose()

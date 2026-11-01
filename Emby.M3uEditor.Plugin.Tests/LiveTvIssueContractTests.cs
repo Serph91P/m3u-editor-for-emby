@@ -94,6 +94,72 @@ namespace Emby.M3uEditor.Plugin.Tests
             if (codec == null) Assert.DoesNotContain(source.MediaStreams, stream => stream.Type == MediaBrowser.Model.Entities.MediaStreamType.Video);
         }
 
+        [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
+        public async Task Issue132_BlankCustomSourceNeverRequestsProvider(string url)
+        {
+            var config = new PluginConfiguration { EpgSource = EpgSourceMode.CustomUrl, CustomEpgUrl = url };
+            var handler = new FakeHttpHandler();
+            using (var service = new LiveTvService(new NullLogger(), _ => new HttpClient(handler, false), () => config, () => { }))
+            {
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.FetchEpgForChannelCachedAsync(42, CancellationToken.None));
+                Assert.Contains("Custom EPG URL", error.Message);
+                Assert.Empty(handler.ReceivedUrls);
+                Assert.False(service.HasXmltvCache);
+                Assert.Equal(0, service.PerChannelEpgCacheCount);
+            }
+        }
+
+        [Theory]
+        [InlineData("channels")]
+        [InlineData("categories")]
+        [InlineData("xmltv")]
+        [InlineData("json")]
+        public async Task Issue131_CallerCancellationReachesActiveHttp(string phase)
+        {
+            var config = new PluginConfiguration { BaseUrl = "https://editor.example.test", Username = "user", Password = "pass" };
+            var handler = new CancelHandler(phase);
+            var saves = 0;
+            using (var service = new LiveTvService(new NullLogger(), _ => new HttpClient(handler, false), () => config, () => saves++))
+            using (var cts = new CancellationTokenSource())
+            {
+                Task task = phase == "channels" ? service.GetFilteredChannelsAsync(cts.Token)
+                    : phase == "categories" ? service.GetLiveCategoriesAsync(cts.Token)
+                    : service.FetchEpgForChannelCachedAsync(42, cts.Token);
+                await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                var before = saves;
+                cts.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.WaitAsync(TimeSpan.FromSeconds(3)));
+                Assert.True(handler.ReceivedToken.IsCancellationRequested);
+                Assert.Equal(before, saves);
+                Assert.False(service.HasXmltvCache);
+                Assert.Equal(0, service.PerChannelEpgCacheCount);
+            }
+        }
+
+        private sealed class CancelHandler : HttpMessageHandler
+        {
+            private readonly string _phase;
+            public CancelHandler(string phase) { _phase = phase; }
+            public TaskCompletionSource<bool> Entered { get; } = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            public CancellationToken ReceivedToken { get; private set; }
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+            {
+                var url = request.RequestUri.ToString();
+                var target = _phase == "channels" ? "action=get_live_streams" : _phase == "categories" ? "action=get_live_categories"
+                    : _phase == "xmltv" ? "/xmltv.php?" : "action=get_simple_data_table";
+                if (url.Contains(target))
+                {
+                    ReceivedToken = token;
+                    Entered.TrySetResult(true);
+                    await Task.Delay(Timeout.Infinite, token);
+                }
+                return new HttpResponseMessage(url.Contains("xmltv.php") ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
+                { Content = new StringContent("[{\"stream_id\":42,\"name\":\"Synthetic\"}]") };
+            }
+        }
+
         private static void AssertPlayback(Uri uri, string format)
         {
             Assert.Empty(uri.Query);
