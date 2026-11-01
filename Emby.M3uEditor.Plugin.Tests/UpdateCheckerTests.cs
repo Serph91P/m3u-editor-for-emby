@@ -326,6 +326,57 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Null(UpdateChecker.SelectHighestRelease("[]"));
         }
 
+        [Theory]
+        [InlineData("Follow-up [pending")]
+        [InlineData("Fixed ] regression")]
+        [InlineData("{ } \\\"quoted\\\" \\ path")]
+        [InlineData(null)]
+        public void StructuralJson_NotesAndNestedMetadataDoNotChangeSelection(string notes)
+        {
+            var releases = new[] {
+                new { tag_name = "v1.1.0", draft = false, body = notes, uploader = new { tag_name = "v99.0.0", draft = true } },
+                new { tag_name = "v1.2.0-beta.1", draft = false, body = (string)null, uploader = new { tag_name = "v99.0.0", draft = true } }
+            };
+            foreach (var ordered in new[] { releases, System.Linq.Enumerable.Reverse(releases) })
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(ordered);
+                using var picked = System.Text.Json.JsonDocument.Parse(UpdateChecker.SelectHighestRelease(json));
+                Assert.Equal("v1.2.0-beta.1", picked.RootElement.GetProperty("tag_name").GetString());
+            }
+        }
+
+        [Theory]
+        [InlineData("DLL [x")]
+        [InlineData("DLL ]x")]
+        [InlineData("{ } \\\"quotes\\\" \\ path")]
+        public void StructuralJson_AssetLookupStaysInsideExactAsset(string label)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(new { assets = new[] {
+                new { uploader = new { name = "Emby.M3uEditor.Plugin.dll", browser_download_url = "wrong" }, label, name = "other.dll", browser_download_url = "other" },
+                new { uploader = new { name = "nested", browser_download_url = "wrong" }, label, name = "Emby.M3uEditor.Plugin.dll", browser_download_url = "https://example.invalid/plugin.dll" }
+            }});
+            Assert.Equal("https://example.invalid/plugin.dll", UpdateChecker.ExtractDllDownloadUrl(json, "Emby.M3uEditor.Plugin.dll"));
+        }
+
+        [Fact]
+        public void StructuralJson_ReorderedPropertiesAndEscapedAssetName()
+        {
+            const string json = "{\"uploader\":{\"assets\":[],\"draft\":true},\"assets\":[{\"browser_download_url\":\"https://example.invalid/a?x=1\\u0026y=2\",\"uploader\":{\"name\":\"wrong\"},\"name\":\"Emby.M3uEditor.Pl\\u0075gin.dll\"}]}";
+            Assert.Equal("https://example.invalid/a?x=1&y=2", UpdateChecker.ExtractDllDownloadUrl(json, "Emby.M3uEditor.Plugin.dll"));
+            const string releases = "[{\"uploader\":{\"tag_name\":\"v99.0.0\",\"draft\":true},\"body\":null,\"draft\":false,\"tag_name\":\"v1.2.0\"},{\"draft\":true,\"tag_name\":\"v9.9.9\"}]";
+            using var picked = System.Text.Json.JsonDocument.Parse(UpdateChecker.SelectHighestRelease(releases));
+            Assert.Equal("v1.2.0", picked.RootElement.GetProperty("tag_name").GetString());
+        }
+
+        [Theory]
+        [InlineData("[{\"tag_name\":\"v1.0.0\"},")]
+        [InlineData("[{\"tag_name\":\"v1.0.0\"}] trailing")]
+        public void StructuralJson_MalformedReleaseFailsInsteadOfFirstFallback(string json)
+        {
+            Assert.ThrowsAny<System.Text.Json.JsonException>(() => UpdateChecker.SelectHighestRelease(json));
+            Assert.ThrowsAny<System.Text.Json.JsonException>(() => UpdateChecker.ExtractFirstRelease(json));
+        }
+
         // ---- ExtractDllDownloadUrl tests ----
 
         [Fact]
