@@ -160,6 +160,36 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public async Task Issue127_ActualUiSavedTermsAreCleanedAndLegacyNewlinesRemainCompatible()
+        {
+            var root = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+            while (root != null && !System.IO.File.Exists(System.IO.Path.Combine(root.FullName, "Emby.M3uEditor.Plugin.Tests", "Issue85UiHarness.js"))) root = root.Parent;
+            Assert.NotNull(root);
+            var harness = System.IO.Path.Combine(root.FullName, "Emby.M3uEditor.Plugin.Tests", "Issue85UiHarness.js");
+            var config = System.IO.Path.Combine(root.FullName, "Emby.M3uEditor.Plugin", "Configuration", "Web", "config.js");
+            var script = "process.argv[2]=process.argv[1];" + System.IO.File.ReadAllText(harness).Split("async function saveWithValue")[0] +
+                "\n(async()=>{const m=await mount();m.view.lookup('.txtChannelRemoveTerms').value='Alpha\\nBeta';" +
+                "m.view.lookup('.chkEnableChannelNameCleaning').checked=true;m.view.lookup('.m3uEditorConfigForm').emit('submit');" +
+                "await flushPromises();assert.equal(m.state.updates.length,1);process.stdout.write(JSON.stringify(m.state.updates[0].ChannelRemoveTerms));})().catch(e=>{console.error(e);process.exitCode=1;});";
+            var start = new System.Diagnostics.ProcessStartInfo("node") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            start.ArgumentList.Add("-e"); start.ArgumentList.Add(script); start.ArgumentList.Add(config);
+            using (var process = System.Diagnostics.Process.Start(start))
+            {
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var errors = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                Assert.True(process.ExitCode == 0, errors);
+                var saved = System.Text.Json.JsonSerializer.Deserialize<string>(output);
+                Assert.Equal("Alpha,Beta", saved);
+                foreach (var terms in new[] { saved, "Alpha\nBeta", "Alpha\r\nBeta", "Alpha,Beta\nGamma" })
+                {
+                    Assert.Equal("Synthetic", ChannelNameCleaner.CleanChannelName("Alpha Beta Synthetic", terms, true));
+                    Assert.Equal("Alpha Beta Synthetic", ChannelNameCleaner.CleanChannelName("Alpha Beta Synthetic", terms, false));
+                }
+            }
+        }
+
         private static void AssertPlayback(Uri uri, string format)
         {
             Assert.Empty(uri.Query);

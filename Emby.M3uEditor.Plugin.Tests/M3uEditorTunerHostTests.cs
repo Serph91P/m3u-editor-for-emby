@@ -504,17 +504,19 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public void IsOwnedChannel_UsesTunerIdOrExactNameAndNumberPair()
+        public void IsOwnedChannel_RequiresGlobalIdentityAndKnownTuner()
         {
             var channels = new[]
             {
-                new ChannelInfo { TunerChannelId = "42", Number = "7", Name = "News" }
+                new ChannelInfo { Id = "global-owned-42", TunerHostId = "owned", TunerChannelId = "42", Number = "7", Name = "News" }
             };
 
-            Assert.True(M3uEditorTunerHost.IsOwnedChannel(channels, "42", null, null));
-            Assert.True(M3uEditorTunerHost.IsOwnedChannel(channels, null, "7", "News"));
-            Assert.False(M3uEditorTunerHost.IsOwnedChannel(channels, null, "7", "Other"));
-            Assert.False(M3uEditorTunerHost.IsOwnedChannel(channels, null, null, "News"));
+            Assert.True(M3uEditorTunerHost.IsOwnedChannel(channels, "global-owned-42"));
+            Assert.False(M3uEditorTunerHost.IsOwnedChannel(channels, "42"));
+            Assert.False(M3uEditorTunerHost.IsOwnedChannel(channels, "foreign-42"));
+            Assert.False(M3uEditorTunerHost.IsOwnedChannel(channels, null));
+            channels[0].TunerHostId = null;
+            Assert.False(M3uEditorTunerHost.IsOwnedChannel(channels, "global-owned-42"));
         }
 
         [Fact]
@@ -568,12 +570,62 @@ namespace Emby.M3uEditor.Plugin.Tests
             return (hostProxy, configManager);
         }
 
+        [Fact]
+        public void Issue130_ExplicitArtworkRecoveryMutatesOnlyProvenGlobalChannels()
+        {
+            var tuner = new TunerHostInfo { Id = "owned-tuner", Type = M3uEditorTunerHost.TunerType };
+            var environment = CreateEnvironment(new LiveTvOptions { TunerHosts = new[] { tuner } });
+            var library = DispatchProxy.Create<MediaBrowser.Controller.Library.ILibraryManager, ArtworkLibrary>();
+            var app = DispatchProxy.Create<MediaBrowser.Controller.IServerApplicationHost, TestApplicationHost>();
+            ((TestApplicationHost)app).ConfigurationManager = ((TestApplicationHost)environment.host).ConfigurationManager;
+            ((TestApplicationHost)app).LibraryManager = library;
+            var host = MakeBareHost();
+            SetField(host, "_applicationHost", app);
+            var globalId = (string)typeof(BaseTunerHost).GetMethod("CreateEmbyChannelId", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(host, new object[] { tuner, "42" });
+            var owned = new MediaBrowser.Controller.LiveTv.LiveTvChannel { ExternalId = globalId, Name = "Synthetic", Number = "7",
+                ImageInfos = new[] { new MediaBrowser.Controller.Entities.ItemImageInfo() } };
+            var foreign = new MediaBrowser.Controller.LiveTv.LiveTvChannel { ExternalId = "42", Name = "Other", Number = "8",
+                ImageInfos = new[] { new MediaBrowser.Controller.Entities.ItemImageInfo() } };
+            var collision = new MediaBrowser.Controller.LiveTv.LiveTvChannel { ExternalId = "foreign-other", Name = "Synthetic", Number = "7",
+                ImageInfos = new[] { new MediaBrowser.Controller.Entities.ItemImageInfo() } };
+            var unknown = new MediaBrowser.Controller.LiveTv.LiveTvChannel { Name = "Synthetic", Number = "7",
+                ImageInfos = new[] { new MediaBrowser.Controller.Entities.ItemImageInfo() } };
+            ((ArtworkLibrary)library).Items = new MediaBrowser.Controller.Entities.BaseItem[] { owned, foreign, collision, unknown };
+            SetField(host, "_cachedChannels", new List<ChannelInfo> { new ChannelInfo { Id = globalId,
+                TunerHostId = tuner.Id, TunerChannelId = "42", Name = "Synthetic", Number = "7" } });
+            var result = host.ClearCachedChannelArtwork();
+            Assert.True(result.Success, result.Message);
+            Assert.Empty(owned.ImageInfos);
+            Assert.Single(foreign.ImageInfos);
+            Assert.Single(collision.ImageInfos);
+            Assert.Single(unknown.ImageInfos);
+            Assert.Same(owned, Assert.Single(((ArtworkLibrary)library).Updated));
+            host.ClearCaches();
+            Assert.Single(foreign.ImageInfos);
+        }
+
+        private class ArtworkLibrary : DispatchProxy
+        {
+            public MediaBrowser.Controller.Entities.BaseItem[] Items { get; set; }
+            public List<object> Updated { get; } = new List<object>();
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name == "GetItemList") return Items;
+                if (method.Name == "UpdateItem") Updated.Add(args[0]);
+                return method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null;
+            }
+        }
+
         private class TestApplicationHost : DispatchProxy
         {
             public IConfigurationManager ConfigurationManager { get; set; }
+            public MediaBrowser.Controller.Library.ILibraryManager LibraryManager { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod.Name == "Resolve" && targetMethod.IsGenericMethod &&
+                    targetMethod.GetGenericArguments()[0] == typeof(MediaBrowser.Controller.Library.ILibraryManager)) return LibraryManager;
                 if (string.Equals(targetMethod.Name, "Resolve", StringComparison.Ordinal) &&
                     targetMethod.IsGenericMethod &&
                     targetMethod.GetGenericArguments().Length == 1 &&

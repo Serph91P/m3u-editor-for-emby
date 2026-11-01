@@ -717,6 +717,14 @@ namespace Emby.M3uEditor.Plugin.Service
 
             try
             {
+                var registeredTuner = FindRegisteredTunerHost("ClearCachedChannelArtwork");
+                if (registeredTuner == null)
+                {
+                    result.Message = "Channel ownership cannot be established without the registered m3u-editor tuner.";
+                    return result;
+                }
+                cachedChannels = cachedChannels.Where(channel =>
+                    string.Equals(channel.TunerHostId, registeredTuner.Id, StringComparison.Ordinal)).ToList();
                 var libraryManager = _applicationHost.Resolve<ILibraryManager>();
                 var assemblies = AppDomain.CurrentDomain.GetAssemblies();
                 var channelType = assemblies
@@ -753,10 +761,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         result.TotalLibraryChannels++;
                         var itemType = item.GetType();
-                        var name = itemType.GetProperty("Name")?.GetValue(item) as string;
-                        var number = itemType.GetProperty("Number")?.GetValue(item) as string;
-                        var tunerChannelId = itemType.GetProperty("TunerChannelId")?.GetValue(item) as string;
-                        if (!IsOwnedChannel(cachedChannels, tunerChannelId, number, name))
+                        var externalId = itemType.GetProperty("ExternalId")?.GetValue(item) as string;
+                        if (!IsOwnedChannel(cachedChannels, externalId))
                         {
                             continue;
                         }
@@ -824,16 +830,11 @@ namespace Emby.M3uEditor.Plugin.Service
 
         internal static bool IsOwnedChannel(
             IEnumerable<ChannelInfo> cachedChannels,
-            string tunerChannelId,
-            string number,
-            string name)
+            string externalId)
         {
-            return cachedChannels != null && cachedChannels.Any(channel =>
-                (!string.IsNullOrEmpty(tunerChannelId) &&
-                 string.Equals(channel.TunerChannelId, tunerChannelId, StringComparison.Ordinal)) ||
-                (!string.IsNullOrEmpty(number) && !string.IsNullOrEmpty(name) &&
-                 string.Equals(channel.Number, number, StringComparison.Ordinal) &&
-                 string.Equals(channel.Name, name, StringComparison.OrdinalIgnoreCase)));
+            return !string.IsNullOrEmpty(externalId) && cachedChannels != null && cachedChannels.Any(channel =>
+                !string.IsNullOrEmpty(channel.TunerHostId) &&
+                string.Equals(channel.Id, externalId, StringComparison.Ordinal));
         }
 
         /// <summary>
