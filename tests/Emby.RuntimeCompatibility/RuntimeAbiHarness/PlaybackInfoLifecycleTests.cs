@@ -11,6 +11,52 @@ namespace Emby.RuntimeCompatibility
 {
     internal sealed partial class RegistryLifecycleTests
     {
+        private void MixedRenegotiation(ServerAssemblyLoadContext context, Assembly plugin)
+        {
+            var fixture = new NativePlaybackFixture(context, _manager);
+            var stream = Open(42, "synthetic-original");
+            var sameChannelPeer = Open(42, "synthetic-peer");
+            var otherChannelPeer = Open(43, "synthetic-other");
+            var source = _liveType.GetProperty("MediaSource").GetValue(stream.Stream);
+            var sourceId = (string)NativePlaybackFixture.Get(source, "Id");
+            fixture.Register("synthetic-original", stream.Key, sourceId);
+            var adapterType = plugin.GetType("Emby.M3uEditor.Plugin.Service.LiveTvPlaybackEntryPoint", true);
+            var adapter = Activator.CreateInstance(adapterType, fixture.SessionManager, _manager, null);
+            adapterType.GetMethod("Run").Invoke(adapter, null);
+            try
+            {
+                fixture.RaiseStart(sourceId, "synthetic-original");
+                var replacement = (string)NativePlaybackFixture.Get(fixture.PlaybackInfo("synthetic-original", stream.Key, sourceId), "PlaySessionId");
+                fixture.StartAndWait(replacement, stream.Key, sourceId);
+                var additional = (string)NativePlaybackFixture.Get(fixture.PlaybackInfo(null, stream.Key, sourceId), "PlaySessionId");
+                fixture.StopAndWait(additional, stream.Key, sourceId);
+                var surviving = fixture.Session.GetType().GetMethod("GetPlaySessionInfo").Invoke(fixture.Session, new object[] { replacement });
+                Require(surviving != null && (string)NativePlaybackFixture.Get(NativePlaybackFixture.Get(surviving, "PlayState"), "MediaSourceId") == sourceId,
+                    "Native started replacement must survive the additional stop");
+                Require(string.IsNullOrEmpty((string)NativePlaybackFixture.Get(NativePlaybackFixture.Get(fixture.Session, "PlayState"), "MediaSourceId")),
+                    "Mixed regression must exercise the empty last-session projection");
+                Alive(stream, 1);
+                Alive(sameChannelPeer, 1);
+                Alive(otherChannelPeer, 1);
+                AssertNativeCapacity(context, plugin, true);
+                fixture.StopAndWait(replacement, stream.Key, sourceId);
+                Require(SpinWait.SpinUntil(() => Lookup(stream) == null, TimeSpan.FromSeconds(3)), "Final started replacement stop did not release the original consumer");
+                Closed(stream);
+                Alive(sameChannelPeer, 1);
+                Alive(otherChannelPeer, 1);
+                AssertNativeCapacity(context, plugin, false);
+                fixture.StopAndWait(replacement, stream.Key, sourceId);
+                Closed(stream);
+                Console.WriteLine("Native mixed negotiation passed: additional stop preserves started replacement; its final stop releases registry/tuner capacity and retains peers.");
+            }
+            finally
+            {
+                (adapter as IDisposable)?.Dispose();
+                Stop(sameChannelPeer, "synthetic-peer");
+                Stop(otherChannelPeer, "synthetic-other");
+            }
+        }
+
         private void Renegotiation(ServerAssemblyLoadContext context, Assembly plugin, bool startBefore, int replacements, bool notifyStart = true, bool replaceCurrent = true)
         {
             var fixture = new NativePlaybackFixture(context, _manager);
@@ -189,6 +235,33 @@ namespace Emby.RuntimeCompatibility
             handlers?.DynamicInvoke(SessionManager, args);
         }
 
+        public void StartAndWait(string id, string liveId, string sourceId)
+        {
+            InvokeAndWait("PlaybackStart", () =>
+            {
+                var info = NewProgress("PlaybackStartInfo", id, liveId, sourceId);
+                var method = SessionManager.GetType().GetMethod("OnPlaybackStart", new[] { info.GetType(), Session.GetType() });
+                ((Task)method.Invoke(SessionManager, new[] { info, Session })).GetAwaiter().GetResult();
+            });
+        }
+
+        public void StopAndWait(string id, string liveId, string sourceId) => InvokeAndWait("PlaybackStopped", () => Stop(id, liveId, sourceId));
+
+        private void InvokeAndWait(string eventName, Action invoke)
+        {
+            using var delivered = new ManualResetEventSlim();
+            var observer = new NativeEventObserver(delivered);
+            var eventInfo = SessionManager.GetType().GetEvent(eventName);
+            var handler = Delegate.CreateDelegate(eventInfo.EventHandlerType, observer, typeof(NativeEventObserver).GetMethod("OnEvent"));
+            eventInfo.AddEventHandler(SessionManager, handler);
+            try
+            {
+                invoke();
+                if (!delivered.Wait(TimeSpan.FromSeconds(3))) throw new InvalidOperationException("Native " + eventName + " callback was not delivered");
+            }
+            finally { eventInfo.RemoveEventHandler(SessionManager, handler); }
+        }
+
         public void Stop(string id, string liveId, string sourceId)
         {
             var info = NewProgress("PlaybackStopInfo", id, liveId, sourceId);
@@ -226,6 +299,13 @@ namespace Emby.RuntimeCompatibility
             ((NativeFixtureProxy)proxy).Handler = handler ?? ((m, a) => Default(m.ReturnType));
             return proxy;
         }
+    }
+
+    internal sealed class NativeEventObserver
+    {
+        private readonly ManualResetEventSlim _delivered;
+        public NativeEventObserver(ManualResetEventSlim delivered) => _delivered = delivered;
+        public void OnEvent(object sender, EventArgs args) => _delivered.Set();
     }
 
     public class NativeFixtureProxy : DispatchProxy

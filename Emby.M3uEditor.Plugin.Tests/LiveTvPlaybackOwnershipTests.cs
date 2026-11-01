@@ -107,6 +107,28 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public void AdditionalStop_PreservesStartedReplacementUntilItsOwnFinalStop()
+        {
+            using (var stream = Stream())
+            using (var session = Session())
+            {
+                stream.AddConsumer("original");
+                stream.BindPlaybackSession(session, "original", new[] { session });
+                Register(session, "replacement", stream.MediaSource.Id);
+                stream.BindPlaybackSession(session, "replacement", new[] { session });
+                var replacement = session.GetPlaySessionInfo("replacement");
+                Register(session, "additional", stream.MediaSource.Id);
+                session.RemovePlaySession("additional");
+                Assert.Null(session.PlayState.MediaSourceId); // Only the last-session projection is empty.
+                Assert.Equal(stream.MediaSource.Id, replacement.PlayState.MediaSourceId);
+                Assert.Null(stream.TakeRenegotiatedConsumer(session, "additional"));
+                Assert.Equal(1, stream.ConsumerCount);
+                session.RemovePlaySession("replacement");
+                Assert.Equal("original", stream.TakeRenegotiatedConsumer(session, "replacement"));
+            }
+        }
+
         private static M3uEditorLiveStream Stream() => new M3uEditorLiveStream(new MediaSourceInfo { Id = "synthetic-channel" }, "synthetic-tuner", new HttpClient());
         private static SessionInfo Session() => new SessionInfo(null, DispatchProxy.Create<ILogger, OwnershipLogger>());
         private static void Register(SessionInfo session, string id, string sourceId) => session.RegisterPlaySession(new PlaybackStartInfo { PlaySessionId = id, MediaSourceId = sourceId });

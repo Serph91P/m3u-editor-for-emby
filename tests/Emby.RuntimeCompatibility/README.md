@@ -50,6 +50,11 @@ server lifecycle handling for **all clients**, not a Samsung, user-agent or
 version workaround. Unknown stops without a native play session cannot acquire
 ownership. Active original/replacement sessions and other registrations remain
 protected; a completed release cannot be rebound by a delayed callback.
+Observed replacement IDs are retained separately from open-consumer memberships
+and checked against their own native `PlaySessionInfo.PlayState`. The last-session
+`SessionInfo.PlayState` projection alone cannot prove that all replacements stopped.
+Native replacement/removal prunes obsolete observed IDs; no timer or extra consumer
+registration is introduced.
 
 Negotiation before the first start callback (or a stop delivered before its queued
 start) can bind only a single nonempty abandoned registration: it must have no
@@ -92,6 +97,13 @@ authorization/configuration/library services are synthetic stubs, not a running
 authenticated HTTP server. The initial registration uses the existing factory,
 deferred open, consumer callback and native AddOrUpdateStream fixture; the start
 callback is supplied explicitly, or deliberately omitted to test queued order.
+The mixed replacement/additional-session regression instead invokes the real
+`SessionManager.OnPlaybackStart` and waits for its queued callback: O is replaced
+by started R1, another POST without Current registers R2, and stopping R2 must keep
+R1's stream and the full tuner limit occupied even though the last-session
+projection is empty. Only R1's own final stop releases the registry entry/tuner
+slot; both independent peers survive. Callback observers wait for native delivery,
+not a fixed sleep.
 
 The generic flow matrix covers a normal stop, one/three renegotiations after
 start, three before start, stop without an earlier start callback, and negotiation

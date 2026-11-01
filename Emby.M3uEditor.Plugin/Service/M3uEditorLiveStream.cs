@@ -29,12 +29,21 @@ namespace Emby.M3uEditor.Plugin.Service
         private SessionInfo _playbackSession;
         private string _playbackConsumerId;
         private bool _playbackReleased;
+        private readonly HashSet<string> _playbackSessionIds = new HashSet<string>(StringComparer.Ordinal);
 
         internal void BindPlaybackSession(SessionInfo session, string consumerId, IEnumerable<SessionInfo> sessions, PlaySessionInfo stoppedSession = null)
         {
             lock (_consumerLock)
             {
-                if (_playbackReleased || _playbackSession != null || session == null || string.IsNullOrEmpty(consumerId)) return;
+                if (_playbackReleased || session == null || string.IsNullOrEmpty(consumerId)) return;
+                if (_playbackSession != null)
+                {
+                    if (!ReferenceEquals(session, _playbackSession)) return;
+                    // SessionInfo.PlayState projects only the last play session, not every active owner.
+                    _playbackSessionIds.RemoveWhere(id => session.GetPlaySessionInfo(id) == null);
+                    _playbackSessionIds.Add(consumerId);
+                    return;
+                }
                 var originalId = consumerId;
                 if (!_consumers.Contains(originalId))
                 {
@@ -47,6 +56,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
                 _playbackSession = session;
                 _playbackConsumerId = originalId;
+                _playbackSessionIds.Add(consumerId);
             }
         }
 
@@ -58,7 +68,9 @@ namespace Emby.M3uEditor.Plugin.Service
                     string.IsNullOrEmpty(stoppedId) || stoppedId == _playbackConsumerId ||
                     _consumers.Contains(stoppedId) || !_consumers.Contains(_playbackConsumerId) ||
                     session.GetPlaySessionInfo(_playbackConsumerId) != null ||
-                    string.Equals(session.PlayState.MediaSourceId, MediaSource.Id, StringComparison.Ordinal))
+                    string.Equals(session.PlayState.MediaSourceId, MediaSource.Id, StringComparison.Ordinal) ||
+                    _playbackSessionIds.Any(id => id != stoppedId &&
+                        string.Equals(session.GetPlaySessionInfo(id)?.PlayState.MediaSourceId, MediaSource.Id, StringComparison.Ordinal)))
                     return null;
 
                 // PlaybackInfo replaced the play session without transferring the open's consumer.
