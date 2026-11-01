@@ -23,9 +23,9 @@ namespace Emby.RuntimeCompatibility
 
             Console.WriteLine("Runtime ABI harness executing on .NET " + runtimeVersion + ".");
 
-            if (args.Length != 5)
+            if (args.Length != 7)
             {
-                Console.Error.WriteLine("Usage: RuntimeAbiHarness <candidate> <released> <sdk> <server-4.9> <server-4.10>");
+                Console.Error.WriteLine("Usage: RuntimeAbiHarness <candidate> <released> <sdk> <server-4.9> <server-4.10.0.40> <server-4.10.1.0> <server-4.10.2.0>");
                 return 2;
             }
 
@@ -34,6 +34,8 @@ namespace Emby.RuntimeCompatibility
                 VerifyCandidate(args[0], "SDK 4.8.0.80", args[2]);
                 VerifyCandidate(args[0], "Emby Server 4.9.5.0", args[3]);
                 VerifyCandidate(args[0], "Emby Server 4.10.0.40", args[4]);
+                VerifyCandidate(args[0], "Emby Server 4.10.1.0", args[5]);
+                VerifyCandidate(args[0], "Emby Server 4.10.2.0", args[6]);
                 VerifyHistoricalFailure(args[1], args[4]);
                 Console.WriteLine("Runtime ABI compatibility checks passed.");
                 return 0;
@@ -47,14 +49,17 @@ namespace Emby.RuntimeCompatibility
 
         private static void VerifyCandidate(string pluginPath, string runtimeName, string runtimeDirectory)
         {
-            using (var context = new ServerAssemblyLoadContext(runtimeDirectory, Path.GetDirectoryName(pluginPath)))
+            using (var context = new ServerAssemblyLoadContext(runtimeDirectory, Path.GetDirectoryName(pluginPath), false))
             {
                 var controller = context.LoadFromAssemblyPath(Path.Combine(runtimeDirectory, "MediaBrowser.Controller.dll"));
+                VerifyPlaybackLifecycleContract(controller, runtimeName);
                 var liveStreamInterface = controller.GetType(LiveStreamTypeName, true);
                 if (!File.Exists(Path.Combine(runtimeDirectory, "System.IO.Pipelines.dll")))
                     context.LoadFromAssemblyPath(Path.Combine(AppContext.BaseDirectory, "System.IO.Pipelines.dll"));
                 var plugin = context.LoadFromAssemblyPath(pluginPath);
+                VerifyLiveTvEntryPoint(controller, plugin, runtimeName);
                 var liveStreamType = plugin.GetType(PluginTypeName, true);
+                CopyReconnectTests.Run(plugin, controller, runtimeName);
                 var map = liveStreamType.GetInterfaceMap(liveStreamInterface);
 
                 if (map.InterfaceMethods.Length != liveStreamInterface.GetMethods().Length ||
@@ -70,12 +75,92 @@ namespace Emby.RuntimeCompatibility
                     InvokeConsumer(map, liveStreamType, instance, "RemoveConsumer");
                     AssertConsumerCount(liveStreamType, instance, 0, runtimeName + " after RemoveConsumer");
                     Console.WriteLine(runtimeName + ": candidate mapped " + map.InterfaceMethods.Length + " ILiveStream members.");
+                    if (runtimeName == "Emby Server 4.10.2.0")
+                        RegistryLifecycleTests.Run(context, plugin);
                 }
                 finally
                 {
                     (instance as IDisposable)?.Dispose();
                 }
             }
+        }
+
+        private static void VerifyLiveTvEntryPoint(Assembly controller, Assembly plugin, string runtimeName)
+        {
+            var adapterType = plugin.GetType("Emby.M3uEditor.Plugin.Service.LiveTvPlaybackEntryPoint");
+            if (adapterType == null) return; // Allows the same regression harness to run the baseline DLL.
+            adapterType.GetInterfaceMap(controller.GetType("MediaBrowser.Controller.Plugins.IServerEntryPoint", true));
+            var sessionType = controller.GetType("MediaBrowser.Controller.Session.ISessionManager", true);
+            var sourceType = controller.GetType("MediaBrowser.Controller.Library.IMediaSourceManager", true);
+            var sessions = DispatchProxy.Create(sessionType, typeof(EntryPointContractProxy));
+            var sources = DispatchProxy.Create(sourceType, typeof(OfflineLogger));
+            var adapter = Activator.CreateInstance(adapterType, sessions, sources, null);
+            adapterType.GetMethod("Run").Invoke(adapter, null);
+            adapterType.GetMethod("Run").Invoke(adapter, null);
+            var expected = sourceType.GetMethod("CloseLiveStream", new[] { typeof(string), typeof(string) }) == null ? 0 : 2;
+            var events = (EntryPointContractProxy)sessions;
+            if (events.Adds != expected) throw new InvalidOperationException(runtimeName + " lifecycle subscription/legacy gating changed");
+            ((IDisposable)adapter).Dispose();
+            ((IDisposable)adapter).Dispose();
+            if (events.Removes != expected) throw new InvalidOperationException(runtimeName + " lifecycle adapter did not unsubscribe exactly once");
+            Console.WriteLine(runtimeName + ": Live TV lifecycle adapter " + (expected == 0 ? "safely inactive on legacy close-all API." : "consumer-close ABI and Run/Dispose passed."));
+        }
+
+        private static void VerifyPlaybackLifecycleContract(Assembly controller, string runtimeName)
+        {
+            var sessionManager = controller.GetType("MediaBrowser.Controller.Session.ISessionManager", true);
+            var userDataManager = controller.GetType("MediaBrowser.Controller.Library.IUserDataManager", true);
+            var entryPoint = controller.GetType("MediaBrowser.Controller.Plugins.IServerEntryPoint", true);
+
+            var progress = AssertEvent(sessionManager, "PlaybackStart", "MediaBrowser.Controller.Library.PlaybackProgressEventArgs", runtimeName);
+            AssertEvent(sessionManager, "PlaybackProgress", "MediaBrowser.Controller.Library.PlaybackProgressEventArgs", runtimeName);
+            var stopped = AssertEvent(sessionManager, "PlaybackStopped", "MediaBrowser.Controller.Library.PlaybackStopEventArgs", runtimeName);
+            var userDataSaved = AssertEvent(userDataManager, "UserDataSaved", "MediaBrowser.Controller.Library.UserDataSaveEventArgs", runtimeName);
+
+            AssertMember(progress, "Item", runtimeName);
+            AssertMember(progress, "MediaSourceId", runtimeName);
+            AssertMember(progress, "PlaySessionId", runtimeName);
+            var positionTicksType = AssertMember(progress, "PlaybackPositionTicks", runtimeName);
+            if (positionTicksType != typeof(long?))
+                throw new InvalidOperationException(runtimeName + " PlaybackProgressEventArgs.PlaybackPositionTicks must be nullable Int64.");
+            AssertMember(progress, "Session", runtimeName);
+            AssertMember(progress, "Users", runtimeName);
+            var mediaSource = progress.GetProperty("MediaSource");
+            if (runtimeName == "SDK 4.8.0.80" && mediaSource != null)
+                throw new InvalidOperationException(runtimeName + " unexpectedly exposes PlaybackProgressEventArgs.MediaSource; update the compatibility bridge deliberately.");
+            if (runtimeName != "SDK 4.8.0.80" && mediaSource == null)
+                throw new InvalidOperationException(runtimeName + " requires PlaybackProgressEventArgs.MediaSource for exact selected-source binding.");
+            AssertMember(stopped, "PlayedToCompletion", runtimeName);
+            AssertMember(userDataSaved, "Item", runtimeName);
+            AssertMember(userDataSaved, "User", runtimeName);
+            AssertMember(userDataSaved, "UserData", runtimeName);
+            AssertMember(userDataSaved, "SaveReason", runtimeName);
+
+            var run = entryPoint.GetMethod("Run", Type.EmptyTypes);
+            if (run == null || run.ReturnType != typeof(void))
+                throw new InvalidOperationException(runtimeName + " IServerEntryPoint.Run(): void is required.");
+        }
+
+        private static Type AssertEvent(Type owner, string name, string argumentTypeName, string runtimeName)
+        {
+            var eventInfo = owner.GetEvent(name);
+            var handlerType = eventInfo == null ? null : eventInfo.EventHandlerType;
+            if (handlerType == null || !handlerType.IsGenericType ||
+                handlerType.GetGenericTypeDefinition() != typeof(EventHandler<>) ||
+                handlerType.GetGenericArguments()[0].FullName != argumentTypeName)
+                throw new InvalidOperationException(runtimeName + " requires " + owner.FullName + "." + name + " as EventHandler<" + argumentTypeName + ">.");
+            return handlerType.GetGenericArguments()[0];
+        }
+
+        private static Type AssertMember(Type owner, string name, string runtimeName)
+        {
+            var property = owner.GetProperty(name);
+            if (property != null)
+                return property.PropertyType;
+            var field = owner.GetField(name);
+            if (field != null)
+                return field.FieldType;
+            throw new InvalidOperationException(runtimeName + " requires " + owner.FullName + "." + name + "; available members: " + string.Join(",", owner.GetMembers().Select(member => member.Name).Distinct().OrderBy(member => member)) + ".");
         }
 
         private static void VerifyHistoricalFailure(string releasedPluginPath, string runtimeDirectory)
@@ -138,8 +223,8 @@ namespace Emby.RuntimeCompatibility
     {
         private readonly string _pluginDirectory;
 
-        public ServerAssemblyLoadContext(string runtimeDirectory, string pluginDirectory)
-            : base("emby-runtime-" + Path.GetFileName(runtimeDirectory), true)
+        public ServerAssemblyLoadContext(string runtimeDirectory, string pluginDirectory, bool collectible = true)
+            : base("emby-runtime-" + Path.GetFileName(runtimeDirectory), collectible)
         {
             RuntimeDirectory = runtimeDirectory;
             _pluginDirectory = pluginDirectory;
@@ -172,7 +257,7 @@ namespace Emby.RuntimeCompatibility
 
         public void Dispose()
         {
-            Unload();
+            if (IsCollectible) Unload();
         }
     }
 }

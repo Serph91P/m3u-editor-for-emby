@@ -1,0 +1,3 @@
+overrides:
+  'semantic-release>@semantic-release/npm': '-'
+  handlebars: '4.7.10'

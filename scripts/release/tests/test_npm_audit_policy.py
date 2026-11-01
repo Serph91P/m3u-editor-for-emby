@@ -10,36 +10,39 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 POLICY = ROOT / "audit-ci.json"
 ADVISORY = "GHSA-vfj7-8cjw-p6xm"
+UNDICI_ADVISORIES = (
+    "GHSA-2m5v-pch6-74hx",
+    "GHSA-qrxm-fqhp-jwvm",
+    "GHSA-xjj6-f33q-929c",
+)
+
+
+def undici_report(advisories, severity="high"):
+    """Native pnpm advisory shape, including development-dependency paths."""
+    return {
+        "advisories": {str(index): {
+            "id": index, "module_name": "undici", "severity": severity,
+            "url": f"https://github.com/advisories/{advisory}",
+            "github_advisory_id": advisory,
+            "findings": [{"version": "6.29.0", "paths": [".>undici"], "dev": True}],
+        } for index, advisory in enumerate(advisories)},
+        "metadata": {"vulnerabilities": {"info": 0, "low": 0, "moderate": 0,
+            "high": len(advisories) if severity == "high" else 0,
+            "critical": len(advisories) if severity == "critical" else 0}},
+    }
 
 
 def report(extra_advisory=None):
-    """Synthetic npm v2 report including the release-tooling peer cycle."""
-    advisory = {
-        "source": 1, "name": "braces", "dependency": "braces",
-        "title": "Synthetic nested-pattern advisory",
-        "url": f"https://github.com/advisories/{ADVISORY}",
-        "severity": "high", "range": "<=3.0.3",
-    }
-    vulnerabilities = {}
-    for name, via, effects in [
-        ("braces", [advisory], ["micromatch"]),
-        ("micromatch", ["braces"], ["semantic-release", "@semantic-release/commit-analyzer"]),
-        ("@semantic-release/commit-analyzer", ["micromatch", "semantic-release"], ["semantic-release"]),
-        ("semantic-release", ["micromatch", "@semantic-release/commit-analyzer"], ["@semantic-release/commit-analyzer"]),
-    ]:
-        vulnerabilities[name] = {
-            "name": name, "severity": "high", "isDirect": name == "semantic-release",
-            "via": via, "effects": effects, "range": "*",
-            "nodes": [f"node_modules/{name}"], "fixAvailable": False,
-        }
+    result = undici_report((ADVISORY,))
+    advisory = result["advisories"]["0"]
+    advisory["module_name"] = "braces"
+    advisory["findings"] = [{"version": "3.0.3", "paths": [
+        ".>semantic-release>micromatch>braces",
+        ".>@semantic-release/commit-analyzer>micromatch>braces",
+    ]}]
     if extra_advisory:
-        vulnerabilities["braces"]["via"].append(extra_advisory)
-    return {
-        "auditReportVersion": 2, "vulnerabilities": vulnerabilities,
-        "metadata": {"vulnerabilities": {
-            "info": 0, "low": 0, "moderate": 0, "high": 4, "critical": 0, "total": 4,
-        }},
-    }
+        result["advisories"]["1"] = extra_advisory
+    return result
 
 
 class NpmAuditPolicyTests(unittest.TestCase):
@@ -53,14 +56,14 @@ class NpmAuditPolicyTests(unittest.TestCase):
             config.write_text(json.dumps(policy if policy is not None else self.policy()))
             fixture = directory / "report.json"
             fixture.write_text(raw if raw is not None else json.dumps(audit_report))
-            npm = directory / "npm"
-            npm.write_text(
+            pnpm = directory / "pnpm"
+            pnpm.write_text(
                 "#!/usr/bin/env node\n"
                 "const fs = require('node:fs');\n"
                 "console.log(fs.readFileSync(process.env.AUDIT_FIXTURE, 'utf8'));\n"
                 "process.exitCode = Number(process.env.AUDIT_STATUS);\n"
             )
-            npm.chmod(0o755)
+            pnpm.chmod(0o755)
             env = os.environ.copy()
             env.update({"PATH": f"{directory}:{env['PATH']}",
                         "AUDIT_FIXTURE": str(fixture), "AUDIT_STATUS": str(status)})
@@ -74,8 +77,10 @@ class NpmAuditPolicyTests(unittest.TestCase):
         self.assertTrue(policy["high"])
         self.assertFalse(policy["skip-dev"])
         self.assertFalse(policy["pass-enoaudit"])
-        self.assertEqual(policy["package-manager"], "npm")
+        self.assertEqual(policy["package-manager"], "pnpm")
+        self.assertEqual(policy["retry-count"], 0)
         self.assertEqual(len(policy["allowlist"]), 1)
+        self.assertEqual({key for entry in policy["allowlist"] for key in entry}, {ADVISORY})
         exception = policy["allowlist"][0]
         self.assertEqual(list(exception), [ADVISORY])
         self.assertTrue(exception[ADVISORY]["active"])
@@ -92,6 +97,28 @@ class NpmAuditPolicyTests(unittest.TestCase):
         analyzer = next(p[1] for p in config["plugins"] if p[0] == "@semantic-release/commit-analyzer")
         self.assertTrue(all(set(rule) == {"type", "release"} for rule in analyzer["releaseRules"]))
         self.assertTrue(all(rule["type"].isalpha() for rule in analyzer["releaseRules"]))
+        self.assertNotIn("@semantic-release/npm", [p[0] if isinstance(p, list) else p
+                                                for p in config["plugins"]])
+
+    def test_rejects_each_old_undici_high_advisory_and_combination(self):
+        for advisories in [(advisory,) for advisory in UNDICI_ADVISORIES] + [UNDICI_ADVISORIES]:
+            with self.subTest(advisories=advisories):
+                result = self.run_audit(undici_report(advisories))
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_old_undici_criticals_cannot_reuse_the_braces_exception(self):
+        for advisory in UNDICI_ADVISORIES:
+            with self.subTest(advisory=advisory):
+                result = self.run_audit(undici_report((advisory,), "critical"))
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(advisory, result.stdout + result.stderr)
+
+    def test_rejects_unapproved_undici_high_or_critical_in_development_dependencies(self):
+        for advisory in ("GHSA-4w7w-5xrc-9h26", "GHSA-xxxx-yyyy-zzzz"):
+            for severity in ("high", "critical"):
+                with self.subTest(advisory=advisory, severity=severity):
+                    result = self.run_audit(undici_report((*UNDICI_ADVISORIES, advisory), severity))
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_accepts_only_approved_advisory_and_derived_peer_cycle(self):
         result = self.run_audit(report())
@@ -99,16 +126,16 @@ class NpmAuditPolicyTests(unittest.TestCase):
         self.assertIn(ADVISORY, result.stdout + result.stderr)
 
     def test_accepts_clean_report_after_upstream_fix(self):
-        clean = {"auditReportVersion": 2, "vulnerabilities": {}, "metadata": {
-            "vulnerabilities": {"info": 0, "low": 0, "moderate": 0, "high": 0, "critical": 0, "total": 0}}}
+        clean = {"advisories": {}, "metadata": {
+            "vulnerabilities": {"info": 0, "low": 0, "moderate": 0, "high": 0, "critical": 0}}}
         result = self.run_audit(clean, status=0)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_rejects_new_high_or_critical_even_in_same_package(self):
         for severity in ("high", "critical"):
             with self.subTest(severity=severity):
-                other = copy.deepcopy(report()["vulnerabilities"]["braces"]["via"][0])
-                other.update({"source": 2, "severity": severity,
+                other = copy.deepcopy(report()["advisories"]["0"])
+                other.update({"id": 2, "severity": severity,
                               "url": "https://github.com/advisories/GHSA-xxxx-yyyy-zzzz"})
                 result = self.run_audit(report(other))
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

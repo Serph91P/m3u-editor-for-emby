@@ -6,7 +6,7 @@ namespace Emby.M3uEditor.Plugin.Service
 {
     public static class ChannelNameCleaner
     {
-        private static readonly char[] LineSeparators = new[] { '\n', '\r' };
+        private static readonly char[] LineSeparators = new[] { ',', '\n', '\r' };
 
         private static readonly Regex CountryPrefixRegex = new Regex(
             @"^(UK|US|DE|FR|NL|ES|IT|CA|AU|BE|CH|AT|PT|BR|MX|AR|PL|CZ|RO|HU|TR|GR|SE|NO|DK|FI|IE|IN|PK|AF|ZA|AE|SA|EG|MA|NG|KE|JP|KR|CN|TW|HK|SG|MY|TH|VN|PH|ID|NZ|RU|UA|BY|KZ|IL|IR|IQ)\s*[:\|\-]\s*",

@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const configScriptPath = process.argv[2];
 if (!configScriptPath) throw new Error('Expected the config.js path.');
 const configScript = fs.readFileSync(configScriptPath, 'utf8');
+const configHtmlPath = process.argv[3];
 
 function escaped(value) {
     return String(value)
@@ -39,19 +40,28 @@ class FakeElement {
     }
 
     emit(name) {
+        let prevented = false;
         const event = {
             target: this,
-            preventDefault: () => {},
+            preventDefault: () => { prevented = true; },
         };
         for (const handler of this.events[name] || []) handler.call(this, event);
+        return prevented;
+    }
+
+    click() {
+        assert.equal(this.tagName, 'button', 'clicked control must exist in the actual HTML');
+        assert.equal(this.disabled, false, 'clicked button must be enabled');
+        if (this.inFooter) assert.notEqual(this.root.lookup('.stickyFooter').style.display, 'none', 'Save must be visible on the managed tab');
+        if (!this.emit('click') && this.getAttribute('type') === 'submit') this.root.lookup('.m3uEditorConfigForm').emit('submit');
     }
 
     querySelector(selector) {
         return this.root.lookup(selector);
     }
 
-    querySelectorAll() {
-        return [];
+    querySelectorAll(selector) {
+        return this.root.buttons ? this.root.buttons.filter(button => button.classes.includes(selector.slice(1))) : [];
     }
 
     getAttribute(name) {
@@ -68,6 +78,19 @@ class FakeView extends FakeElement {
         super();
         this.root = this;
         this.elements = new Map();
+        this.buttons = [];
+        if (configHtmlPath) {
+            const html = fs.readFileSync(configHtmlPath, 'utf8');
+            for (const match of html.matchAll(/<button\b([^>]*)>/g)) {
+                const button = new FakeElement(this);
+                button.tagName = 'button';
+                for (const attr of match[1].matchAll(/([\w-]+)="([^"]*)"/g)) button.setAttribute(attr[1], attr[2]);
+                button.classes = (button.getAttribute('class') || '').split(/\s+/);
+                button.inFooter = match.index > html.indexOf('<div class="stickyFooter">');
+                for (const className of button.classes) this.elements.set('.' + className, button);
+                this.buttons.push(button);
+            }
+        }
     }
 
     lookup(selector) {
@@ -110,10 +133,12 @@ async function mount(options = {}) {
     const view = new FakeView();
     const state = {
         config: Object.assign(defaultConfig(), options.config || {}),
+        dashboard: options.dashboard || {},
         updates: [],
         ajaxCalls: [],
         ajaxResult: options.ajaxResult || { Success: false },
         rejectAjax: !!options.rejectAjax,
+        alerts: [],
     };
 
     global.window = global;
@@ -129,7 +154,7 @@ async function mount(options = {}) {
         }),
     };
     global.Dashboard = {
-        alert: () => {},
+        alert: message => state.alerts.push(message),
         processPluginConfigurationUpdateResult: () => {},
     };
     global.loading = { show: () => {}, hide: () => {} };
@@ -137,13 +162,15 @@ async function mount(options = {}) {
         getPluginConfiguration: () => Promise.resolve(JSON.parse(JSON.stringify(state.config))),
         updatePluginConfiguration: (_id, config) => {
             state.updates.push(JSON.parse(JSON.stringify(config)));
+            if (options.rejectSave) return Promise.reject(new Error('persistence unavailable'));
+            state.config = JSON.parse(JSON.stringify(config));
             return Promise.resolve({});
         },
         ajax: request => {
             state.ajaxCalls.push(request);
             return state.rejectAjax ? Promise.reject(new Error('network')) : Promise.resolve(state.ajaxResult);
         },
-        getJSON: () => Promise.resolve({}),
+        getJSON: () => Promise.resolve(state.dashboard),
         getUrl: path => '/admin/' + path,
         accessToken: () => 'test-token',
     };
@@ -184,6 +211,138 @@ async function importWith(options) {
     mounted.view.lookup('.btnImportXtreamLimit').emit('click');
     await flushPromises();
     return mounted;
+}
+
+async function runManagedPlaybackCacheLoadSaveScenario() {
+    if (!configHtmlPath) return;
+
+    const configHtml = fs.readFileSync(configHtmlPath, 'utf8');
+    assert.match(configHtml, /class="chkManagedPlaybackCacheEnabled"/);
+    assert.match(configHtml, /class="selManagedPlaybackCacheMode"/);
+    assert.match(configHtml, /class="txtManagedPlaybackCacheUserIds"/);
+
+    const mounted = await mount({
+        config: {
+            ManagedPlaybackCacheEnabled: true,
+            ManagedPlaybackCacheMode: 'next_n',
+            ManagedPlaybackCacheNextCount: 3,
+            ManagedPlaybackCacheDeleteAfterWatched: true,
+            ManagedPlaybackCacheDeleteGraceHours: 24,
+            ManagedPlaybackCacheUserIds: ['profile-a', 'profile-b'],
+        },
+    });
+    assert.equal(mounted.view.lookup('.chkManagedPlaybackCacheEnabled').checked, true);
+    assert.equal(mounted.view.lookup('.selManagedPlaybackCacheMode').value, 'next_n');
+    assert.equal(mounted.view.lookup('.txtManagedPlaybackCacheNextCount').value, 3);
+    assert.equal(mounted.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').checked, true);
+    assert.equal(mounted.view.lookup('.txtManagedPlaybackCacheDeleteGraceHours').value, 24);
+    assert.equal(mounted.view.lookup('.txtManagedPlaybackCacheUserIds').value, 'profile-a\nprofile-b');
+    assert.equal(mounted.view.lookup('.managedPlaybackCacheNextCount').style.display, '');
+    assert.equal(mounted.view.lookup('.managedPlaybackCacheRetention').style.display, '');
+
+    mounted.view.lookup('.selManagedPlaybackCacheMode').value = 'whole_season';
+    mounted.view.lookup('.selManagedPlaybackCacheMode').emit('change');
+    mounted.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').checked = false;
+    mounted.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').emit('change');
+    assert.equal(mounted.view.lookup('.managedPlaybackCacheNextCount').style.display, 'none');
+    assert.equal(mounted.view.lookup('.managedPlaybackCacheRetention').style.display, 'none');
+
+    mounted.view.lookup('.txtManagedPlaybackCacheUserIds').value = ' profile-c \n\nprofile-d ';
+    mounted.view.lookup('.m3uEditorConfigForm').emit('submit');
+    await flushPromises();
+    assert.equal(mounted.state.updates.length, 1);
+    assert.deepEqual(mounted.state.updates[0].ManagedPlaybackCacheUserIds, ['profile-c', 'profile-d']);
+    assert.equal(mounted.state.updates[0].ManagedPlaybackCacheMode, 'whole_season');
+    assert.equal(mounted.state.updates[0].ManagedPlaybackCacheEnabled, true);
+    assert.equal(mounted.state.updates[0].ManagedPlaybackCacheDeleteAfterWatched, false);
+    process.stdout.write('Managed playback cache load/save scenario passed\n');
+}
+
+async function runManagedPlaybackCacheVisibleSaveScenario() {
+    if (!configHtmlPath) return;
+    const ready = { ManagedPublishing: { SetupReady: true, ConfigurationValid: true, CacheCapabilityReady: true, ActiveManifestIdentityReady: true } };
+    const mounted = await mount({ dashboard: ready });
+    mounted.view.lookup('.tabBtnManagedPublishing').click();
+    assert.equal(mounted.view.lookup('.tabManagedPublishing').style.display, 'block');
+    mounted.view.lookup('.chkManagedPlaybackCacheEnabled').checked = true;
+    mounted.view.lookup('.selManagedPlaybackCacheMode').value = 'next_n';
+    mounted.view.lookup('.txtManagedPlaybackCacheNextCount').value = '5';
+    mounted.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').checked = true;
+    mounted.view.lookup('.txtManagedPlaybackCacheDeleteGraceHours').value = '48';
+    mounted.view.lookup('.txtManagedPlaybackCacheUserIds').value = ' profile-c\nprofile-d ';
+    mounted.view.lookup('.button-submit').click();
+    await flushPromises();
+    assert.equal(mounted.state.updates.length, 1);
+    const reloaded = await mount({ config: mounted.state.config, dashboard: ready });
+    assert.equal(reloaded.view.lookup('.chkManagedPlaybackCacheEnabled').checked, true);
+    assert.equal(reloaded.view.lookup('.selManagedPlaybackCacheMode').value, 'next_n');
+    assert.equal(reloaded.view.lookup('.txtManagedPlaybackCacheNextCount').value, 5);
+    assert.equal(reloaded.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').checked, true);
+    assert.equal(reloaded.view.lookup('.txtManagedPlaybackCacheDeleteGraceHours').value, 48);
+    assert.equal(reloaded.view.lookup('.txtManagedPlaybackCacheUserIds').value, 'profile-c\nprofile-d');
+    const unavailable = await mount({ dashboard: { ManagedPublishing: { SetupReady: true } } });
+    unavailable.view.lookup('.tabBtnManagedPublishing').click();
+    assert.equal(unavailable.view.lookup('.chkManagedPlaybackCacheEnabled').disabled, true);
+    unavailable.view.lookup('.chkManagedPlaybackCacheEnabled').checked = true;
+    unavailable.view.lookup('.button-submit').click();
+    await flushPromises();
+    assert.equal(unavailable.state.config.ManagedPlaybackCacheEnabled, false);
+    const failure = await mount({ dashboard: ready, rejectSave: true });
+    failure.view.lookup('.tabBtnManagedPublishing').click();
+    failure.view.lookup('.chkManagedPlaybackCacheEnabled').checked = true;
+    failure.view.lookup('.button-submit').click();
+    await flushPromises();
+    assert.equal(failure.state.config.ManagedPlaybackCacheEnabled, undefined);
+    assert.ok(failure.state.alerts.some(message => message.includes('Failed to save configuration')));
+    process.stdout.write('Managed playback cache visible navigation/click/reload and failure scenarios passed\n');
+}
+
+async function runManagedPlaybackCacheReadinessScenario() {
+    const baseManaged = {
+        SetupReady: true,
+        ConfigurationValid: true,
+        Enabled: true,
+        ActiveGeneration: 'a'.repeat(64),
+        Mappings: [],
+    };
+    const unavailable = await mount({ dashboard: { ManagedPublishing: baseManaged } });
+    const unavailableToggle = unavailable.view.lookup('.chkManagedPlaybackCacheEnabled');
+    assert.equal(unavailableToggle.disabled, true, 'unknown cache capability must disable activation');
+    unavailableToggle.checked = true;
+    unavailable.view.lookup('.m3uEditorConfigForm').emit('submit');
+    await flushPromises();
+    assert.equal(unavailable.state.updates[0].ManagedPlaybackCacheEnabled, false,
+        'unavailable readiness must not be saved as a new activation');
+
+    const missingIdentity = await mount({ dashboard: { ManagedPublishing: Object.assign({}, baseManaged, {
+        CacheCapabilityReady: true,
+        ActiveManifestIdentityReady: false,
+    }) } });
+    assert.equal(missingIdentity.view.lookup('.chkManagedPlaybackCacheEnabled').disabled, true,
+        'missing active identity must disable activation');
+
+    const ready = await mount({ dashboard: { ManagedPublishing: Object.assign({}, baseManaged, {
+        CacheCapabilityReady: true,
+        ActiveManifestIdentityReady: true,
+    }) } });
+    const readyToggle = ready.view.lookup('.chkManagedPlaybackCacheEnabled');
+    assert.equal(readyToggle.disabled, false, 'supported capability and active identity must enable activation');
+    readyToggle.checked = true;
+    ready.view.lookup('.m3uEditorConfigForm').emit('submit');
+    await flushPromises();
+    assert.equal(ready.state.updates[0].ManagedPlaybackCacheEnabled, true);
+
+    const enabledButUnknown = await mount({
+        config: { ManagedPlaybackCacheEnabled: true },
+        dashboard: { ManagedPublishing: baseManaged },
+    });
+    const enabledToggle = enabledButUnknown.view.lookup('.chkManagedPlaybackCacheEnabled');
+    assert.equal(enabledToggle.disabled, false, 'an existing activation must remain switch-off capable');
+    enabledToggle.checked = false;
+    enabledButUnknown.view.lookup('.m3uEditorConfigForm').emit('submit');
+    await flushPromises();
+    assert.equal(enabledButUnknown.state.updates[0].ManagedPlaybackCacheEnabled, false);
+    process.stdout.write('Managed playback cache readiness scenario passed\n');
 }
 
 async function run() {
@@ -254,7 +413,11 @@ async function run() {
     assert.equal(mounted.view.lookup('.txtLiveTvTunerCount').value, 'custom-current-value');
     assert.match(mounted.view.lookup('.livetvLimitImportResult').innerHTML, /enter server URL/);
 
-    process.stdout.write('Issue85 UI harness: 20 scenarios passed\n');
+    await runManagedPlaybackCacheLoadSaveScenario();
+    await runManagedPlaybackCacheVisibleSaveScenario();
+    await runManagedPlaybackCacheReadinessScenario();
+
+    process.stdout.write('Issue85 UI harness: 21 scenarios passed\n');
 }
 
 run().catch(error => {

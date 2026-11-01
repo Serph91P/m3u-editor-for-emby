@@ -43,16 +43,20 @@ while read -r name hash url; do
 done < "$LOCK"
 
 rm -rf "$EXTRACTED"
-mkdir -p "$EXTRACTED/sdk" "$EXTRACTED/server-4.9.5.0" "$EXTRACTED/server-4.10.0.40"
+mkdir -p "$EXTRACTED/sdk" "$EXTRACTED/server-4.9.5.0" "$EXTRACTED/server-4.10.0.40" "$EXTRACTED/server-4.10.1.0" "$EXTRACTED/server-4.10.2.0"
 unzip -q "$DOWNLOADS/mediabrowser.server.core.4.8.0.80.nupkg" -d "$EXTRACTED/sdk"
 unzip -q "$DOWNLOADS/mediabrowser.common.4.8.0.80.nupkg" -d "$EXTRACTED/sdk-common"
 cp "$EXTRACTED/sdk-common/lib/netstandard2.0/"*.dll "$EXTRACTED/sdk/lib/netstandard2.0/"
 dpkg-deb --extract "$DOWNLOADS/emby-server-deb_4.9.5.0_amd64.deb" "$EXTRACTED/server-4.9.5.0"
 dpkg-deb --extract "$DOWNLOADS/emby-server-deb_4.10.0.40_amd64.deb" "$EXTRACTED/server-4.10.0.40"
+dpkg-deb --extract "$DOWNLOADS/emby-server-deb_4.10.1.0_amd64.deb" "$EXTRACTED/server-4.10.1.0"
+dpkg-deb --extract "$DOWNLOADS/emby-server-deb_4.10.2.0_amd64.deb" "$EXTRACTED/server-4.10.2.0"
 
 printf '%s  %s\n' "ec4b97b23cddbb6f6bf2d22259eaef5b304e5fd716e6e3df237fb328fe90d180" "$EXTRACTED/sdk/lib/netstandard2.0/MediaBrowser.Controller.dll" | sha256sum --check --status
 printf '%s  %s\n' "be9001d50e829df1096b325bf8923ed54355686348b652fe8da0cf1c652c82ef" "$EXTRACTED/server-4.9.5.0/opt/emby-server/system/MediaBrowser.Controller.dll" | sha256sum --check --status
 printf '%s  %s\n' "1a45d6c80ff1a19083f8bc4d3578cedbb04c71159a370370e6e02964ffe7ff86" "$EXTRACTED/server-4.10.0.40/opt/emby-server/system/MediaBrowser.Controller.dll" | sha256sum --check --status
+printf '%s  %s\n' "30adf1939f6eb07de419fcc7c26a810131e1e55850a4c8cd6abd54c04b959b07" "$EXTRACTED/server-4.10.1.0/opt/emby-server/system/MediaBrowser.Controller.dll" | sha256sum --check --status
+printf '%s  %s\n' "521b2010eee6ea3fd9e7135e473ef24f09f297f44e088ab60a2cf120e022e40d" "$EXTRACTED/server-4.10.2.0/opt/emby-server/system/MediaBrowser.Controller.dll" | sha256sum --check --status
 
 dotnet build --configuration Release "$ROOT/Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj"
 dotnet build --configuration Release "$HARNESS"
@@ -61,4 +65,6 @@ dotnet build --configuration Release "$HARNESS"
     "$DOWNLOADS/Emby.M3uEditor.Plugin.v1.5.0.dll" \
     "$EXTRACTED/sdk/lib/netstandard2.0" \
     "$EXTRACTED/server-4.9.5.0/opt/emby-server/system" \
-    "$EXTRACTED/server-4.10.0.40/opt/emby-server/system"
+    "$EXTRACTED/server-4.10.0.40/opt/emby-server/system" \
+    "$EXTRACTED/server-4.10.1.0/opt/emby-server/system" \
+    "$EXTRACTED/server-4.10.2.0/opt/emby-server/system"
