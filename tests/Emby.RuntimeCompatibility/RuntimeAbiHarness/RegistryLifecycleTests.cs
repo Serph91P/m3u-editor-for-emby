@@ -13,7 +13,7 @@ namespace Emby.RuntimeCompatibility
 {
     // Offline regression: real plugin factory/open IDs and the server's registry/close methods.
     // No server startup, provider connection, playback or transport emulation.
-    internal sealed class RegistryLifecycleTests
+    internal sealed partial class RegistryLifecycleTests
     {
         private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private readonly Type _liveType;
@@ -63,6 +63,14 @@ namespace Emby.RuntimeCompatibility
                 tests.RestartAndLateStop();
                 tests.ProbeAndPlayback();
                 tests.DifferentChannels();
+                // Shared server contracts, not app/version-specific workarounds or physical device tests.
+                tests.Renegotiation(context, plugin, true, 0);
+                tests.Renegotiation(context, plugin, true, 3);
+                tests.Renegotiation(context, plugin, true, 1);
+                tests.Renegotiation(context, plugin, false, 3);
+                tests.Renegotiation(context, plugin, false, 3, false);
+                tests.Renegotiation(context, plugin, true, 1, true, false);
+                tests.MixedRenegotiation(context, plugin);
                 Console.WriteLine("Emby Server 4.10.2.0: real registry lifecycle passed (both stop orders, restart/late stop, probe/playback, cleanup/reopen, different channels; zero HTTP requests).");
             }
             finally
@@ -117,6 +125,13 @@ namespace Emby.RuntimeCompatibility
             Require(ReferenceEquals(stream.Stream, Lookup(stream)), "A valid opened stream was replaced or removed");
             Require((int)_liveType.GetProperty("ConsumerCount").GetValue(stream.Stream) == count, "Consumer membership changed unexpectedly");
             Require(stream.Handler.DisposeCount == 0 && stream.Handler.RequestCount == 0, "Transport was opened or disposed for a surviving stream");
+        }
+
+        private bool WaitForClose(OpenedStream stream)
+        {
+            // Native close removes the registry entry before transport disposal finishes.
+            return SpinWait.SpinUntil(() => Lookup(stream) == null &&
+                Volatile.Read(ref stream.Handler.DisposeCount) > 0, TimeSpan.FromSeconds(3));
         }
 
         private void Closed(OpenedStream stream)

@@ -49,7 +49,7 @@ namespace Emby.RuntimeCompatibility
 
         private static void VerifyCandidate(string pluginPath, string runtimeName, string runtimeDirectory)
         {
-            using (var context = new ServerAssemblyLoadContext(runtimeDirectory, Path.GetDirectoryName(pluginPath), runtimeName != "Emby Server 4.10.2.0"))
+            using (var context = new ServerAssemblyLoadContext(runtimeDirectory, Path.GetDirectoryName(pluginPath), false))
             {
                 var controller = context.LoadFromAssemblyPath(Path.Combine(runtimeDirectory, "MediaBrowser.Controller.dll"));
                 VerifyPlaybackLifecycleContract(controller, runtimeName);
@@ -57,6 +57,7 @@ namespace Emby.RuntimeCompatibility
                 if (!File.Exists(Path.Combine(runtimeDirectory, "System.IO.Pipelines.dll")))
                     context.LoadFromAssemblyPath(Path.Combine(AppContext.BaseDirectory, "System.IO.Pipelines.dll"));
                 var plugin = context.LoadFromAssemblyPath(pluginPath);
+                VerifyLiveTvEntryPoint(controller, plugin, runtimeName);
                 var liveStreamType = plugin.GetType(PluginTypeName, true);
                 var map = liveStreamType.GetInterfaceMap(liveStreamInterface);
 
@@ -81,6 +82,27 @@ namespace Emby.RuntimeCompatibility
                     (instance as IDisposable)?.Dispose();
                 }
             }
+        }
+
+        private static void VerifyLiveTvEntryPoint(Assembly controller, Assembly plugin, string runtimeName)
+        {
+            var adapterType = plugin.GetType("Emby.M3uEditor.Plugin.Service.LiveTvPlaybackEntryPoint");
+            if (adapterType == null) return; // Allows the same regression harness to run the baseline DLL.
+            adapterType.GetInterfaceMap(controller.GetType("MediaBrowser.Controller.Plugins.IServerEntryPoint", true));
+            var sessionType = controller.GetType("MediaBrowser.Controller.Session.ISessionManager", true);
+            var sourceType = controller.GetType("MediaBrowser.Controller.Library.IMediaSourceManager", true);
+            var sessions = DispatchProxy.Create(sessionType, typeof(EntryPointContractProxy));
+            var sources = DispatchProxy.Create(sourceType, typeof(OfflineLogger));
+            var adapter = Activator.CreateInstance(adapterType, sessions, sources, null);
+            adapterType.GetMethod("Run").Invoke(adapter, null);
+            adapterType.GetMethod("Run").Invoke(adapter, null);
+            var expected = sourceType.GetMethod("CloseLiveStream", new[] { typeof(string), typeof(string) }) == null ? 0 : 2;
+            var events = (EntryPointContractProxy)sessions;
+            if (events.Adds != expected) throw new InvalidOperationException(runtimeName + " lifecycle subscription/legacy gating changed");
+            ((IDisposable)adapter).Dispose();
+            ((IDisposable)adapter).Dispose();
+            if (events.Removes != expected) throw new InvalidOperationException(runtimeName + " lifecycle adapter did not unsubscribe exactly once");
+            Console.WriteLine(runtimeName + ": Live TV lifecycle adapter " + (expected == 0 ? "safely inactive on legacy close-all API." : "consumer-close ABI and Run/Dispose passed."));
         }
 
         private static void VerifyPlaybackLifecycleContract(Assembly controller, string runtimeName)

@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Logging;
 using Emby.M3uEditor.Plugin.Util;
@@ -24,6 +26,61 @@ namespace Emby.M3uEditor.Plugin.Service
         private readonly object _consumerLock = new object();
         private readonly List<string> _consumers = new List<string>();
         private int _consumerCount;
+        private SessionInfo _playbackSession;
+        private string _playbackConsumerId;
+        private bool _playbackReleased;
+        private readonly HashSet<string> _playbackSessionIds = new HashSet<string>(StringComparer.Ordinal);
+
+        internal void BindPlaybackSession(SessionInfo session, string consumerId, IEnumerable<SessionInfo> sessions, PlaySessionInfo stoppedSession = null)
+        {
+            lock (_consumerLock)
+            {
+                if (_playbackReleased || session == null || string.IsNullOrEmpty(consumerId)) return;
+                if (_playbackSession != null)
+                {
+                    if (!ReferenceEquals(session, _playbackSession)) return;
+                    // SessionInfo.PlayState projects only the last play session, not every active owner.
+                    _playbackSessionIds.RemoveWhere(id => session.GetPlaySessionInfo(id) == null);
+                    _playbackSessionIds.Add(consumerId);
+                    return;
+                }
+                var originalId = consumerId;
+                if (!_consumers.Contains(originalId))
+                {
+                    // Negotiation can also finish before the first PlaybackStart callback.
+                    if (_consumers.Count != 1 || _consumerCount != 1 || string.IsNullOrEmpty(_consumers[0]) ||
+                        (session.GetPlaySessionInfo(consumerId) == null && stoppedSession?.Id != consumerId) || sessions == null ||
+                        sessions.Any(s => s.GetPlaySessionInfo(_consumers[0]) != null ||
+                            (!ReferenceEquals(s, session) && string.Equals(s.PlayState.MediaSourceId, MediaSource.Id, StringComparison.Ordinal)))) return;
+                    originalId = _consumers[0];
+                }
+                _playbackSession = session;
+                _playbackConsumerId = originalId;
+                _playbackSessionIds.Add(consumerId);
+            }
+        }
+
+        internal string TakeRenegotiatedConsumer(SessionInfo session, string stoppedId)
+        {
+            lock (_consumerLock)
+            {
+                if (!ReferenceEquals(session, _playbackSession) || session == null ||
+                    string.IsNullOrEmpty(stoppedId) || stoppedId == _playbackConsumerId ||
+                    _consumers.Contains(stoppedId) || !_consumers.Contains(_playbackConsumerId) ||
+                    session.GetPlaySessionInfo(_playbackConsumerId) != null ||
+                    string.Equals(session.PlayState.MediaSourceId, MediaSource.Id, StringComparison.Ordinal) ||
+                    _playbackSessionIds.Any(id => id != stoppedId &&
+                        string.Equals(session.GetPlaySessionInfo(id)?.PlayState.MediaSourceId, MediaSource.Id, StringComparison.Ordinal)))
+                    return null;
+
+                // PlaybackInfo replaced the play session without transferring the open's consumer.
+                var consumerId = _playbackConsumerId;
+                _playbackReleased = true;
+                _playbackSession = null;
+                _playbackConsumerId = null;
+                return consumerId;
+            }
+        }
 
         public M3uEditorLiveStream(MediaSourceInfo mediaSource, string tunerHostId, HttpClient httpClient, ILogger logger = null)
         {
