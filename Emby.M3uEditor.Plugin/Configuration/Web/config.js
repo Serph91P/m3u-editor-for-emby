@@ -349,7 +349,7 @@ function (BaseView, loading) {
         }
 
         view.querySelector('.stickyFooter').style.display =
-            tabName === 'dashboard' || tabName === 'managedPublishing' ? 'none' : '';
+            tabName === 'dashboard' ? 'none' : '';
     }
 
     function updateEpgVisibility(view) {

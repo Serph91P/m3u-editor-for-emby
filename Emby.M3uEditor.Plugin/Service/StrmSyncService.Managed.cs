@@ -359,6 +359,7 @@ namespace Emby.M3uEditor.Plugin.Service
                             setupError);
                     }
 
+                    var callbackCancelled = false;
                     if (published.Success)
                     {
                         try
@@ -386,9 +387,9 @@ namespace Emby.M3uEditor.Plugin.Service
                         }
                         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                         {
-                            await RevertAfterCallbackFailure(mapping, published, CancellationToken.None)
+                            published = await RevertAfterCallbackFailure(mapping, published, CancellationToken.None)
                                 .ConfigureAwait(false);
-                            throw;
+                            callbackCancelled = true;
                         }
                         catch (TaskCanceledException)
                         {
@@ -413,8 +414,6 @@ namespace Emby.M3uEditor.Plugin.Service
                             result.DuplicateMappings++;
                         }
 
-                        config.ManagedActiveGeneration = mapping.Revision;
-                        config.ManagedPreviousGeneration = published.PreviousRevision ?? string.Empty;
                         refreshRequired = refreshRequired || (activeGenerationChanged && mapping.Options.Refresh);
                     }
                     else
@@ -430,6 +429,11 @@ namespace Emby.M3uEditor.Plugin.Service
                     result.RemovedFiles += published.Removed;
                     bool sourceGroupsTruncated;
                     var sourceGroups = BuildManagedSourceGroups(mapping.Items, out sourceGroupsTruncated);
+                    var metadataRoot = CombineUnderRoot(mapping.TargetLibrary.OutputPath, ManagedMetadataDirectoryName);
+                    var active = ReadManifest(CombineUnderRoot(metadataRoot, "active.json"));
+                    var previous = ReadManifest(CombineUnderRoot(metadataRoot, "previous.json"));
+                    config.ManagedActiveGeneration = active?.Revision ?? string.Empty;
+                    config.ManagedPreviousGeneration = previous?.Revision ?? string.Empty;
                     states.Add(new ManagedMappingState
                     {
                         MappingUuid = mapping.MappingUuid,
@@ -437,12 +441,13 @@ namespace Emby.M3uEditor.Plugin.Service
                         LibraryName = mapping.TargetLibrary.Name,
                         CollectionType = mapping.TargetLibrary.CollectionType,
                         OutputPath = mapping.TargetLibrary.OutputPath,
-                        ActiveRevision = published.Success ? mapping.Revision : published.PreviousRevision,
-                        PreviousRevision = published.PreviousRevision,
+                        ActiveRevision = active?.Revision,
+                        PreviousRevision = previous?.Revision,
                         Success = published.Success,
                         Duplicate = published.Duplicate,
-                        FileCount = published.FileCount,
-                        StrmFileCount = published.StrmFileCount,
+                        FileCount = active?.Files.Count ?? 0,
+                        StrmFileCount = active?.Files.Count(file =>
+                            file.RelativePath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)) ?? 0,
                         SeriesCount = mapping.Items.Count(item =>
                             string.Equals(item.MediaType, "series", StringComparison.Ordinal)),
                         SeasonCount = mapping.Items
@@ -459,6 +464,12 @@ namespace Emby.M3uEditor.Plugin.Service
                         SourceGroupsTruncated = sourceGroupsTruncated,
                         Error = published.Error
                     });
+                    if (callbackCancelled)
+                    {
+                        config.ManagedMappingsJson = JsonSerializer.Serialize(states, JsonOptions);
+                        RecordManagedReconcileFailure(config, saveConfig, result, published.Error);
+                        throw new OperationCanceledException(cancellationToken);
+                    }
                     progress?.Report(10 + (catalog.Mappings.Count == 0
                         ? 85
                         : 85.0 * (index + 1) / catalog.Mappings.Count));
@@ -549,6 +560,11 @@ namespace Emby.M3uEditor.Plugin.Service
             ManagedPublishResult published,
             CancellationToken cancellationToken)
         {
+            if (published.Duplicate)
+            {
+                return Failed(mapping.Revision, "Managed sync callback failed; the existing generation was retained.", published);
+            }
+
             if (!string.IsNullOrEmpty(published.PreviousRevision))
             {
                 var rollback = await RollbackManagedMappingAsync(
@@ -767,7 +783,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 File.Delete(CombineUnderRoot(root, file.RelativePath));
             }
 
-            Directory.Delete(metadataRoot, true);
+            File.Delete(CombineUnderRoot(metadataRoot, "active.json"));
+            if (!Directory.EnumerateFileSystemEntries(metadataRoot).Any()) Directory.Delete(metadataRoot);
         }
 
         internal async Task<ManagedPublishResult> PublishManagedMappingAsync(
@@ -960,19 +977,24 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 if (!ManifestFilesAreValid(root, active) ||
-                    !Directory.Exists(previousFilesRoot) ||
-                    !ManifestFilesAreValid(previousFilesRoot, previous))
+                    (!Directory.Exists(previousFilesRoot) && previous.Files.Count > 0) ||
+                    !ManifestFilesAreValid(previousFilesRoot, previous) ||
+                    (Directory.Exists(previousFilesRoot) && !ManifestOwnsDirectory(previousFilesRoot, previous)))
                 {
                     throw new InvalidOperationException("The active or previous managed generation is invalid.");
                 }
 
-                DeleteOwnedDirectory(currentFilesRoot);
+                ValidateRecoveryDirectory(currentFilesRoot, active);
+                if (Directory.Exists(currentFilesRoot) && Directory.EnumerateFiles(currentFilesRoot, "*", SearchOption.AllDirectories).Any())
+                    throw new InvalidOperationException("Managed rollback scratch directory is not empty.");
+                DeleteRecoveryDirectory(currentFilesRoot, active);
                 MoveManifestFiles(root, currentFilesRoot, active, "rollback-active", currentMoved);
                 MoveManifestFiles(previousFilesRoot, root, previous, "rollback-previous", previousMoved);
 
                 WriteManifestAtomic(activeManifestPath, previous);
                 WriteManifestAtomic(previousManifestPath, active);
-                Directory.Delete(previousFilesRoot, true);
+                ValidateRecoveryDirectory(previousFilesRoot, previous);
+                DeleteRecoveryDirectory(previousFilesRoot, previous);
                 Directory.Move(currentFilesRoot, previousFilesRoot);
 
                 return new ManagedPublishResult
@@ -1033,12 +1055,12 @@ namespace Emby.M3uEditor.Plugin.Service
 
             if (active != null)
             {
-                WriteManifestAtomic(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/active.json"), active);
+                RestoreRecoveryManifest(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/active.json"), active);
             }
 
             if (previous != null)
             {
-                WriteManifestAtomic(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/previous.json"), previous);
+                RestoreRecoveryManifest(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/previous.json"), previous);
             }
         }
 
@@ -1054,6 +1076,7 @@ namespace Emby.M3uEditor.Plugin.Service
             string previousFilesRoot = null;
             ManagedGenerationManifest activeManifest = null;
             ManagedGenerationManifest previousManifest = null;
+            ManagedGenerationManifest stagedManifest = null;
             List<ManagedPlannedFile> plan = null;
             var mutationStarted = false;
 
@@ -1107,6 +1130,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 Directory.CreateDirectory(metadataRoot);
                 stagingRoot = CombineUnderRoot(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(stagingRoot);
+                stagedManifest = CreateManagedManifest(mapping, plan);
                 WriteAndValidateStaging(stagingRoot, plan, cancellationToken);
                 InvokeManagedPhase("after-stage");
                 EnsureCurrentSetupApproval(mapping, root, approvedOutputRoots, setupConfig);
@@ -1119,14 +1143,19 @@ namespace Emby.M3uEditor.Plugin.Service
                         throw new InvalidOperationException("The previous managed generation is invalid.");
                     }
                 }
-                else if (previousManifest != null)
+                else if (previousManifest != null && previousManifest.Files.Count > 0)
                 {
                     throw new InvalidOperationException("The previous managed generation files are missing.");
+                }
+                else if (previousManifest != null)
+                {
+                    // Normalize legacy empty backups before journaling so recovery can rotate them.
+                    Directory.CreateDirectory(previousFilesRoot);
                 }
                 if (activeManifest != null && !ManifestFilesAreValid(root, activeManifest))
                     throw new InvalidOperationException("The active managed generation no longer matches its manifest.");
 
-                var newManifest = CreateManagedManifest(mapping, plan);
+                var newManifest = stagedManifest;
                 var transition = new ManagedPublishTransition
                 {
                     Root = root, MappingUuid = mapping.MappingUuid, Id = Guid.NewGuid().ToString("N"),
@@ -1191,7 +1220,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     RecoverManagedTransition(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot);
+                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 throw;
             }
             catch (IOException)
@@ -1200,7 +1229,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     RecoverManagedTransition(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot);
+                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, "Managed publication failed during filesystem commit.", result);
             }
             catch (UnauthorizedAccessException)
@@ -1209,7 +1238,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     RecoverManagedTransition(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot);
+                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, "Managed publication failed because the output root is not writable.", result);
             }
             catch (InvalidOperationException ex)
@@ -1218,7 +1247,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     RecoverManagedTransition(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot);
+                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, ex.Message, result);
             }
             catch (JsonException)
@@ -1227,7 +1256,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     RecoverManagedTransition(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot);
+                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, "Managed generation manifest is invalid.", result);
             }
         }
@@ -1261,11 +1290,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     .ThenBy(value => value.CanonicalId, StringComparer.Ordinal))
                 {
                     var episodeFolder = CombineRelative(item.RelativeFolder, episode.RelativeFolder);
-                    AddVariantFiles(plan, episodeFolder, episode, mapping.Options.Versions, result);
-                    if (mapping.Options.Nfo)
-                    {
-                        AddPlanFile(plan, CombineRelative(episodeFolder, episode.BaseFilename + ".nfo"), BuildNfo("episodedetails", episode.Nfo), true);
-                    }
+                    AddVariantFiles(plan, episodeFolder, episode, mapping.Options.Versions, result, mapping.Options.Nfo);
                 }
             }
 
@@ -1284,7 +1309,8 @@ namespace Emby.M3uEditor.Plugin.Service
             string folder,
             M3uEditorCatalogItem item,
             bool versionsEnabled,
-            ManagedPublishResult result)
+            ManagedPublishResult result,
+            bool episodeNfo = false)
         {
             var ordered = item.Variants.OrderBy(variant => variant.Key, StringComparer.Ordinal).ToList();
             var visible = versionsEnabled ? ordered.Take(MaximumVisibleVersions).ToList() : ordered.Take(1).ToList();
@@ -1306,6 +1332,11 @@ namespace Emby.M3uEditor.Plugin.Service
                     item.SeriesCanonicalId,
                     item.SeasonNumber,
                     item.EpisodeNumber);
+                if (episodeNfo)
+                {
+                    AddPlanFile(plan, CombineRelative(folder, Path.ChangeExtension(filename, ".nfo")),
+                        BuildNfo("episodedetails", item.Nfo), true);
+                }
             }
         }
 
@@ -1757,6 +1788,7 @@ namespace Emby.M3uEditor.Plugin.Service
             string operation,
             List<string> movedFiles)
         {
+            Directory.CreateDirectory(destinationRoot);
             foreach (var file in manifest.Files)
             {
                 var source = CombineUnderRoot(root, file.RelativePath);
@@ -1808,7 +1840,7 @@ namespace Emby.M3uEditor.Plugin.Service
             };
         }
 
-        private static void DeleteOwnedDirectory(string path)
+        private void DeleteOwnedDirectory(string path, ManagedGenerationManifest manifest)
         {
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
             {
@@ -1817,7 +1849,8 @@ namespace Emby.M3uEditor.Plugin.Service
 
             try
             {
-                Directory.Delete(path, true);
+                ValidateRecoveryDirectory(path, manifest);
+                DeleteRecoveryDirectory(path, manifest);
             }
             catch (IOException)
             {
@@ -1826,6 +1859,10 @@ namespace Emby.M3uEditor.Plugin.Service
             catch (UnauthorizedAccessException)
             {
                 return;
+            }
+            catch (InvalidOperationException)
+            {
+                return; // Preserve unknown staging content rather than deleting it recursively.
             }
         }
 
