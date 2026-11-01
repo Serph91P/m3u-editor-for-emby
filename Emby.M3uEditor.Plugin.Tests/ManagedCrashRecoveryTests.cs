@@ -292,6 +292,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("preparation", "intent-content")]
         [InlineData("preparation", "intent-path")]
         [InlineData("preparation", "intent-symlink")]
+        [InlineData("preparation", "intent-directory")]
         [InlineData("rollback", "foreign")]
         [InlineData("rollback", "modified")]
         [InlineData("rollback", "root")]
@@ -329,7 +330,12 @@ namespace Emby.M3uEditor.Plugin.Tests
             if (damage.StartsWith("intent-", StringComparison.Ordinal))
             {
                 var intent = Directory.GetFiles(metadata, "preparing-file-*.json").Single();
-                if (damage == "intent-symlink")
+                if (damage == "intent-directory")
+                {
+                    File.Delete(intent);
+                    Directory.CreateDirectory(intent);
+                }
+                else if (damage == "intent-symlink")
                 {
                     var target = Path.Combine(outside.Path, "intent.json");
                     File.Copy(intent, target);

@@ -199,6 +199,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static string ValidatePreparingDirectory(string staging, ManagedPublishTransition value, string intent)
         {
+            RequireRecovery(!Directory.Exists(intent));
             string temporary = null;
             var files = new List<ManagedManifestFile>(value.Next.Files);
             if (File.Exists(intent))
