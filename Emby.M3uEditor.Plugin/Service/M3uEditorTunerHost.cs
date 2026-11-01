@@ -586,7 +586,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 return stats;
             }
 
-            foreach (var channel in channels.Where(channel => channel.StreamStats != null))
+            foreach (var channel in channels.Where(channel => HasUsableStreamStats(channel.StreamStats)))
             {
                 stats[channel.StreamId] = channel.StreamStats;
             }
@@ -943,7 +943,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 ? "ts" : "m3u8";
             return string.Format(CultureInfo.InvariantCulture,
                 "{0}/live/{1}/{2}/{3}.{4}",
-                config.BaseUrl, config.Username, config.Password, streamId, extension);
+                config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty), streamId, extension);
+        }
+
+        internal static bool HasUsableStreamStats(StreamStatsInfo stats)
+        {
+            return stats != null && (!string.IsNullOrWhiteSpace(stats.VideoCodec)
+                || (stats.VideoCodec == null && !string.IsNullOrWhiteSpace(stats.AudioCodec)));
         }
 
         internal MediaSourceInfo CreateMediaSourceInfo(
@@ -957,9 +963,9 @@ namespace Emby.M3uEditor.Plugin.Service
             // H.264 fallback, which causes Emby to expect a video stream that isn't there.
             bool isAudioOnly = stats != null
                 && stats.VideoCodec == null
-                && !string.IsNullOrEmpty(stats.AudioCodec);
+                && !string.IsNullOrWhiteSpace(stats.AudioCodec);
 
-            bool hasStats = stats?.VideoCodec != null || isAudioOnly;
+            bool hasStats = HasUsableStreamStats(stats);
 
             var audioCodecLower = hasStats && !string.IsNullOrEmpty(stats?.AudioCodec)
                 ? stats.AudioCodec.ToLowerInvariant() : null;

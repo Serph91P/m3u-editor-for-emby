@@ -730,7 +730,9 @@ namespace Emby.M3uEditor.Plugin.Client
             var datePart = spaceIdx > 0 ? value.Substring(0, spaceIdx) : value;
             var tzPart = spaceIdx > 0 ? value.Substring(spaceIdx + 1).Trim() : null;
 
-            if (datePart.Length < 14)
+            if (datePart.Length == 12)
+                datePart += "00";
+            if (datePart.Length != 14)
                 return 0;
 
             int year, month, day, hour, minute, second;

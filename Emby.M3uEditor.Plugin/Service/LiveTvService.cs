@@ -477,7 +477,7 @@ namespace Emby.M3uEditor.Plugin.Service
             var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
             return string.Format(CultureInfo.InvariantCulture,
                 "{0}/live/{1}/{2}/{3}.{4}",
-                config.BaseUrl, config.Username, config.Password, channel.StreamId, extension);
+                config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty), channel.StreamId, extension);
         }
 
         private async Task<string> GenerateXmltvAsync(List<LiveStreamInfo> channels, PluginConfiguration config, CancellationToken cancellationToken)
@@ -879,7 +879,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     url = string.Format(
                         CultureInfo.InvariantCulture,
                         "{0}/xmltv.php?username={1}&password={2}",
-                        config.BaseUrl, config.Username, config.Password);
+                        config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty));
                     _logger.Info("Fetching bulk XMLTV EPG from {0}/xmltv.php", config.BaseUrl);
                 }
 
@@ -944,7 +944,7 @@ namespace Emby.M3uEditor.Plugin.Service
             var url = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}/player_api.php?username={1}&password={2}&action=get_simple_data_table&stream_id={3}",
-                config.BaseUrl, config.Username, config.Password, streamId);
+                config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty), streamId);
 
             using (var httpClient = _httpClientFactory(10))
             {
