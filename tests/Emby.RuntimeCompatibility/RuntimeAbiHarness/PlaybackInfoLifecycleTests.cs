@@ -11,6 +11,77 @@ namespace Emby.RuntimeCompatibility
 {
     internal sealed partial class RegistryLifecycleTests
     {
+        private void UnexpectedStopFault(ServerAssemblyLoadContext context, Assembly plugin)
+        {
+            var fixture = new NativePlaybackFixture(context, _manager);
+            var stream = Open(42, "synthetic-fault-owner");
+            var peer = Open(42, "synthetic-fault-peer");
+            var source = _liveType.GetProperty("MediaSource").GetValue(stream.Stream);
+            var sourceId = (string)NativePlaybackFixture.Get(source, "Id");
+            fixture.Register("synthetic-fault-owner", stream.Key, sourceId);
+            var controller = context.LoadFromAssemblyPath(Path.Combine(context.RuntimeDirectory, "MediaBrowser.Controller.dll"));
+            var sources = DispatchProxy.Create(controller.GetType("MediaBrowser.Controller.Library.IMediaSourceManager", true), typeof(NativeFixtureProxy));
+            var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var closeCalls = 0;
+            ((NativeFixtureProxy)sources).Handler = (method, args) =>
+            {
+                if (method.Name == "GetLiveStreamInfoByUniqueId") return stream.Stream;
+                if (method.Name == "CloseLiveStream")
+                {
+                    Require((string)args[0] == stream.Key && (string)args[1] == "synthetic-fault-owner", "Fault cleanup must retain exact owner");
+                    closeCalls++;
+                    return Task.Run(async () => { await gate.Task; throw new ApplicationException("synthetic-secret-must-not-escape"); });
+                }
+                throw new InvalidOperationException("Unexpected source operation: " + method.Name);
+            };
+            var adapterType = plugin.GetType("Emby.M3uEditor.Plugin.Service.LiveTvPlaybackEntryPoint", true);
+            using var adapter = (IDisposable)Activator.CreateInstance(adapterType, fixture.SessionManager, sources, null);
+            adapterType.GetMethod("Run").Invoke(adapter, null);
+            fixture.RaiseStart(sourceId, "synthetic-fault-owner");
+            var replacement = (string)NativePlaybackFixture.Get(fixture.PlaybackInfo("synthetic-fault-owner", stream.Key, sourceId), "PlaySessionId");
+            var stopped = fixture.Session.GetType().GetMethod("GetPlaySessionInfo").Invoke(fixture.Session, new object[] { replacement });
+            fixture.Session.GetType().GetMethod("RemovePlaySession", new[] { typeof(string) }).Invoke(fixture.Session, new object[] { replacement });
+            var progress = Activator.CreateInstance(controller.GetType("MediaBrowser.Controller.Library.PlaybackStopEventArgs", true));
+            NativePlaybackFixture.Set(progress, "Session", fixture.Session);
+            NativePlaybackFixture.Set(progress, "MediaSourceId", sourceId);
+            NativePlaybackFixture.Set(progress, "PlaySessionId", replacement);
+            NativePlaybackFixture.Set(progress, "PlaySession", stopped);
+            using var boundary = new StopFaultContext();
+            var prior = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(boundary);
+            try
+            {
+                adapterType.GetMethod("OnPlaybackStopped", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(adapter, new[] { fixture.SessionManager, progress });
+                Require(closeCalls == 1 && !boundary.Completed.IsSet, "Must exercise an incomplete awaited native cleanup task");
+                gate.SetResult(true);
+                Require(boundary.Completed.Wait(TimeSpan.FromSeconds(3)), "Async stop did not finish");
+                Require(boundary.Escaped == null, "Unexpected asynchronous cleanup fault escaped the host boundary");
+                Alive(stream, 1);
+                Alive(peer, 1);
+                Console.WriteLine("Unexpected asynchronous ApplicationException isolated after await; exact owner and same-channel peer retained.");
+            }
+            finally
+            {
+                gate.TrySetResult(true);
+                SynchronizationContext.SetSynchronizationContext(prior);
+                Stop(stream, "synthetic-fault-owner");
+                Stop(peer, "synthetic-fault-peer");
+            }
+        }
+
+        private sealed class StopFaultContext : SynchronizationContext, IDisposable
+        {
+            public readonly ManualResetEventSlim Completed = new ManualResetEventSlim();
+            public Exception Escaped;
+            public override void OperationCompleted() => Completed.Set();
+            public override void Post(SendOrPostCallback callback, object state)
+            {
+                try { callback(state); }
+                catch (Exception exception) { Escaped = exception; }
+            }
+            public void Dispose() => Completed.Dispose();
+        }
+
         private void MixedRenegotiation(ServerAssemblyLoadContext context, Assembly plugin)
         {
             var fixture = new NativePlaybackFixture(context, _manager);

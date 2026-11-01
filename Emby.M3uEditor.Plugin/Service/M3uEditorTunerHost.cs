@@ -371,11 +371,10 @@ namespace Emby.M3uEditor.Plugin.Service
                 foreach (var candidate in new[] {
                     (Url: p.ImageUrl, Width: p.ImageWidth, Height: p.ImageHeight),
                     (Url: p.PosterUrl, Width: p.PosterWidth, Height: p.PosterHeight),
-                    (Url: p.ThumbImageUrl, Width: p.ThumbWidth, Height: p.ThumbHeight) })
+                    (Url: p.ThumbImageUrl, Width: p.ThumbWidth, Height: p.ThumbHeight) }
+                    .Where(candidate => string.Equals(candidate.Url, preservedPrimaryUrl, StringComparison.Ordinal)
+                        && candidate.Width > 0 && candidate.Height > 0))
                 {
-                    if (!string.Equals(candidate.Url, preservedPrimaryUrl, StringComparison.Ordinal)
-                        || candidate.Width <= 0 || candidate.Height <= 0)
-                        continue;
                     if (imageWidth > 0 && (imageWidth != candidate.Width || imageHeight != candidate.Height))
                         conflictingGeometry = true;
                     imageWidth = candidate.Width;

@@ -818,8 +818,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         private sealed class TunerBarrierHandler : System.Net.Http.HttpMessageHandler
         {
             public bool Block;
-            public System.Threading.Tasks.TaskCompletionSource<bool> Entered = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
-            public System.Threading.Tasks.TaskCompletionSource<bool> Release = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+            public readonly System.Threading.Tasks.TaskCompletionSource<bool> Entered = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+            public readonly System.Threading.Tasks.TaskCompletionSource<bool> Release = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
             protected override async System.Threading.Tasks.Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request, System.Threading.CancellationToken token)
             {
                 if (Block && request.RequestUri.ToString().Contains("get_live_categories"))

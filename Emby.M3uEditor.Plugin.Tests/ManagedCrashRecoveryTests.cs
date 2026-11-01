@@ -11,6 +11,28 @@ namespace Emby.M3uEditor.Plugin.Tests
     public class ManagedCrashRecoveryTests
     {
         [Theory]
+        [InlineData("null")]
+        [InlineData("{\"RelativePath\":\"owned.strm\",\"Content\":null}")]
+        public void NullPreparation_IsRejectedByValidationRatherThanDereferenced(string json)
+        {
+            using var temp = new TempDirectory();
+            var intent = Path.Combine(temp.Path, "intent.json");
+            File.WriteAllText(intent, json);
+            var transitionType = typeof(Emby.M3uEditor.Plugin.Service.StrmSyncService).Assembly.GetType(
+                "Emby.M3uEditor.Plugin.Service.ManagedPublishTransition", true);
+            var transition = System.Text.Json.JsonSerializer.Deserialize(
+                "{\"Next\":{\"Files\":[]}}", transitionType);
+            var validate = typeof(Emby.M3uEditor.Plugin.Service.StrmSyncService).GetMethod("ValidatePreparingDirectory",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            var failure = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+                validate.Invoke(null, new[] { temp.Path, transition, intent }));
+            Assert.IsType<InvalidOperationException>(failure.InnerException);
+            Assert.Equal("Managed publication recovery metadata or owned files are invalid.", failure.InnerException.Message);
+            Assert.Equal(json, File.ReadAllText(intent));
+            Assert.Single(Directory.GetFiles(temp.Path));
+        }
+
+        [Theory]
         [InlineData("after-quarantine")]
         [InlineData("after-publish")]
         [InlineData("before-manifest")]
@@ -293,6 +315,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("preparation", "intent-path")]
         [InlineData("preparation", "intent-symlink")]
         [InlineData("preparation", "intent-directory")]
+        [InlineData("preparation", "intent-null")]
+        [InlineData("preparation", "intent-missing-content")]
+        [InlineData("preparation", "intent-truncated")]
         [InlineData("rollback", "foreign")]
         [InlineData("rollback", "modified")]
         [InlineData("rollback", "root")]
@@ -342,10 +367,13 @@ namespace Emby.M3uEditor.Plugin.Tests
                     File.Delete(intent);
                     File.CreateSymbolicLink(intent, target);
                 }
+                else if (damage == "intent-null" || damage == "intent-truncated")
+                    File.WriteAllText(intent, damage == "intent-null" ? "null" : "{");
                 else
                 {
                     var preparing = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(intent));
                     if (damage == "intent-content") preparing["Content"] = "MODIFIED";
+                    if (damage == "intent-missing-content") preparing["Content"] = null;
                     if (damage == "intent-path") preparing["RelativePath"] = "../foreign.sentinel";
                     File.WriteAllText(intent, preparing.ToJsonString());
                 }

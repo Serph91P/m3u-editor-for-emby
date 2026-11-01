@@ -578,7 +578,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     return Failed(mapping.Revision, rollback.Error, published);
                 }
             }
-            else if (!published.Duplicate)
+            else
             {
                 RemoveOnlyManagedGeneration(
                     mapping.TargetLibrary.OutputPath,

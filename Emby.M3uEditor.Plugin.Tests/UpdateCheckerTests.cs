@@ -335,11 +335,12 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var releases = new[] {
                 new { tag_name = "v1.1.0", draft = false, body = notes, uploader = new { tag_name = "v99.0.0", draft = true } },
+                // Anonymous properties require a typed null (untyped null produces CS0828).
                 new { tag_name = "v1.2.0-beta.1", draft = false, body = (string)null, uploader = new { tag_name = "v99.0.0", draft = true } }
             };
-            foreach (var ordered in new[] { releases, System.Linq.Enumerable.Reverse(releases) })
+            foreach (var json in System.Linq.Enumerable.Select(new[] { releases, System.Linq.Enumerable.Reverse(releases) },
+                ordered => System.Text.Json.JsonSerializer.Serialize(ordered)))
             {
-                var json = System.Text.Json.JsonSerializer.Serialize(ordered);
                 using var picked = System.Text.Json.JsonDocument.Parse(UpdateChecker.SelectHighestRelease(json));
                 Assert.Equal("v1.2.0-beta.1", picked.RootElement.GetProperty("tag_name").GetString());
             }

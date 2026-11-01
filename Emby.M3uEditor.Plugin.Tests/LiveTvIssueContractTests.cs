@@ -36,9 +36,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                 AssertPlayback(new Uri(playlist.Split('\n').Single(line => line.StartsWith("https://")).Trim()), format);
                 AssertPlayback(new Uri(M3uEditorTunerHost.BuildStreamUrl(config, 42)), format);
                 await service.FetchEpgForChannelCachedAsync(42, CancellationToken.None);
-                foreach (var url in handler.ReceivedUrls)
+                foreach (var uri in handler.ReceivedUrls.Select(url => new Uri(url)))
                 {
-                    var uri = new Uri(url);
                     Assert.Empty(uri.Fragment);
                     var query = uri.Query.TrimStart('?').Split('&').Select(part => part.Split(new[] { '=' }, 2))
                         .ToDictionary(pair => pair[0], pair => Uri.UnescapeDataString(pair[1].Replace("+", " ")));
@@ -193,19 +192,64 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.True(service.XmltvFailed);
                 Assert.Equal(custom ? 0 : 1, handler.JsonRequests);
                 Assert.Equal(custom ? 0 : 1, programs.Count);
+                Assert.NotEmpty(handler.Contents);
+                Assert.All(handler.Contents, content => Assert.True(content.Disposed));
+            }
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Issue149_ResponseOwnershipTransfersUntilCallerDisposes(bool disposeBeforeRead)
+        {
+            using var handler = new TimeoutHandler();
+            using var client = new HttpClient(handler, false);
+            var response = await client.GetAsync("https://editor.example.test/player_api.php?action=get_simple_data_table",
+                HttpCompletionOption.ResponseHeadersRead);
+            var content = Assert.Single(handler.Contents);
+            Assert.False(content.Disposed);
+            try
+            {
+                if (disposeBeforeRead)
+                {
+                    response.Dispose();
+                    await Assert.ThrowsAsync<ObjectDisposedException>(() => response.Content.ReadAsStringAsync());
+                }
+                else
+                {
+                    Assert.Contains("Synthetic fallback", await response.Content.ReadAsStringAsync());
+                    Assert.False(content.Disposed);
+                }
+            }
+            finally { response.Dispose(); }
+            Assert.True(content.Disposed);
+        }
+
+        private sealed class TrackedContent : StringContent
+        {
+            public bool Disposed { get; private set; }
+            public TrackedContent(string body) : base(body) { }
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) Disposed = true;
+                base.Dispose(disposing);
             }
         }
 
         private sealed class TimeoutHandler : HttpMessageHandler
         {
             public int JsonRequests;
+            public readonly System.Collections.Generic.List<TrackedContent> Contents = new System.Collections.Generic.List<TrackedContent>();
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
             {
                 var url = request.RequestUri.ToString();
                 if (url.Contains("xmltv.php")) throw new TaskCanceledException("Synthetic HTTP timeout without caller cancellation.");
                 if (url.Contains("get_simple_data_table")) JsonRequests++;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
-                    url.Contains("get_live_streams") ? "[{\"stream_id\":42,\"name\":\"Synthetic\"}]" : "{\"epg_listings\":[{\"title\":\"Synthetic fallback\"}]}") });
+                var content = new TrackedContent(url.Contains("get_live_streams")
+                    ? "[{\"stream_id\":42,\"name\":\"Synthetic\"}]" : "{\"epg_listings\":[{\"title\":\"Synthetic fallback\"}]}");
+                Contents.Add(content);
+                // HttpClient transfers this response to its caller; disposing here would invalidate the body.
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
             }
         }
 

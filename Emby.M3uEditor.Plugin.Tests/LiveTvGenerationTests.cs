@@ -54,6 +54,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var barrier = (ExportBarrierLogger)logger;
             barrier.Enabled = obsoleteExport;
             using (var service = new LiveTvService(logger, _ => new HttpClient(handler, false), () => config, () => { }))
+            using (barrier.Release)
             {
                 var old = obsoleteExport ? Task.Run(() => service.GetXmltvEpgAsync(CancellationToken.None)) : null;
                 try
@@ -85,7 +86,6 @@ namespace Emby.M3uEditor.Plugin.Tests
                 {
                     barrier.Release.Set();
                     if (old != null) await old.WaitAsync(TimeSpan.FromSeconds(3));
-                    barrier.Release.Dispose();
                 }
             }
         }
@@ -196,9 +196,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             public string Title = "Old generation", GuideId = "guide-a", ChannelName = "Old channel", BarrierTarget;
             public bool NoChannels, JsonFallback;
             public int Requests;
-            public List<string> Urls = new List<string>();
-            public TaskCompletionSource<bool> Entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            public TaskCompletionSource<bool> Release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            public readonly List<string> Urls = new List<string>();
+            public readonly TaskCompletionSource<bool> Entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            public readonly TaskCompletionSource<bool> Release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
             {
                 Requests++; var url = request.RequestUri.ToString(); Urls.Add(url);

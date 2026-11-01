@@ -1613,9 +1613,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             var strms = Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories);
             Assert.Equal(versions ? Math.Min(variants, 8) : 1, strms.Length);
             Assert.Equal(variants - strms.Length, result.OmittedVersions);
-            foreach (var strm in strms)
+            foreach (var sidecar in strms.Select(strm => Path.ChangeExtension(strm, ".nfo")))
             {
-                var sidecar = Path.ChangeExtension(strm, ".nfo");
                 Assert.Equal(nfo, File.Exists(sidecar));
                 if (!nfo) continue;
                 var xml = System.Xml.Linq.XDocument.Load(sidecar).Root;

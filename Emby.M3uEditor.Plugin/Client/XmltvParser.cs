@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -328,12 +329,12 @@ namespace Emby.M3uEditor.Plugin.Client
                     pairedPosters.Add(pairedPoster);
             }
 
-            foreach (var typedPoster in typedPosterCandidates)
+            foreach (var typedPoster in typedPosterCandidates.Where(candidate =>
+                !conflictingArtworkUrls.Contains(candidate.Url)
+                && IsPortraitPoster(candidate.Width, candidate.Height, candidate.Orient)
+                && !ContainsUrl(pairedPosters, candidate.Url)))
             {
-                if (!conflictingArtworkUrls.Contains(typedPoster.Url)
-                    && IsPortraitPoster(typedPoster.Width, typedPoster.Height, typedPoster.Orient)
-                    && !ContainsUrl(pairedPosters, typedPoster.Url))
-                    pairedPosters.Add(typedPoster);
+                pairedPosters.Add(typedPoster);
             }
 
             var selectedPoster = SelectQualifiedPoster(pairedPosters, untypedIcons);
@@ -520,14 +521,10 @@ namespace Emby.M3uEditor.Plugin.Client
             // among posters whose role and portrait geometry are already attested.
             ArtworkCandidate scalarSelection = null;
             var ambiguousSelection = false;
-            foreach (var icon in untypedIcons)
+            foreach (var icon in untypedIcons.Where(candidate => candidate.Width == 0 && candidate.Height == 0))
             {
-                if (icon.Width != 0 || icon.Height != 0)
-                    continue;
-                foreach (var candidate in candidates)
+                foreach (var candidate in candidates.Where(poster => string.Equals(icon.Url, poster.Url, StringComparison.Ordinal)))
                 {
-                    if (!string.Equals(icon.Url, candidate.Url, StringComparison.Ordinal))
-                        continue;
                     if (scalarSelection != null
                         && !string.Equals(scalarSelection.Url, candidate.Url, StringComparison.Ordinal))
                         ambiguousSelection = true;

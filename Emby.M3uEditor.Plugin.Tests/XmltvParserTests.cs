@@ -318,9 +318,9 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             var programs = Parse(xml);
             Assert.Equal("https://example.com/legacy.jpg", Assert.Single(programs["conflict"]).ImageUrl);
-            foreach (var channelId in new[] { "square", "landscape", "missing", "mismatch", "scheme", "nested", "orient" })
+            foreach (var program in new[] { "square", "landscape", "missing", "mismatch", "scheme", "nested", "orient" }
+                .Select(channelId => Assert.Single(programs[channelId])))
             {
-                var program = Assert.Single(programs[channelId]);
                 Assert.Null(program.ImageUrl);
                 Assert.Equal(0, program.ImageWidth);
                 Assert.Equal(0, program.ImageHeight);

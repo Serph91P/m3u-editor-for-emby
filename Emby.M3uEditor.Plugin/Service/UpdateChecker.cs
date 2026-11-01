@@ -375,9 +375,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     throw new System.Text.Json.JsonException("Expected a releases array.");
                 string bestJson = null;
                 SemVer bestVer = null;
-                foreach (var release in document.RootElement.EnumerateArray())
+                foreach (var release in document.RootElement.EnumerateArray().Where(item => !GetBool(item, "draft")))
                 {
-                    if (GetBool(release, "draft")) continue;
                     SemVer version;
                     if (!SemVer.TryParse(GetString(release, "tag_name"), out version)) continue;
                     if (bestVer == null || SemVer.Compare(version, bestVer) > 0)

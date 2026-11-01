@@ -69,6 +69,7 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (Exception)
             {
+                // async-void event boundary: even unexpected post-await failures must not escape into the host.
                 if (Diagnostics.IsEnabled)
                     _logger?.Warn("Live TV renegotiated playback cleanup failed.");
             }

@@ -71,6 +71,7 @@ namespace Emby.RuntimeCompatibility
                 tests.Renegotiation(context, plugin, false, 3, false);
                 tests.Renegotiation(context, plugin, true, 1, true, false);
                 tests.MixedRenegotiation(context, plugin);
+                tests.UnexpectedStopFault(context, plugin);
                 Console.WriteLine("Emby Server 4.10.2.0: real registry lifecycle passed (both stop orders, restart/late stop, probe/playback, cleanup/reopen, different channels; zero HTTP requests).");
             }
             finally

@@ -269,9 +269,9 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
                 ValidateRecoveryDirectory(saved, value.Previous);
                 ValidateRecoveryPublicFiles(root, current, value);
-                foreach (var file in value.Previous.Files)
+                foreach (var file in value.Previous.Files.Where(item =>
+                    !RecoveryFileMatches(CombineUnderRoot(saved, item.RelativePath), item)))
                 {
-                    if (RecoveryFileMatches(CombineUnderRoot(saved, file.RelativePath), file)) continue;
                     var path = CombineUnderRoot(root, file.RelativePath);
                     var old = value.Active.Files.FirstOrDefault(item => RecoveryPathComparer.Equals(
                         CombineUnderRoot(root, item.RelativePath), path));
