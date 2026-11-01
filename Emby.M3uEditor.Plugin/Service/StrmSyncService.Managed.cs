@@ -959,8 +959,7 @@ namespace Emby.M3uEditor.Plugin.Service
             var currentFilesRoot = CombineUnderRoot(metadataRoot, "rollback-current");
             ManagedGenerationManifest active = null;
             ManagedGenerationManifest previous = null;
-            var currentMoved = new List<string>();
-            var previousMoved = new List<string>();
+            var rollbackStarted = false;
 
             try
             {
@@ -984,18 +983,29 @@ namespace Emby.M3uEditor.Plugin.Service
                     throw new InvalidOperationException("The active or previous managed generation is invalid.");
                 }
 
-                ValidateRecoveryDirectory(currentFilesRoot, active);
-                if (Directory.Exists(currentFilesRoot) && Directory.EnumerateFiles(currentFilesRoot, "*", SearchOption.AllDirectories).Any())
-                    throw new InvalidOperationException("Managed rollback scratch directory is not empty.");
-                DeleteRecoveryDirectory(currentFilesRoot, active);
-                MoveManifestFiles(root, currentFilesRoot, active, "rollback-active", currentMoved);
-                MoveManifestFiles(previousFilesRoot, root, previous, "rollback-previous", previousMoved);
-
-                WriteManifestAtomic(activeManifestPath, previous);
-                WriteManifestAtomic(previousManifestPath, active);
-                ValidateRecoveryDirectory(previousFilesRoot, previous);
-                DeleteRecoveryDirectory(previousFilesRoot, previous);
-                Directory.Move(currentFilesRoot, previousFilesRoot);
+                EnsureNoReparsePoint(root, currentFilesRoot);
+                EnsureNoReparsePoint(root, previousFilesRoot);
+                RequireRecovery(RecoveryManifestValid(root, active) && RecoveryManifestValid(previousFilesRoot, previous));
+                ValidateRecoveryDirectory(currentFilesRoot, null);
+                var transition = new ManagedPublishTransition
+                {
+                    Root = root, MappingUuid = mappingUuid, Id = Guid.NewGuid().ToString("N"),
+                    StagingDirectory = "staging-" + Guid.NewGuid().ToString("N"),
+                    Active = active, Previous = previous, Next = previous, Phase = "rollback-moving"
+                };
+                ValidateManagedTransition(root, mappingUuid, transition);
+                var journal = CombineUnderRoot(metadataRoot, ManagedTransitionFilename);
+                WriteManagedJsonAtomic(journal, transition);
+                rollbackStarted = true;
+                DeleteRecoveryDirectory(currentFilesRoot, null);
+                MoveManifestFiles(root, currentFilesRoot, active, "rollback-active");
+                MoveManifestFiles(previousFilesRoot, root, previous, "rollback-previous");
+                InvokeManagedPhase("after-rollback-files");
+                transition.Phase = "rollback-swapping";
+                WriteManagedJsonAtomic(journal, transition);
+                InvokeManagedPhase("before-rollback-swap");
+                RecoverManagedTransition(root, mappingUuid);
+                rollbackStarted = false;
 
                 return new ManagedPublishResult
                 {
@@ -1009,58 +1019,28 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             catch (OperationCanceledException)
             {
-                RestoreFailedRollback(root, previousFilesRoot, currentFilesRoot, active, previous, currentMoved, previousMoved);
+                if (rollbackStarted) RecoverManagedFailure(root, mappingUuid, true);
                 throw;
             }
             catch (IOException)
             {
-                RestoreFailedRollback(root, previousFilesRoot, currentFilesRoot, active, previous, currentMoved, previousMoved);
+                if (rollbackStarted) RecoverManagedFailure(root, mappingUuid, true);
                 return Failed(active?.Revision, "Managed rollback failed during filesystem commit.");
             }
             catch (UnauthorizedAccessException)
             {
-                RestoreFailedRollback(root, previousFilesRoot, currentFilesRoot, active, previous, currentMoved, previousMoved);
+                if (rollbackStarted) RecoverManagedFailure(root, mappingUuid, true);
                 return Failed(active?.Revision, "Managed rollback failed because the output root is not writable.");
             }
             catch (InvalidOperationException ex)
             {
-                RestoreFailedRollback(root, previousFilesRoot, currentFilesRoot, active, previous, currentMoved, previousMoved);
+                if (rollbackStarted) RecoverManagedFailure(root, mappingUuid, true);
                 return Failed(active?.Revision, ex.Message);
             }
             catch (JsonException)
             {
-                RestoreFailedRollback(root, previousFilesRoot, currentFilesRoot, active, previous, currentMoved, previousMoved);
+                if (rollbackStarted) RecoverManagedFailure(root, mappingUuid, true);
                 return Failed(active?.Revision, "Managed generation manifest is invalid.");
-            }
-        }
-
-        private void RestoreFailedRollback(
-            string root,
-            string previousFilesRoot,
-            string currentFilesRoot,
-            ManagedGenerationManifest active,
-            ManagedGenerationManifest previous,
-            List<string> currentMoved,
-            List<string> previousMoved)
-        {
-            if (previousMoved.Count > 0)
-            {
-                RestoreMovedFiles(root, previousFilesRoot, previousMoved, "restore-rollback-previous");
-            }
-
-            if (currentMoved.Count > 0)
-            {
-                RestoreMovedFiles(currentFilesRoot, root, currentMoved, "restore-rollback-active");
-            }
-
-            if (active != null)
-            {
-                RestoreRecoveryManifest(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/active.json"), active);
-            }
-
-            if (previous != null)
-            {
-                RestoreRecoveryManifest(CombineUnderRoot(root, ManagedMetadataDirectoryName + "/previous.json"), previous);
             }
         }
 
@@ -1127,43 +1107,40 @@ namespace Emby.M3uEditor.Plugin.Service
 
                 ComputeDiff(plan, activeManifest, result);
                 EnsureWritableManagedRoot(root);
-                Directory.CreateDirectory(metadataRoot);
-                stagingRoot = CombineUnderRoot(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
-                Directory.CreateDirectory(stagingRoot);
-                stagedManifest = CreateManagedManifest(mapping, plan);
-                WriteAndValidateStaging(stagingRoot, plan, cancellationToken);
-                InvokeManagedPhase("after-stage");
-                EnsureCurrentSetupApproval(mapping, root, approvedOutputRoots, setupConfig);
-
                 previousFilesRoot = CombineUnderRoot(metadataRoot, "previous-files");
-                if (Directory.Exists(previousFilesRoot))
-                {
-                    if (previousManifest == null || !ManifestOwnsDirectory(previousFilesRoot, previousManifest))
-                    {
-                        throw new InvalidOperationException("The previous managed generation is invalid.");
-                    }
-                }
-                else if (previousManifest != null && previousManifest.Files.Count > 0)
-                {
-                    throw new InvalidOperationException("The previous managed generation files are missing.");
-                }
-                else if (previousManifest != null)
-                {
-                    // Normalize legacy empty backups before journaling so recovery can rotate them.
-                    Directory.CreateDirectory(previousFilesRoot);
-                }
-                if (activeManifest != null && !ManifestFilesAreValid(root, activeManifest))
+                EnsureNoReparsePoint(root, previousFilesRoot);
+                ValidateRecoveryDirectory(previousFilesRoot, previousManifest);
+                if (previousManifest != null && !RecoveryManifestValid(previousFilesRoot, previousManifest))
+                    throw new InvalidOperationException("The previous managed generation is invalid.");
+                if (activeManifest != null && !RecoveryManifestValid(root, activeManifest))
                     throw new InvalidOperationException("The active managed generation no longer matches its manifest.");
 
+                Directory.CreateDirectory(metadataRoot);
+                stagingRoot = CombineUnderRoot(metadataRoot, "staging-" + Guid.NewGuid().ToString("N"));
+                stagedManifest = CreateManagedManifest(mapping, plan);
                 var newManifest = stagedManifest;
                 var transition = new ManagedPublishTransition
                 {
                     Root = root, MappingUuid = mapping.MappingUuid, Id = Guid.NewGuid().ToString("N"),
                     StagingDirectory = Path.GetFileName(stagingRoot), Active = activeManifest,
-                    Previous = previousManifest, Next = newManifest
+                    Previous = previousManifest, Next = newManifest, Phase = "preparing"
                 };
                 ValidateManagedTransition(root, mapping.MappingUuid, transition);
-                WriteManagedJsonAtomic(CombineUnderRoot(metadataRoot, ManagedTransitionFilename), transition);
+                var journal = CombineUnderRoot(metadataRoot, ManagedTransitionFilename);
+                WriteManagedJsonAtomic(journal, transition);
+                mutationStarted = true;
+                Directory.CreateDirectory(stagingRoot);
+                var preparingIntent = CombineUnderRoot(metadataRoot, "preparing-file-" + transition.Id + ".json");
+                WriteAndValidateStaging(stagingRoot, plan, cancellationToken, transition, preparingIntent);
+                InvokeManagedPhase("after-stage");
+                EnsureCurrentSetupApproval(mapping, root, approvedOutputRoots, setupConfig);
+                EnsureNoReparsePoint(root, preparingIntent);
+                ValidatePreparingDirectory(stagingRoot, transition, preparingIntent);
+                File.Delete(preparingIntent);
+                // Empty legacy backups need a directory for the existing v1 rotation path.
+                if (previousManifest != null) Directory.CreateDirectory(previousFilesRoot);
+                transition.Phase = "publishing";
+                WriteManagedJsonAtomic(journal, transition);
                 mutationStarted = true;
                 InvokeManagedPhase("after-journal");
                 if (Directory.Exists(previousFilesRoot))
@@ -1182,7 +1159,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
                     mutationStarted = true;
                     Directory.CreateDirectory(previousFilesRoot);
-                    MoveManifestFiles(root, previousFilesRoot, activeManifest, "quarantine", null);
+                    MoveManifestFiles(root, previousFilesRoot, activeManifest, "quarantine");
                     WriteManifestAtomic(previousManifestPath, activeManifest);
                     result.PreviousRevision = activeManifest.Revision;
                     InvokeManagedPhase("after-quarantine");
@@ -1218,45 +1195,40 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 if (mutationStarted)
                 {
-                    RecoverManagedTransition(root, mapping.MappingUuid);
+                    RecoverManagedFailure(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 throw;
             }
             catch (IOException)
             {
                 if (mutationStarted)
                 {
-                    RecoverManagedTransition(root, mapping.MappingUuid);
+                    RecoverManagedFailure(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, "Managed publication failed during filesystem commit.", result);
             }
             catch (UnauthorizedAccessException)
             {
                 if (mutationStarted)
                 {
-                    RecoverManagedTransition(root, mapping.MappingUuid);
+                    RecoverManagedFailure(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, "Managed publication failed because the output root is not writable.", result);
             }
             catch (InvalidOperationException ex)
             {
                 if (mutationStarted)
                 {
-                    RecoverManagedTransition(root, mapping.MappingUuid);
+                    RecoverManagedFailure(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, ex.Message, result);
             }
             catch (JsonException)
             {
                 if (mutationStarted)
                 {
-                    RecoverManagedTransition(root, mapping.MappingUuid);
+                    RecoverManagedFailure(root, mapping.MappingUuid);
                 }
-                DeleteOwnedDirectory(stagingRoot, stagedManifest);
                 return Failed(mapping.Revision, "Managed generation manifest is invalid.", result);
             }
         }
@@ -1561,18 +1533,33 @@ namespace Emby.M3uEditor.Plugin.Service
             return next;
         }
 
-        private static void WriteAndValidateStaging(
+        private void WriteAndValidateStaging(
             string stagingRoot,
             List<ManagedPlannedFile> plan,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            ManagedPublishTransition transition,
+            string preparingIntent)
         {
             foreach (var file in plan)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                // Only the current file payload is persisted; do not rewrite the whole manifest for every output.
+                WriteManagedJsonAtomic(preparingIntent, new ManagedPreparationFile { RelativePath = file.RelativePath, Content = file.Content });
                 var path = CombineUnderRoot(stagingRoot, file.RelativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
-                var temporaryPath = path + ".tmp-" + Guid.NewGuid().ToString("N");
-                File.WriteAllText(temporaryPath, file.Content, new UTF8Encoding(false));
+                var temporaryPath = path + ".tmp-" + transition.Id;
+                var bytes = Encoding.UTF8.GetBytes(file.Content);
+                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write))
+                {
+                    for (var offset = 0; offset < bytes.Length; offset += 65536)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        stream.Write(bytes, offset, Math.Min(65536, bytes.Length - offset));
+                        stream.Flush();
+                        InvokeManagedPhase("during-stage-write");
+                    }
+                }
+                InvokeManagedFileMove("stage", file.RelativePath);
                 File.Move(temporaryPath, path);
                 var writtenContent = File.ReadAllText(path, Encoding.UTF8);
                 if (!string.Equals(ComputeManagedHash(writtenContent), file.Sha256, StringComparison.Ordinal))
@@ -1785,8 +1772,7 @@ namespace Emby.M3uEditor.Plugin.Service
             string root,
             string destinationRoot,
             ManagedGenerationManifest manifest,
-            string operation,
-            List<string> movedFiles)
+            string operation)
         {
             Directory.CreateDirectory(destinationRoot);
             foreach (var file in manifest.Files)
@@ -1796,24 +1782,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 Directory.CreateDirectory(Path.GetDirectoryName(destination));
                 InvokeManagedFileMove(operation, file.RelativePath);
                 File.Move(source, destination);
-                movedFiles?.Add(file.RelativePath);
-            }
-        }
 
-        private void RestoreMovedFiles(
-            string root,
-            string destinationRoot,
-            List<string> movedFiles,
-            string operation)
-        {
-            for (var index = movedFiles.Count - 1; index >= 0; index--)
-            {
-                var relativePath = movedFiles[index];
-                var source = CombineUnderRoot(root, relativePath);
-                var destination = CombineUnderRoot(destinationRoot, relativePath);
-                Directory.CreateDirectory(Path.GetDirectoryName(destination));
-                InvokeManagedFileMove(operation, relativePath);
-                File.Move(source, destination);
             }
         }
 
