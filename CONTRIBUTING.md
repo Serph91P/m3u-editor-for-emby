@@ -73,6 +73,15 @@ Keep unrelated changes on separate short-lived branches. Do not carry an
 uncommitted change into unrelated work; commit a work-in-progress snapshot or
 stash it first.
 
+### Release tooling
+
+The repository root uses Node 22 and `pnpm@10.34.9` from `package.json`.
+Run `pnpm install --frozen-lockfile --ignore-scripts`, then `pnpm run audit:release`
+and `python3 -m unittest discover -s scripts/release/tests`. Do not regenerate a
+root npm lockfile. See [the release dependency policy](scripts/release/SECURITY.md)
+for the native removal of the unused npm publisher and the temporary exception.
+The separate `tests/e2e` npm project is unchanged.
+
 ### Build
 
 Requires .NET SDK 6.0 or newer:
