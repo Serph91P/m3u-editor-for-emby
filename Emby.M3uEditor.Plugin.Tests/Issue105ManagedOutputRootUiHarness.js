@@ -184,12 +184,20 @@ async function run() {
     assert.equal(mounted.view.lookup('.managedPublishingEffectiveOutputRoot').textContent, '<unsafe-root>');
     assert.equal(mounted.view.lookup('.managedPublishingEffectiveOutputRoot').innerHTML, '');
 
-    mounted = await mount({ config: { ManagedPublishingOutputRoot: '/config/managed', LiveTvTunerCount: 4 } });
+    mounted = await mount({ config: { ManagedPublishingOutputRoot: '/config/managed', LiveTvTunerCount: 4,
+        ManagedPlaybackCacheEnabled: false, ManagedPlaybackCacheMode: 'off', ManagedPlaybackCacheNextCount: 1,
+        ManagedPlaybackCacheDeleteAfterWatched: false, ManagedPlaybackCacheDeleteGraceHours: 0, ManagedPlaybackCacheUserIds: [] } });
     mounted.state.config.ManagedAllowedMediaRoots = '/fresh/server/binding';
     const beforeRootSave = JSON.parse(JSON.stringify(mounted.state.config));
     mounted.view.lookup('.txtManagedPublishingOutputRoot').value = '/root-only/managed';
     mounted.view.lookup('.txtLiveTvTunerCount').value = 'invalid-unsaved-value';
     mounted.view.lookup('.txtBaseUrl').value = 'unsaved-connection-edit';
+    mounted.view.lookup('.chkManagedPlaybackCacheEnabled').checked = true;
+    mounted.view.lookup('.selManagedPlaybackCacheMode').value = 'next_n';
+    mounted.view.lookup('.txtManagedPlaybackCacheNextCount').value = '5';
+    mounted.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').checked = true;
+    mounted.view.lookup('.txtManagedPlaybackCacheDeleteGraceHours').value = '48';
+    mounted.view.lookup('.txtManagedPlaybackCacheUserIds').value = 'unsaved-profile';
     mounted.view.lookup('.btnManagedSaveOutputRoot').emit('click');
     await flushPromises();
     assert.equal(mounted.state.updates.length, 1, 'Managed tab must save its root without submitting unrelated Settings');

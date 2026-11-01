@@ -75,7 +75,10 @@ stash it first.
 
 ### Build
 
-Requires .NET SDK 6.0 or newer:
+Requires .NET SDK 10.0 and its .NET 10 test host for the mandatory `net10.0` tests.
+The helper restores dependencies, runs the real test suite, and publishes only
+if tests pass. The plugin still targets `netstandard2.0`; this contributor SDK
+requirement does not change the supported Emby host runtime.
 
 ```bash
 cd Emby.M3uEditor.Plugin
@@ -83,3 +86,29 @@ bash build.sh
 ```
 
 Output: `Emby.M3uEditor.Plugin/out/Emby.M3uEditor.Plugin.dll`
+
+### Release tooling safeguards (repository root)
+
+Use Node.js 22 (CI pins 22.23.2) and pnpm 10.34.9 as selected by
+`package.json`'s `packageManager`. CI uses the pinned official pnpm setup
+action before Node's pnpm-store cache. The root release tooling uses only
+`pnpm-lock.yaml`, not an npm lockfile.
+
+```bash
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run audit:release
+npm --prefix tests/e2e ci --ignore-scripts
+python3 -m unittest discover -s scripts/release/tests
+node scripts/release/tests/release-toolchain-smoke.mjs
+```
+
+The separate `tests/e2e` npm project supplies the offline TypeScript reporter
+runner; these fixture tests do not contact Emby or run browser benchmarks.
+Release safeguards also build fresh disposable linked Git worktrees and verify
+that an injected real test failure prevents DLL publication. The release loader
+smoke invokes no prepare or publish hooks. See
+[`scripts/release/SECURITY.md`](scripts/release/SECURITY.md) for audit policy.
+
+Successful CI releases explicitly call the reusable manifest workflow with the
+same source SHA. Manual manifest dispatch and human release events remain
+available; token-generated release events alone are not a continuation.

@@ -40,19 +40,28 @@ class FakeElement {
     }
 
     emit(name) {
+        let prevented = false;
         const event = {
             target: this,
-            preventDefault: () => {},
+            preventDefault: () => { prevented = true; },
         };
         for (const handler of this.events[name] || []) handler.call(this, event);
+        return prevented;
+    }
+
+    click() {
+        assert.equal(this.tagName, 'button', 'clicked control must exist in the actual HTML');
+        assert.equal(this.disabled, false, 'clicked button must be enabled');
+        if (this.inFooter) assert.notEqual(this.root.lookup('.stickyFooter').style.display, 'none', 'Save must be visible on the managed tab');
+        if (!this.emit('click') && this.getAttribute('type') === 'submit') this.root.lookup('.m3uEditorConfigForm').emit('submit');
     }
 
     querySelector(selector) {
         return this.root.lookup(selector);
     }
 
-    querySelectorAll() {
-        return [];
+    querySelectorAll(selector) {
+        return this.root.buttons ? this.root.buttons.filter(button => button.classes.includes(selector.slice(1))) : [];
     }
 
     getAttribute(name) {
@@ -69,6 +78,19 @@ class FakeView extends FakeElement {
         super();
         this.root = this;
         this.elements = new Map();
+        this.buttons = [];
+        if (configHtmlPath) {
+            const html = fs.readFileSync(configHtmlPath, 'utf8');
+            for (const match of html.matchAll(/<button\b([^>]*)>/g)) {
+                const button = new FakeElement(this);
+                button.tagName = 'button';
+                for (const attr of match[1].matchAll(/([\w-]+)="([^"]*)"/g)) button.setAttribute(attr[1], attr[2]);
+                button.classes = (button.getAttribute('class') || '').split(/\s+/);
+                button.inFooter = match.index > html.indexOf('<div class="stickyFooter">');
+                for (const className of button.classes) this.elements.set('.' + className, button);
+                this.buttons.push(button);
+            }
+        }
     }
 
     lookup(selector) {
@@ -116,6 +138,7 @@ async function mount(options = {}) {
         ajaxCalls: [],
         ajaxResult: options.ajaxResult || { Success: false },
         rejectAjax: !!options.rejectAjax,
+        alerts: [],
     };
 
     global.window = global;
@@ -131,7 +154,7 @@ async function mount(options = {}) {
         }),
     };
     global.Dashboard = {
-        alert: () => {},
+        alert: message => state.alerts.push(message),
         processPluginConfigurationUpdateResult: () => {},
     };
     global.loading = { show: () => {}, hide: () => {} };
@@ -139,6 +162,8 @@ async function mount(options = {}) {
         getPluginConfiguration: () => Promise.resolve(JSON.parse(JSON.stringify(state.config))),
         updatePluginConfiguration: (_id, config) => {
             state.updates.push(JSON.parse(JSON.stringify(config)));
+            if (options.rejectSave) return Promise.reject(new Error('persistence unavailable'));
+            state.config = JSON.parse(JSON.stringify(config));
             return Promise.resolve({});
         },
         ajax: request => {
@@ -231,6 +256,45 @@ async function runManagedPlaybackCacheLoadSaveScenario() {
     assert.equal(mounted.state.updates[0].ManagedPlaybackCacheEnabled, true);
     assert.equal(mounted.state.updates[0].ManagedPlaybackCacheDeleteAfterWatched, false);
     process.stdout.write('Managed playback cache load/save scenario passed\n');
+}
+
+async function runManagedPlaybackCacheVisibleSaveScenario() {
+    if (!configHtmlPath) return;
+    const ready = { ManagedPublishing: { SetupReady: true, ConfigurationValid: true, CacheCapabilityReady: true, ActiveManifestIdentityReady: true } };
+    const mounted = await mount({ dashboard: ready });
+    mounted.view.lookup('.tabBtnManagedPublishing').click();
+    assert.equal(mounted.view.lookup('.tabManagedPublishing').style.display, 'block');
+    mounted.view.lookup('.chkManagedPlaybackCacheEnabled').checked = true;
+    mounted.view.lookup('.selManagedPlaybackCacheMode').value = 'next_n';
+    mounted.view.lookup('.txtManagedPlaybackCacheNextCount').value = '5';
+    mounted.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').checked = true;
+    mounted.view.lookup('.txtManagedPlaybackCacheDeleteGraceHours').value = '48';
+    mounted.view.lookup('.txtManagedPlaybackCacheUserIds').value = ' profile-c\nprofile-d ';
+    mounted.view.lookup('.button-submit').click();
+    await flushPromises();
+    assert.equal(mounted.state.updates.length, 1);
+    const reloaded = await mount({ config: mounted.state.config, dashboard: ready });
+    assert.equal(reloaded.view.lookup('.chkManagedPlaybackCacheEnabled').checked, true);
+    assert.equal(reloaded.view.lookup('.selManagedPlaybackCacheMode').value, 'next_n');
+    assert.equal(reloaded.view.lookup('.txtManagedPlaybackCacheNextCount').value, 5);
+    assert.equal(reloaded.view.lookup('.chkManagedPlaybackCacheDeleteAfterWatched').checked, true);
+    assert.equal(reloaded.view.lookup('.txtManagedPlaybackCacheDeleteGraceHours').value, 48);
+    assert.equal(reloaded.view.lookup('.txtManagedPlaybackCacheUserIds').value, 'profile-c\nprofile-d');
+    const unavailable = await mount({ dashboard: { ManagedPublishing: { SetupReady: true } } });
+    unavailable.view.lookup('.tabBtnManagedPublishing').click();
+    assert.equal(unavailable.view.lookup('.chkManagedPlaybackCacheEnabled').disabled, true);
+    unavailable.view.lookup('.chkManagedPlaybackCacheEnabled').checked = true;
+    unavailable.view.lookup('.button-submit').click();
+    await flushPromises();
+    assert.equal(unavailable.state.config.ManagedPlaybackCacheEnabled, false);
+    const failure = await mount({ dashboard: ready, rejectSave: true });
+    failure.view.lookup('.tabBtnManagedPublishing').click();
+    failure.view.lookup('.chkManagedPlaybackCacheEnabled').checked = true;
+    failure.view.lookup('.button-submit').click();
+    await flushPromises();
+    assert.equal(failure.state.config.ManagedPlaybackCacheEnabled, undefined);
+    assert.ok(failure.state.alerts.some(message => message.includes('Failed to save configuration')));
+    process.stdout.write('Managed playback cache visible navigation/click/reload and failure scenarios passed\n');
 }
 
 async function runManagedPlaybackCacheReadinessScenario() {
@@ -350,6 +414,7 @@ async function run() {
     assert.match(mounted.view.lookup('.livetvLimitImportResult').innerHTML, /enter server URL/);
 
     await runManagedPlaybackCacheLoadSaveScenario();
+    await runManagedPlaybackCacheVisibleSaveScenario();
     await runManagedPlaybackCacheReadinessScenario();
 
     process.stdout.write('Issue85 UI harness: 21 scenarios passed\n');

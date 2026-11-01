@@ -349,19 +349,43 @@ namespace Emby.M3uEditor.Plugin.Service
                 c.IndexOf("sport", System.StringComparison.OrdinalIgnoreCase) >= 0);
             var isSeries = !isMovie && !isSports;
             var hasPortraitPoster = IsValidPortrait(p.PosterUrl, p.PosterWidth, p.PosterHeight);
+            var thumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl);
+            // Preserve a direct legacy scalar, but never manufacture Primary from
+            // a known secondary role. Its geometry must belong to the selected image.
             var imageUrl = hasPortraitPoster
                 ? Util.UrlValidator.SanitizeHttpUrl(p.PosterUrl)
-                : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl)
-                    ?? Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl);
+                : Util.UrlValidator.SanitizeHttpUrl(p.ImageUrl);
             var imageWidth = hasPortraitPoster
                 ? p.PosterWidth
-                : p.ImageWidth > 0 ? p.ImageWidth : 0;
+                : imageUrl != null ? Math.Max(0, p.ImageWidth) : 0;
             var imageHeight = hasPortraitPoster
                 ? p.PosterHeight
-                : p.ImageHeight > 0 ? p.ImageHeight : 0;
+                : imageUrl != null ? Math.Max(0, p.ImageHeight) : 0;
+            var preservedPrimaryUrl = Util.UrlValidator.SanitizeHttpUrl(p.PreservedPrimaryUrl);
+            if (preservedPrimaryUrl != null)
+            {
+                imageUrl = preservedPrimaryUrl;
+                imageWidth = 0;
+                imageHeight = 0;
+                var conflictingGeometry = false;
+                foreach (var candidate in new[] {
+                    (Url: p.ImageUrl, Width: p.ImageWidth, Height: p.ImageHeight),
+                    (Url: p.PosterUrl, Width: p.PosterWidth, Height: p.PosterHeight),
+                    (Url: p.ThumbImageUrl, Width: p.ThumbWidth, Height: p.ThumbHeight) }
+                    .Where(candidate => string.Equals(candidate.Url, preservedPrimaryUrl, StringComparison.Ordinal)
+                        && candidate.Width > 0 && candidate.Height > 0))
+                {
+                    if (imageWidth > 0 && (imageWidth != candidate.Width || imageHeight != candidate.Height))
+                        conflictingGeometry = true;
+                    imageWidth = candidate.Width;
+                    imageHeight = candidate.Height;
+                }
+                if (conflictingGeometry)
+                {
+                    imageWidth = 0;
+                    imageHeight = 0;
+                }
+            }
             var backdropImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.BackdropImageUrl)
                 ?? Util.UrlValidator.SanitizeHttpUrl(p.BackdropUrl);
             var showId = ToStableIdentity("program", p.ContentId)
@@ -384,7 +408,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 ImageWidth = imageWidth,
                 ImageHeight = imageHeight,
                 BackdropImageUrl = backdropImageUrl,
-                ThumbImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.ThumbImageUrl),
+                ThumbImageUrl = thumbImageUrl,
                 LogoImageUrl = Util.UrlValidator.SanitizeHttpUrl(p.LogoImageUrl),
                 Genres = cats ?? new List<string>(),
                 IsSports = isSports,
@@ -468,16 +492,17 @@ namespace Emby.M3uEditor.Plugin.Service
 
             var liveTvService = Plugin.Instance.LiveTvService;
             // Both fetches run concurrently; each handles its own errors internally.
-            async Task<List<Client.Models.LiveStreamInfo>> channelsFetch()
+            async Task<(List<Client.Models.LiveStreamInfo> Channels, long Generation)> channelsFetch()
             {
+                var generation = liveTvService.CacheGeneration;
                 try
                 {
-                    return await liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+                    return await liveTvService.GetChannelSnapshotAsync(cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (!(ex is TaskCanceledException) && !(ex is OperationCanceledException))
                 {
                     Logger.Warn("LiveTvService channel fetch failed, falling back to direct API: {0}", ex.Message);
-                    return await FetchAllChannelsDirectAsync(config).ConfigureAwait(false);
+                    return (await FetchAllChannelsDirectAsync(config, cancellationToken).ConfigureAwait(false), generation);
                 }
             }
 
@@ -501,8 +526,9 @@ namespace Emby.M3uEditor.Plugin.Service
 
             await Task.WhenAll(channelsTask, categoriesTask).ConfigureAwait(false);
 
-            var channels = channelsTask.Result;
+            var channels = channelsTask.Result.Channels;
             var categoryMap = categoriesTask.Result;
+            config = Plugin.Instance.Configuration;
 
             var newStats = CollectBackendStreamStats(channels);
 
@@ -542,10 +568,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 return channelInfo;
             }).ToList();
 
-            _streamStats = newStats;
-            BackendStreamStatsCount = newStats.Count;
-            _cachedChannels = result;
-            _cacheTime = DateTime.UtcNow;
+            liveTvService.PublishIfCurrent(channelsTask.Result.Generation, cancellationToken, () =>
+            {
+                _streamStats = newStats;
+                BackendStreamStatsCount = newStats.Count;
+                _cachedChannels = result;
+                _cacheTime = DateTime.UtcNow;
+            });
             Logger.Info("Channel list cached with {0} channels ({1} with backend stream stats)",
                 result.Count, newStats.Count);
 
@@ -561,7 +590,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 return stats;
             }
 
-            foreach (var channel in channels.Where(channel => channel.StreamStats != null))
+            foreach (var channel in channels.Where(channel => HasUsableStreamStats(channel.StreamStats)))
             {
                 stats[channel.StreamId] = channel.StreamStats;
             }
@@ -569,7 +598,7 @@ namespace Emby.M3uEditor.Plugin.Service
             return stats;
         }
 
-        private static async Task<List<Client.Models.LiveStreamInfo>> FetchAllChannelsDirectAsync(PluginConfiguration config)
+        private static async Task<List<Client.Models.LiveStreamInfo>> FetchAllChannelsDirectAsync(PluginConfiguration config, CancellationToken cancellationToken)
         {
             using (var httpClient = Plugin.CreateHttpClient(30))
             {
@@ -578,9 +607,14 @@ namespace Emby.M3uEditor.Plugin.Service
                     "{0}/player_api.php?username={1}&password={2}&action=get_live_streams",
                     config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty));
 
-                var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                return STJ.JsonSerializer.Deserialize<List<Client.Models.LiveStreamInfo>>(json, JsonOptions)
-                    ?? new List<Client.Models.LiveStreamInfo>();
+                using (var response = await httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false))
+                {
+                    response.EnsureSuccessStatusCode();
+                    var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return STJ.JsonSerializer.Deserialize<List<Client.Models.LiveStreamInfo>>(json, JsonOptions)
+                        ?? new List<Client.Models.LiveStreamInfo>();
+                }
             }
         }
 
@@ -692,6 +726,14 @@ namespace Emby.M3uEditor.Plugin.Service
 
             try
             {
+                var registeredTuner = FindRegisteredTunerHost("ClearCachedChannelArtwork");
+                if (registeredTuner == null)
+                {
+                    result.Message = "Channel ownership cannot be established without the registered m3u-editor tuner.";
+                    return result;
+                }
+                cachedChannels = cachedChannels.Where(channel =>
+                    string.Equals(channel.TunerHostId, registeredTuner.Id, StringComparison.Ordinal)).ToList();
                 var libraryManager = _applicationHost.Resolve<ILibraryManager>();
                 var assemblies = AppDomain.CurrentDomain.GetAssemblies();
                 var channelType = assemblies
@@ -728,10 +770,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         result.TotalLibraryChannels++;
                         var itemType = item.GetType();
-                        var name = itemType.GetProperty("Name")?.GetValue(item) as string;
-                        var number = itemType.GetProperty("Number")?.GetValue(item) as string;
-                        var tunerChannelId = itemType.GetProperty("TunerChannelId")?.GetValue(item) as string;
-                        if (!IsOwnedChannel(cachedChannels, tunerChannelId, number, name))
+                        var externalId = itemType.GetProperty("ExternalId")?.GetValue(item) as string;
+                        if (!IsOwnedChannel(cachedChannels, externalId))
                         {
                             continue;
                         }
@@ -799,16 +839,11 @@ namespace Emby.M3uEditor.Plugin.Service
 
         internal static bool IsOwnedChannel(
             IEnumerable<ChannelInfo> cachedChannels,
-            string tunerChannelId,
-            string number,
-            string name)
+            string externalId)
         {
-            return cachedChannels != null && cachedChannels.Any(channel =>
-                (!string.IsNullOrEmpty(tunerChannelId) &&
-                 string.Equals(channel.TunerChannelId, tunerChannelId, StringComparison.Ordinal)) ||
-                (!string.IsNullOrEmpty(number) && !string.IsNullOrEmpty(name) &&
-                 string.Equals(channel.Number, number, StringComparison.Ordinal) &&
-                 string.Equals(channel.Name, name, StringComparison.OrdinalIgnoreCase)));
+            return !string.IsNullOrEmpty(externalId) && cachedChannels != null && cachedChannels.Any(channel =>
+                !string.IsNullOrEmpty(channel.TunerHostId) &&
+                string.Equals(channel.Id, externalId, StringComparison.Ordinal));
         }
 
         /// <summary>
@@ -918,7 +953,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 ? "ts" : "m3u8";
             return string.Format(CultureInfo.InvariantCulture,
                 "{0}/live/{1}/{2}/{3}.{4}",
-                config.BaseUrl, config.Username, config.Password, streamId, extension);
+                config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty), streamId, extension);
+        }
+
+        internal static bool HasUsableStreamStats(StreamStatsInfo stats)
+        {
+            return stats != null && (!string.IsNullOrWhiteSpace(stats.VideoCodec)
+                || (stats.VideoCodec == null && !string.IsNullOrWhiteSpace(stats.AudioCodec)));
         }
 
         internal MediaSourceInfo CreateMediaSourceInfo(
@@ -932,9 +973,9 @@ namespace Emby.M3uEditor.Plugin.Service
             // H.264 fallback, which causes Emby to expect a video stream that isn't there.
             bool isAudioOnly = stats != null
                 && stats.VideoCodec == null
-                && !string.IsNullOrEmpty(stats.AudioCodec);
+                && !string.IsNullOrWhiteSpace(stats.AudioCodec);
 
-            bool hasStats = stats?.VideoCodec != null || isAudioOnly;
+            bool hasStats = HasUsableStreamStats(stats);
 
             var audioCodecLower = hasStats && !string.IsNullOrEmpty(stats?.AudioCodec)
                 ? stats.AudioCodec.ToLowerInvariant() : null;

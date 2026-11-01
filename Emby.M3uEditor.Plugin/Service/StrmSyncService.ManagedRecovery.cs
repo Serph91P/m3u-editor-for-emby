@@ -20,6 +20,12 @@ namespace Emby.M3uEditor.Plugin.Service
         public ManagedGenerationManifest Next { get; set; }
     }
 
+    internal sealed class ManagedPreparationFile
+    {
+        public string RelativePath { get; set; }
+        public string Content { get; set; }
+    }
+
     public partial class StrmSyncService
     {
         private const string ManagedTransitionFilename = "transition.json";
@@ -28,7 +34,7 @@ namespace Emby.M3uEditor.Plugin.Service
             ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
         // Called only under ManagedRootLocks, before validating the public generation.
-        private void RecoverManagedTransition(string root, string mappingUuid)
+        private void RecoverManagedTransition(string root, string mappingUuid, bool compensateRollback = false)
         {
             var metadata = CombineUnderRoot(root, ManagedMetadataDirectoryName);
             var journal = CombineUnderRoot(metadata, ManagedTransitionFilename);
@@ -46,6 +52,27 @@ namespace Emby.M3uEditor.Plugin.Service
                 EnsureNoReparsePoint(root, path);
             var active = ReadManifest(activePath);
             var previous = ReadManifest(previousPath);
+            if (transition.Phase == "preparing")
+            {
+                RequireRecovery(SameManagedManifest(active, transition.Active) && SameManagedManifest(previous, transition.Previous));
+                RequireRecovery(active == null || RecoveryManifestValid(root, active));
+                ValidateRecoveryDirectory(previousFiles, previous);
+                RequireRecovery(previous == null || RecoveryManifestValid(previousFiles, previous));
+                ValidateRecoveryDirectory(backup, null);
+                var intent = CombineUnderRoot(metadata, "preparing-file-" + transition.Id + ".json");
+                EnsureNoReparsePoint(root, intent);
+                var temporary = ValidatePreparingDirectory(staging, transition, intent);
+                if (temporary != null && File.Exists(temporary)) File.Delete(temporary);
+                DeleteRecoveryDirectory(staging, transition.Next);
+                File.Delete(intent);
+                File.Delete(journal);
+                return;
+            }
+            if (transition.Phase.StartsWith("rollback-", StringComparison.Ordinal))
+            {
+                RecoverManagedRollback(root, metadata, journal, transition, active, previous, compensateRollback);
+                return;
+            }
             RequireRecovery(SameManagedManifest(active, transition.Active) || SameManagedManifest(active, transition.Next));
             RequireRecovery(SameManagedManifest(previous, transition.Previous) || SameManagedManifest(previous, transition.Active));
             ValidateRecoveryDirectory(staging, transition.Next);
@@ -156,7 +183,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 Guid.TryParseExact(value.Id, "N", out id) &&
                 value.StagingDirectory != null && value.StagingDirectory.StartsWith("staging-", StringComparison.Ordinal) &&
                 Guid.TryParseExact(value.StagingDirectory.Substring(8), "N", out id) &&
-                new[] { "publishing", "restoring", "restored", "committed" }.Contains(value.Phase));
+                new[] { "preparing", "publishing", "restoring", "restored", "committed",
+                    "rollback-moving", "rollback-restoring", "rollback-swapping" }.Contains(value.Phase));
             foreach (var manifest in new[] { value.Active, value.Previous, value.Next }.Where(manifest => manifest != null))
             {
                 ValidateManagedManifest(manifest);
@@ -165,6 +193,120 @@ namespace Emby.M3uEditor.Plugin.Service
                     .Any(segment => segment.Equals(ManagedMetadataDirectoryName, StringComparison.OrdinalIgnoreCase))));
             }
             RequireRecovery(value.Next != null && (value.Previous == null || value.Active != null));
+            if (value.Phase.StartsWith("rollback-", StringComparison.Ordinal))
+                RequireRecovery(value.Active != null && value.Previous != null && SameManagedManifest(value.Next, value.Previous));
+        }
+
+        private static string ValidatePreparingDirectory(string staging, ManagedPublishTransition value, string intent)
+        {
+            RequireRecovery(!Directory.Exists(intent));
+            string temporary = null;
+            var files = new List<ManagedManifestFile>(value.Next.Files);
+            if (File.Exists(intent))
+            {
+                var preparing = JsonSerializer.Deserialize<ManagedPreparationFile>(File.ReadAllText(intent), JsonOptions);
+                var file = preparing == null ? null : value.Next.Files.SingleOrDefault(item => item.RelativePath == preparing.RelativePath);
+                RequireRecovery(file != null && preparing.Content != null &&
+                    Encoding.UTF8.GetByteCount(preparing.Content) == file.Length && file.Length <= MaximumGeneratedFileBytes &&
+                    ComputeManagedHash(preparing.Content) == file.Sha256);
+                var relative = preparing.RelativePath + ".tmp-" + value.Id;
+                temporary = CombineUnderRoot(staging, relative);
+                EnsureNoReparsePoint(staging, temporary);
+                if (File.Exists(temporary))
+                {
+                    var expected = Encoding.UTF8.GetBytes(preparing.Content);
+                    RequireRecovery(new FileInfo(temporary).Length <= expected.Length);
+                    var actual = File.ReadAllBytes(temporary);
+                    RequireRecovery(actual.SequenceEqual(expected.Take(actual.Length)));
+                    files.Add(new ManagedManifestFile { RelativePath = relative, Length = actual.Length,
+                        Sha256 = ComputeManagedHash(Encoding.UTF8.GetString(actual)) });
+                }
+            }
+            ValidateRecoveryDirectory(staging, new ManagedGenerationManifest { Files = files });
+            return temporary;
+        }
+
+        private void RecoverManagedRollback(string root, string metadata, string journal, ManagedPublishTransition value,
+            ManagedGenerationManifest active, ManagedGenerationManifest previous, bool compensate)
+        {
+            var current = CombineUnderRoot(metadata, "rollback-current");
+            var saved = CombineUnderRoot(metadata, "previous-files");
+            EnsureNoReparsePoint(root, current);
+            RequireRecovery(SameManagedManifest(active, value.Active) || SameManagedManifest(active, value.Previous));
+            RequireRecovery(SameManagedManifest(previous, value.Previous) || SameManagedManifest(previous, value.Active));
+            if (value.Phase == "rollback-swapping")
+            {
+                RequireRecovery(RecoveryManifestValid(root, value.Previous));
+                if (Directory.Exists(current))
+                {
+                    ValidateRecoveryDirectory(current, value.Active);
+                    RequireRecovery(RecoveryManifestValid(current, value.Active));
+                    ValidateRecoveryDirectory(saved, value.Previous);
+                    RequireRecovery(!Directory.Exists(saved) || !Directory.EnumerateFiles(saved, "*", SearchOption.AllDirectories).Any());
+                    DeleteRecoveryDirectory(saved, value.Previous);
+                    Directory.Move(current, saved);
+                    InvokeManagedPhase("after-rollback-directory-swap");
+                }
+                ValidateRecoveryDirectory(saved, value.Active);
+                RequireRecovery(RecoveryManifestValid(saved, value.Active));
+                RestoreRecoveryManifest(CombineUnderRoot(metadata, "active.json"), value.Previous);
+                InvokeManagedPhase("after-rollback-active-manifest");
+                RestoreRecoveryManifest(CombineUnderRoot(metadata, "previous.json"), value.Active);
+                InvokeManagedPhase("after-rollback-previous-manifest");
+            }
+            else
+            {
+                if (!compensate) ValidateRecoveryDirectory(current, value.Active);
+                else
+                {
+                    // Caught rollback failures may restore known files without deleting an injected foreign sentinel.
+                    foreach (var file in value.Active.Files)
+                    {
+                        var path = CombineUnderRoot(current, file.RelativePath);
+                        EnsureNoReparsePoint(root, path);
+                        RequireRecovery(!File.Exists(path) || RecoveryFileMatches(path, file));
+                    }
+                }
+                ValidateRecoveryDirectory(saved, value.Previous);
+                ValidateRecoveryPublicFiles(root, current, value);
+                foreach (var file in value.Previous.Files.Where(item =>
+                    !RecoveryFileMatches(CombineUnderRoot(saved, item.RelativePath), item)))
+                {
+                    var path = CombineUnderRoot(root, file.RelativePath);
+                    var old = value.Active.Files.FirstOrDefault(item => RecoveryPathComparer.Equals(
+                        CombineUnderRoot(root, item.RelativePath), path));
+                    // Equal bytes do not prove that an active file was moved out of the way.
+                    RequireRecovery(RecoveryFileMatches(path, file) &&
+                        (old == null || RecoveryFileMatches(CombineUnderRoot(current, old.RelativePath), old)));
+                }
+                value.Phase = "rollback-restoring";
+                WriteManagedJsonAtomic(journal, value);
+                foreach (var file in value.Previous.Files)
+                {
+                    var destination = CombineUnderRoot(saved, file.RelativePath);
+                    if (File.Exists(destination)) continue;
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                    InvokeManagedFileMove("rollback-recovery-previous", file.RelativePath);
+                    File.Move(CombineUnderRoot(root, file.RelativePath), destination);
+                }
+                foreach (var file in value.Active.Files)
+                {
+                    var source = CombineUnderRoot(current, file.RelativePath);
+                    if (!File.Exists(source)) continue;
+                    var destination = CombineUnderRoot(root, file.RelativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                    InvokeManagedFileMove("rollback-recovery-active", file.RelativePath);
+                    File.Move(source, destination);
+                }
+                RequireRecovery(RecoveryManifestValid(root, value.Active) && RecoveryManifestValid(saved, value.Previous));
+                InvokeManagedPhase("after-rollback-recovery-files");
+                RestoreRecoveryManifest(CombineUnderRoot(metadata, "active.json"), value.Active);
+                RestoreRecoveryManifest(CombineUnderRoot(metadata, "previous.json"), value.Previous);
+                if (compensate) DeleteOwnedDirectory(current, value.Active);
+                else DeleteRecoveryDirectory(current, value.Active);
+            }
+            InvokeManagedPhase("before-rollback-recovery-complete");
+            File.Delete(journal);
         }
 
         private static bool SameManagedManifest(ManagedGenerationManifest left, ManagedGenerationManifest right)
@@ -259,6 +401,16 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             if (manifest == null) File.Delete(path);
             else if (!SameManagedManifest(ReadManifest(path), manifest)) WriteManifestAtomic(path, manifest);
+        }
+
+        private void RecoverManagedFailure(string root, string mappingUuid, bool compensateRollback = false)
+        {
+            try { RecoverManagedTransition(root, mappingUuid, compensateRollback); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (InvalidOperationException) { }
+            catch (JsonException) { }
+            // Failed compensation preserves the journal and unknown evidence for a later normal entry.
         }
 
         private static void RequireRecovery(bool condition)

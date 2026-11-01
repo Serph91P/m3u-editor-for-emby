@@ -11,7 +11,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
 
 // ── Types (mirrors helpers.ts without importing Playwright) ───────────────────
 
@@ -78,7 +77,7 @@ function streamFailed(pair: TimingPair): boolean {
 }
 
 function avg(pairs: TimingPair[], field: keyof TimingPair): number {
-  const valid = pairs.filter(p => field === 'streamTime' ? !streamFailed(p) : true);
+  const valid = pairs.filter(p => !streamFailed(p));
   if (!valid.length) return 0;
   return valid.reduce((s, p) => s + p[field], 0) / valid.length;
 }
@@ -121,21 +120,18 @@ function cell(value: number | null | undefined, baseline: number | null | undefi
 
 // ── Meta ──────────────────────────────────────────────────────────────────────
 
-function resolveVersion(): string {
-  if (process.env.PLUGIN_VERSION) return process.env.PLUGIN_VERSION;
-  try {
-    return execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
-  } catch {
-    return 'unknown';
+function measurementProvenance(data: Partial<Record<Mode, BenchmarkFile>>): string {
+  const files = Object.values(data).filter((file): file is BenchmarkFile => !!file);
+  const identities = new Set(files.map(file => JSON.stringify([file.version, file.commit, file.date])));
+  const lines = ['### Measurement provenance', '', '| Mode | Measured version | Measured commit | Measured date |',
+    '|------|------------------|-----------------|---------------|'];
+  for (const mode of MODES) {
+    const file = data[mode];
+    if (file) lines.push(`| ${MODE_LABELS[mode]} | ${file.version ?? 'unknown'} | ${file.commit ?? 'unknown'} | ${file.date ?? 'unknown'} |`);
   }
-}
-
-function resolveCommit(): string {
-  try {
-    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
-  } catch {
-    return 'unknown';
-  }
+  if (identities.size > 1) lines.push('', '> **Mixed measurement provenance**: modes were not measured on the same build/run.');
+  if (!files.length) lines.push('', '> No measurements available.');
+  return lines.join('\n');
 }
 
 // ── Table builders ────────────────────────────────────────────────────────────
@@ -177,9 +173,9 @@ function buildColdTable(
     if (typeof n === 'number') { avgs.noStats += n; nCount++; }
   }
 
-  const ab = bCount ? avgs.baseline / bCount : undefined;
-  const aw = wCount ? avgs.withStats / wCount : (withStats ? null : undefined);
-  const an = nCount ? avgs.noStats / nCount : (noStats ? null : undefined);
+  const ab = bCount ? avgs.baseline / bCount : (Object.values(baseline?.channels ?? {}).some(ch => ch.cold) ? null : undefined);
+  const aw = wCount ? avgs.withStats / wCount : (Object.values(withStats?.channels ?? {}).some(ch => ch.cold) ? null : undefined);
+  const an = nCount ? avgs.noStats / nCount : (Object.values(noStats?.channels ?? {}).some(ch => ch.cold) ? null : undefined);
 
   lines.push(`| **Avg**  | ${cell(ab, undefined, true)} | ${cell(aw, ab, true)} | ${cell(an, ab, true)} |`);
 
@@ -228,16 +224,20 @@ function buildWarmTable(
       ? warmAvgTotal(nWarm)
       : undefined;
 
-    lines.push(`| ${ch.padEnd(8)} | ${cell(bTotal, undefined)} | ${cell(wTotal, bTotal)} | ${cell(nTotal, bTotal)} |`);
+    const failures = (pairs: TimingPair[] | undefined) => {
+      const count = pairs?.filter(streamFailed).length ?? 0;
+      return count ? ` (${count} failed)` : '';
+    };
+    lines.push(`| ${ch.padEnd(8)} | ${cell(bTotal, undefined)}${failures(bWarm)} | ${cell(wTotal, bTotal)}${failures(wWarm)} | ${cell(nTotal, bTotal)}${failures(nWarm)} |`);
 
     if (typeof bTotal === 'number') { avgs.baseline += bTotal; bCount++; }
     if (typeof wTotal === 'number') { avgs.withStats += wTotal; wCount++; }
     if (typeof nTotal === 'number') { avgs.noStats += nTotal; nCount++; }
   }
 
-  const ab = bCount ? avgs.baseline / bCount : undefined;
-  const aw = wCount ? avgs.withStats / wCount : (withStats ? null : undefined);
-  const an = nCount ? avgs.noStats / nCount : (noStats ? null : undefined);
+  const ab = bCount ? avgs.baseline / bCount : (Object.values(baseline?.channels ?? {}).some(ch => ch.warm?.length) ? null : undefined);
+  const aw = wCount ? avgs.withStats / wCount : (Object.values(withStats?.channels ?? {}).some(ch => ch.warm?.length) ? null : undefined);
+  const an = nCount ? avgs.noStats / nCount : (Object.values(noStats?.channels ?? {}).some(ch => ch.warm?.length) ? null : undefined);
 
   lines.push(`| **Avg**  | ${cell(ab, undefined, true)} | ${cell(aw, ab, true)} | ${cell(an, ab, true)} |`);
 
@@ -252,30 +252,20 @@ function buildPhaseTable(
   const withStats = data['with-stats'];
   const noStats = data['no-stats'];
 
-  // Aggregate across channels (cold only); skip channels where the stream failed.
-  let bInfo = 0, bStream = 0, wInfo = 0, wStream = 0, nInfo = 0, nStream = 0;
-  let count = 0;
-
-  for (const ch of channels) {
-    const bc = baseline?.channels[ch]?.cold;
-    const wc = withStats?.channels[ch]?.cold;
-    const nc = noStats?.channels[ch]?.cold;
-    if (bc && !streamFailed(bc)) { bInfo += bc.infoTime; bStream += bc.streamTime; count++; }
-    if (wc && !streamFailed(wc)) { wInfo += wc.infoTime; wStream += wc.streamTime; }
-    if (nc && !streamFailed(nc)) { nInfo += nc.infoTime; nStream += nc.streamTime; }
+  // Each mode uses its own successful cold cohort for both phases and total.
+  function phases(file: BenchmarkFile | undefined) {
+    const pairs = channels.map(ch => file?.channels[ch]?.cold).filter((p): p is TimingPair => !!p);
+    const valid = pairs.filter(p => !streamFailed(p));
+    const mean = (field: keyof TimingPair): number | null | undefined =>
+      valid.length ? avg(valid, field) : pairs.length ? null : undefined;
+    const info = mean('infoTime');
+    const stream = mean('streamTime');
+    return { info, stream, total: typeof info === 'number' && typeof stream === 'number' ? info + stream : info };
   }
-
-  const c = count || 1;
-  const ab_info   = count ? bInfo / c : undefined;
-  const ab_stream = count ? bStream / c : undefined;
-  const aw_info   = withStats ? wInfo / c : undefined;
-  const aw_stream = withStats ? wStream / c : undefined;
-  const an_info   = noStats ? nInfo / c : undefined;
-  const an_stream = noStats ? nStream / c : undefined;
-
-  const ab_total = ab_info !== undefined && ab_stream !== undefined ? ab_info + ab_stream : undefined;
-  const aw_total = aw_info !== undefined && aw_stream !== undefined ? aw_info + aw_stream : undefined;
-  const an_total = an_info !== undefined && an_stream !== undefined ? an_info + an_stream : undefined;
+  const b = phases(baseline), w = phases(withStats), n = phases(noStats);
+  const ab_info = b.info, ab_stream = b.stream, ab_total = b.total;
+  const aw_info = w.info, aw_stream = w.stream, aw_total = w.total;
+  const an_info = n.info, an_stream = n.stream, an_total = n.total;
 
   const lines: string[] = [
     '### Where Time is Spent (cold start, avg across channels)',
@@ -304,9 +294,7 @@ function main(): void {
   const resultsDir = path.resolve(__dirname, 'results');
   const data = loadLatestPerMode(resultsDir);
 
-  const version = resolveVersion();
-  const commit = resolveCommit();
-  const date = new Date().toISOString().slice(0, 10);
+  const date = new Date().toISOString();
 
   // Collect all channel names seen across any mode (preserve insertion order of BENCHMARK_CHANNELS)
   const BENCHMARK_CHANNELS = ['NPO 1', 'BBC ONE', 'CNN'];
@@ -318,7 +306,9 @@ function main(): void {
 
   const output: string[] = [
     '## Emby Channel Switch Benchmark',
-    `_Plugin ${version} (${commit}) | ${date}_`,
+    `_Generated ${date}; measurement identity is stored per mode below._`,
+    '',
+    measurementProvenance(data),
     '',
     buildColdTable(channels, data),
     '',
