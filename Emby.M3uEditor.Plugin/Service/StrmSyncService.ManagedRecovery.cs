@@ -24,6 +24,9 @@ namespace Emby.M3uEditor.Plugin.Service
     {
         private const string ManagedTransitionFilename = "transition.json";
 
+        private static StringComparer RecoveryPathComparer => PathComparison == StringComparison.OrdinalIgnoreCase
+            ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
         // Called only under ManagedRootLocks, before validating the public generation.
         private void RecoverManagedTransition(string root, string mappingUuid)
         {
@@ -81,7 +84,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 foreach (var file in transition.Next.Files)
                 {
                     var path = CombineUnderRoot(root, file.RelativePath);
-                    var old = transition.Active?.Files.FirstOrDefault(value => value.RelativePath == file.RelativePath);
+                    var old = transition.Active?.Files.FirstOrDefault(value =>
+                        RecoveryPathComparer.Equals(CombineUnderRoot(root, value.RelativePath), path));
                     var quarantined = old != null && RecoveryFileMatches(CombineUnderRoot(previousFiles, old.RelativePath), old);
                     if (File.Exists(path) && (old == null || quarantined))
                     {
@@ -187,14 +191,16 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static void ValidateRecoveryPublicFiles(string root, string quarantine, ManagedPublishTransition value)
         {
-            foreach (var relative in (value.Active?.Files ?? new List<ManagedManifestFile>()).Concat(value.Next.Files)
-                .Select(file => file.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase))
+            // Use the same canonical path identity for preflight and the later mutations.
+            foreach (var path in (value.Active?.Files ?? new List<ManagedManifestFile>()).Concat(value.Next.Files)
+                .Select(file => CombineUnderRoot(root, file.RelativePath)).Distinct(RecoveryPathComparer))
             {
-                var path = CombineUnderRoot(root, relative);
                 EnsureNoReparsePoint(root, path);
-                var old = value.Active?.Files.FirstOrDefault(file => file.RelativePath == relative);
-                var next = value.Next.Files.FirstOrDefault(file => file.RelativePath == relative);
-                var saved = old != null && quarantine != null && RecoveryFileMatches(CombineUnderRoot(quarantine, relative), old);
+                var old = value.Active?.Files.FirstOrDefault(file =>
+                    RecoveryPathComparer.Equals(CombineUnderRoot(root, file.RelativePath), path));
+                var next = value.Next.Files.FirstOrDefault(file =>
+                    RecoveryPathComparer.Equals(CombineUnderRoot(root, file.RelativePath), path));
+                var saved = old != null && quarantine != null && RecoveryFileMatches(CombineUnderRoot(quarantine, old.RelativePath), old);
                 RequireRecovery(old == null || saved || RecoveryFileMatches(path, old));
                 if (File.Exists(path))
                     RequireRecovery((old != null && !saved && RecoveryFileMatches(path, old)) ||
@@ -207,8 +213,8 @@ namespace Emby.M3uEditor.Plugin.Service
             RequireRecovery(!File.Exists(root));
             if (!Directory.Exists(root)) return;
             var files = (manifest?.Files ?? new List<ManagedManifestFile>())
-                .ToDictionary(file => CombineUnderRoot(root, file.RelativePath), file => file, StringComparer.Ordinal);
-            var directories = new HashSet<string>(StringComparer.Ordinal);
+                .ToDictionary(file => CombineUnderRoot(root, file.RelativePath), file => file, RecoveryPathComparer);
+            var directories = new HashSet<string>(RecoveryPathComparer);
             foreach (var path in files.Keys) AddExpectedParentDirectories(directories, Path.GetDirectoryName(path), root);
             ValidateRecoveryTree(root, files, directories);
         }

@@ -137,6 +137,45 @@ namespace Emby.M3uEditor.Plugin.Tests
             if (damage == "foreign-empty-directory") Assert.True(Directory.Exists(Path.Combine(metadata, "previous-files/unowned")));
         }
 
+        [Theory]
+        [InlineData("reject-duplicate")]
+        [InlineData("reject-rollback")]
+        public async Task CaseOnlyTransition_ModifiedNextFileRejectsWithoutAnyMutation(string operation)
+        {
+            using var temp = new TempDirectory();
+            await Run("setup", temp.Path);
+            await Run("case-crash", temp.Path, "after-publish", 73);
+            var nextFile = Path.Combine(temp.Path, "synthetic/movie.nfo");
+            Assert.True(File.Exists(nextFile));
+            File.WriteAllText(nextFile, "FOREIGN MODIFIED CONTENT");
+            var before = Snapshot(temp.Path);
+            var directories = Directory.GetDirectories(temp.Path, "*", SearchOption.AllDirectories).OrderBy(path => path).ToArray();
+            await Run(operation, temp.Path);
+            Assert.Equal(before, Snapshot(temp.Path));
+            Assert.Equal(directories, Directory.GetDirectories(temp.Path, "*", SearchOption.AllDirectories).OrderBy(path => path).ToArray());
+            await Run(operation, temp.Path);
+            Assert.Equal(before, Snapshot(temp.Path));
+            Assert.True(File.Exists(Path.Combine(temp.Path, ".m3u-editor-for-emby/transition.json")));
+        }
+
+        [Theory]
+        [InlineData("after-quarantine")]
+        [InlineData("after-publish")]
+        [InlineData("before-manifest")]
+        public async Task CaseOnlyTransition_ValidRecoveryPreservesActiveAndPrevious(string phase)
+        {
+            using var temp = new TempDirectory();
+            await Run("setup", temp.Path);
+            var before = Snapshot(temp.Path);
+            await Run("case-crash", temp.Path, phase, 73);
+            await Run("duplicate", temp.Path);
+            Assert.Equal(before, Snapshot(temp.Path));
+            await Run("duplicate", temp.Path);
+            Assert.Equal(before, Snapshot(temp.Path));
+            await Run("rollback", temp.Path);
+            Assert.Contains(new string('a', 64), File.ReadAllText(Path.Combine(temp.Path, ".m3u-editor-for-emby/active.json")));
+        }
+
         private static string[] Snapshot(string root) => Directory.GetFiles(root, "*", SearchOption.AllDirectories)
             .OrderBy(path => path).Select(path => Path.GetRelativePath(root, path) + ":" + Convert.ToBase64String(File.ReadAllBytes(path))).ToArray();
 

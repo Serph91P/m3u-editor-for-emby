@@ -54,7 +54,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 File.WriteAllText(Path.Combine(root, "foreign.sentinel"), "untouched");
                 return 0;
             }
-            if (args[0] == "crash" || args[0] == "recover-crash")
+            if (args[0] == "crash" || args[0] == "case-crash" || args[0] == "recover-crash")
             {
                 var count = 0;
                 service.ManagedPhaseHook = phase => { if (phase == args[2]) Environment.Exit(73); };
@@ -71,11 +71,13 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Verify(root);
                 return 0;
             }
-            var revision = args[0] == "duplicate" || args[0] == "recover-crash" ? 'b' : 'c';
-            var publish = await service.PublishManagedMappingAsync(Mapping(root, revision), CancellationToken.None);
-            if (args[0] == "reject") { Require(!publish.Success); return 0; }
+            var revision = args[0] == "duplicate" || args[0] == "recover-crash" || args[0] == "reject-duplicate" ? 'b' : 'c';
+            var mapping = Mapping(root, revision);
+            if (args[0] == "case-crash") mapping.Items[0].RelativeFolder = "synthetic";
+            var publish = await service.PublishManagedMappingAsync(mapping, CancellationToken.None);
+            if (args[0] == "reject" || args[0] == "reject-duplicate") { Require(!publish.Success); return 0; }
             Require(publish.Success, publish.Error);
-            if (args[0] == "crash" || args[0] == "recover-crash") throw new Exception("Crash hook not reached");
+            if (args[0] == "crash" || args[0] == "case-crash" || args[0] == "recover-crash") throw new Exception("Crash hook not reached");
             Verify(root);
             Require(File.ReadAllText(Path.Combine(root, "foreign.sentinel")) == "untouched");
             return 0;
