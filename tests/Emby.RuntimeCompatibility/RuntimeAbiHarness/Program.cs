@@ -59,6 +59,7 @@ namespace Emby.RuntimeCompatibility
                 var plugin = context.LoadFromAssemblyPath(pluginPath);
                 VerifyLiveTvEntryPoint(controller, plugin, runtimeName);
                 var liveStreamType = plugin.GetType(PluginTypeName, true);
+                CopyReconnectTests.Run(plugin, controller, runtimeName);
                 var map = liveStreamType.GetInterfaceMap(liveStreamInterface);
 
                 if (map.InterfaceMethods.Length != liveStreamInterface.GetMethods().Length ||

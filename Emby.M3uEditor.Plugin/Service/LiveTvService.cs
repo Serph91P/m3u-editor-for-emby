@@ -33,6 +33,8 @@ namespace Emby.M3uEditor.Plugin.Service
         private readonly SemaphoreSlim _epgLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _xmltvLock = new SemaphoreSlim(1, 1);
         private readonly object _perChannelEpgLock = new object();
+        private long _cacheGeneration;
+        private string _effectiveConfigurationKey;
 
         private Dictionary<int, (List<EpgProgram> Programs, DateTime CacheTime)> _perChannelEpgCache
             = new Dictionary<int, (List<EpgProgram>, DateTime)>();
@@ -85,8 +87,51 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private PluginConfiguration GetConfiguration()
         {
-            return _configurationProvider()
-                ?? throw new InvalidOperationException("Plugin configuration is unavailable.");
+            lock (Plugin.ConfigurationTransactionGate)
+            {
+                var config = _configurationProvider()
+                    ?? throw new InvalidOperationException("Plugin configuration is unavailable.");
+                var key = STJ.JsonSerializer.Serialize(new
+                {
+                    config.BaseUrl,
+                    config.Username,
+                    config.Password,
+                    config.HttpUserAgent,
+                    config.EnableLiveTv,
+                    config.LiveTvOutputFormat,
+                    config.EpgSource,
+                    config.CustomEpgUrl,
+                    config.EpgCacheMinutes,
+                    config.EpgDaysToFetch,
+                    config.M3UCacheMinutes,
+                    config.SelectedLiveCategoryIds,
+                    config.IncludeAdultChannels,
+                    config.ChannelRemoveTerms,
+                    config.EnableChannelNameCleaning,
+                    config.UseM3uLogoForAllChannelImages
+                });
+                lock (_perChannelEpgLock)
+                {
+                    if (_effectiveConfigurationKey != null && _effectiveConfigurationKey != key)
+                    {
+                        InvalidateCache();
+                        M3uEditorTunerHost.Instance?.ClearCaches();
+                    }
+                    _effectiveConfigurationKey = key;
+                }
+                return config;
+            }
+        }
+
+        internal void RefreshConfiguration() { GetConfiguration(); }
+        internal long CacheGeneration { get { lock (_perChannelEpgLock) return _cacheGeneration; } }
+        internal void PublishIfCurrent(long generation, CancellationToken cancellationToken, Action publish)
+        {
+            lock (_perChannelEpgLock)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (generation == _cacheGeneration) publish();
+            }
         }
 
         /// <summary>Exposed for unit testing only: indicates whether the last XMLTV fetch failed.</summary>
@@ -115,11 +160,10 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<string> GetM3UPlaylistAsync(CancellationToken cancellationToken)
         {
-            var config = GetConfiguration();
-
             await _m3uLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                var config = GetConfiguration();
                 if (_cachedM3U != null && DateTime.UtcNow - _m3uCacheTime < TimeSpan.FromMinutes(config.M3UCacheMinutes))
                 {
                     _logger.Debug("Returning cached M3U playlist");
@@ -127,7 +171,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 _logger.Info("Generating M3U playlist");
-                var channelsTask = GetFilteredChannelsAsync(cancellationToken);
+                var channelsTask = GetChannelSnapshotAsync(cancellationToken);
                 var categoriesTask = GetLiveCategoriesAsync(cancellationToken);
                 Dictionary<int, string> categoryMap;
                 try
@@ -142,7 +186,8 @@ namespace Emby.M3uEditor.Plugin.Service
                     categoryMap = new Dictionary<int, string>();
                 }
 
-                var channels = channelsTask.Result;
+                var channels = channelsTask.Result.Channels;
+                config = GetConfiguration();
                 if (IsLiveTvDiagnosticsEnabled())
                 {
                     _logger.Info("[livetv-diag] m3u-build channels={0} categories={1}",
@@ -150,8 +195,15 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
                 var m3u = GenerateM3U(channels, config, categoryMap);
 
-                _cachedM3U = m3u;
-                _m3uCacheTime = DateTime.UtcNow;
+                lock (_perChannelEpgLock)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (channelsTask.Result.Generation == _cacheGeneration)
+                    {
+                        _cachedM3U = m3u;
+                        _m3uCacheTime = DateTime.UtcNow;
+                    }
+                }
 
                 return m3u;
             }
@@ -166,11 +218,10 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public async Task<string> GetXmltvEpgAsync(CancellationToken cancellationToken)
         {
-            var config = GetConfiguration();
-
             await _epgLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                var config = GetConfiguration();
                 if (_cachedEpgXml != null && DateTime.UtcNow - _epgCacheTime < TimeSpan.FromMinutes(config.EpgCacheMinutes))
                 {
                     _logger.Debug("Returning cached XMLTV EPG");
@@ -178,7 +229,9 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
 
                 _logger.Info("Generating XMLTV EPG");
-                var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+                var snapshot = await GetChannelSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                var channels = snapshot.Channels;
+                config = GetConfiguration();
                 if (IsLiveTvDiagnosticsEnabled())
                 {
                     _logger.Info("[livetv-diag] xmltv-build sourceChannels={0} epgSource={1} days={2}",
@@ -190,8 +243,15 @@ namespace Emby.M3uEditor.Plugin.Service
                     _logger.Info("[livetv-diag] xmltv-build complete bytes={0}", Encoding.UTF8.GetByteCount(epgXml));
                 }
 
-                _cachedEpgXml = epgXml;
-                _epgCacheTime = DateTime.UtcNow;
+                lock (_perChannelEpgLock)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (snapshot.Generation == _cacheGeneration)
+                    {
+                        _cachedEpgXml = epgXml;
+                        _epgCacheTime = DateTime.UtcNow;
+                    }
+                }
 
                 return epgXml;
             }
@@ -230,19 +290,20 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         public void InvalidateCache()
         {
-            _cachedM3U = null;
-            _cachedEpgXml = null;
-            _m3uCacheTime = DateTime.MinValue;
-            _epgCacheTime = DateTime.MinValue;
             lock (_perChannelEpgLock)
             {
+                _cacheGeneration++;
+                _cachedM3U = null;
+                _cachedEpgXml = null;
+                _m3uCacheTime = DateTime.MinValue;
+                _epgCacheTime = DateTime.MinValue;
                 _perChannelEpgCache = new Dictionary<int, (List<EpgProgram>, DateTime)>();
+                _xmltvCache = null;
+                _xmltvCacheTime = DateTime.MinValue;
+                _xmltvFailed = false;
+                _xmltvFailedTime = DateTime.MinValue;
+                _epgChannelIdByStreamId = new Dictionary<int, string>();
             }
-            _xmltvCache = null;
-            _xmltvCacheTime = DateTime.MinValue;
-            _xmltvFailed = false;
-            _xmltvFailedTime = DateTime.MinValue;
-            _epgChannelIdByStreamId = new Dictionary<int, string>();
             _logger.Info("Live TV cache invalidated");
         }
 
@@ -252,7 +313,14 @@ namespace Emby.M3uEditor.Plugin.Service
         /// </summary>
         internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
         {
+            return (await GetChannelSnapshotAsync(cancellationToken).ConfigureAwait(false)).Channels;
+        }
+
+        internal async Task<(List<LiveStreamInfo> Channels, long Generation)> GetChannelSnapshotAsync(CancellationToken cancellationToken)
+        {
             var config = GetConfiguration();
+            long generation;
+            lock (_perChannelEpgLock) generation = _cacheGeneration;
             var diagnostics = IsLiveTvDiagnosticsEnabled();
             if (diagnostics)
             {
@@ -301,74 +369,71 @@ namespace Emby.M3uEditor.Plugin.Service
             // be wiped here, otherwise renamed/added/deleted channels at the Xtream
             // provider remain invisible until each layer's TTL expires independently.
             var newHash = StrmSyncService.ComputeChannelListHash(allChannels);
-            if (newHash != config.LastChannelListHash)
-            {
-                _logger.Info("Channel list changed (hash {0} → {1}), invalidating dependent caches",
-                    string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
-                    newHash.Substring(0, 8));
-                if (diagnostics)
-                {
-                    _logger.Info("[livetv-diag] channel-hash changed old={0} new={1} channels={2} m3uCached={3} epgXmlCached={4} xmltvCached={5} perChannelEpgEntries={6}",
-                        string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
-                        newHash.Substring(0, 8),
-                        allChannels.Count,
-                        _cachedM3U != null,
-                        _cachedEpgXml != null,
-                        _xmltvCache != null,
-                        PerChannelEpgCacheCount);
-                }
-                config.LastChannelListHash = newHash;
-                _saveConfiguration();
-
-                // Wipe M3U, EPG XML, and bulk XMLTV caches so the next request rebuilds
-                // them against the fresh channel list. Note: we do NOT take _m3uLock /
-                // _epgLock / _xmltvLock here because GetFilteredChannelsAsync may be
-                // called from inside those locked sections; simple field assignment is
-                // safe (volatile fields, time-stamp pair).
-                _cachedM3U = null;
-                _m3uCacheTime = DateTime.MinValue;
-                _cachedEpgXml = null;
-                _epgCacheTime = DateTime.MinValue;
-                _xmltvCache = null;
-                _xmltvCacheTime = DateTime.MinValue;
-                _xmltvFailed = false;
-                _xmltvFailedTime = DateTime.MinValue;
-                _epgChannelIdByStreamId = new Dictionary<int, string>();
-
-                // Selectively prune the per-channel EPG cache: keep entries whose
-                // StreamId is still in the new channel set (preserves perf when only
-                // a few channels were added/removed), drop entries for channels that
-                // no longer exist (prevents stale EPG when a StreamId is recycled by
-                // the provider for a different channel).
-                var liveStreamIds = new HashSet<int>();
-                foreach (var ch in allChannels) liveStreamIds.Add(ch.StreamId);
+            lock (Plugin.ConfigurationTransactionGate)
                 lock (_perChannelEpgLock)
                 {
-                    int pruned = PruneStaleEpgEntries(_perChannelEpgCache, liveStreamIds);
-                    if (pruned > 0)
-                        _logger.Debug("Pruned {0} stale entries from per-channel EPG cache", pruned);
-                }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (generation != _cacheGeneration) return (allChannels, generation);
+                    if (newHash != config.LastChannelListHash)
+                    {
+                        _logger.Info("Channel list changed (hash {0} → {1}), invalidating dependent caches",
+                            string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
+                            newHash.Substring(0, 8));
+                        if (diagnostics)
+                        {
+                            _logger.Info("[livetv-diag] channel-hash changed old={0} new={1} channels={2} m3uCached={3} epgXmlCached={4} xmltvCached={5} perChannelEpgEntries={6}",
+                                string.IsNullOrEmpty(config.LastChannelListHash) ? "(none)" : config.LastChannelListHash.Substring(0, 8),
+                                newHash.Substring(0, 8),
+                                allChannels.Count,
+                                _cachedM3U != null,
+                                _cachedEpgXml != null,
+                                _xmltvCache != null,
+                                PerChannelEpgCacheCount);
+                        }
+                        _cacheGeneration++;
+                        generation = _cacheGeneration;
+                        config.LastChannelListHash = newHash;
+                        _saveConfiguration();
 
-                // Drop the tuner channel cache so Emby's next channel scan picks up
-                // the fresh channel set immediately rather than after its cache TTL.
-                M3uEditorTunerHost.Instance?.OnChannelListChanged();
-            }
-            else
-            {
-                _logger.Debug("Channel list unchanged (hash {0})", newHash.Substring(0, 8));
-                if (diagnostics)
-                {
-                    _logger.Info("[livetv-diag] channel-hash unchanged hash={0} m3uCached={1} epgXmlCached={2} xmltvCached={3} perChannelEpgEntries={4}",
-                        newHash.Substring(0, 8),
-                        _cachedM3U != null,
-                        _cachedEpgXml != null,
-                        _xmltvCache != null,
-                        PerChannelEpgCacheCount);
-                }
-            }
+                        // Wipe M3U, EPG XML, and bulk XMLTV caches so the next request rebuilds
+                        // them against the fresh channel list. Note: we do NOT take _m3uLock /
+                        // _epgLock / _xmltvLock here because GetFilteredChannelsAsync may be
+                        // called from inside those locked sections. The short state gate
+                        // fences all publishers without recursively entering a fetch lock.
+                        _cachedM3U = null;
+                        _m3uCacheTime = DateTime.MinValue;
+                        _cachedEpgXml = null;
+                        _epgCacheTime = DateTime.MinValue;
+                        _xmltvCache = null;
+                        _xmltvCacheTime = DateTime.MinValue;
+                        _xmltvFailed = false;
+                        _xmltvFailedTime = DateTime.MinValue;
+                        _epgChannelIdByStreamId = new Dictionary<int, string>();
 
+                        // Local IDs can be remapped or recycled without an absent scan.
+                        PruneStaleEpgEntries(_perChannelEpgCache, null);
+
+                        // Drop the tuner channel cache so Emby's next channel scan picks up
+                        // the fresh channel set immediately rather than after its cache TTL.
+                        M3uEditorTunerHost.Instance?.OnChannelListChanged();
+                    }
+                    else
+                    {
+                        _logger.Debug("Channel list unchanged (hash {0})", newHash.Substring(0, 8));
+                        if (diagnostics)
+                        {
+                            _logger.Info("[livetv-diag] channel-hash unchanged hash={0} m3uCached={1} epgXmlCached={2} xmltvCached={3} perChannelEpgEntries={4}",
+                                newHash.Substring(0, 8),
+                                _cachedM3U != null,
+                                _cachedEpgXml != null,
+                                _xmltvCache != null,
+                                PerChannelEpgCacheCount);
+                        }
+                    }
+
+                }
             _logger.Info("Fetched {0} Live TV channels", allChannels.Count);
-            return allChannels;
+            return (allChannels, generation);
         }
 
         /// <summary>
@@ -671,12 +736,6 @@ namespace Emby.M3uEditor.Plugin.Service
                             return new List<EpgProgram>();
                         }
 
-                        // Warm the per-channel cache so GetProgramsInternal finds hits without re-fetching.
-                        lock (_perChannelEpgLock)
-                        {
-                            _perChannelEpgCache[channel.StreamId] = (programs, DateTime.UtcNow);
-                        }
-
                         var channelId = !string.IsNullOrEmpty(channel.EpgChannelId)
                             ? channel.EpgChannelId
                             : channel.StreamId.ToString(CultureInfo.InvariantCulture);
@@ -755,10 +814,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 throw new InvalidOperationException("Custom EPG URL is required when Custom URL mode is selected.");
             if (config.EpgSource == EpgSourceMode.Disabled) return new List<EpgProgram>();
             var cacheTtl = TimeSpan.FromMinutes(config.EpgCacheMinutes);
+            long generation;
+            lock (_perChannelEpgLock) generation = _cacheGeneration;
 
             // 1. Check per-channel cache (fastest path)
             lock (_perChannelEpgLock)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 (List<EpgProgram> Programs, DateTime CacheTime) entry;
                 if (_perChannelEpgCache.TryGetValue(streamId, out entry)
                     && DateTime.UtcNow - entry.CacheTime < cacheTtl)
@@ -771,7 +833,7 @@ namespace Emby.M3uEditor.Plugin.Service
             var xmltvCacheFresh = _xmltvCache != null && DateTime.UtcNow - _xmltvCacheTime < cacheTtl;
             if (xmltvCacheFresh)
             {
-                var programs = PopulateFromXmltvCache(streamId);
+                var programs = PopulateFromXmltvCache(streamId, generation, cancellationToken);
                 if (IsLiveTvDiagnosticsEnabled())
                 {
                     _logger.Info("[livetv-diag] stream={0} xmltv-cache-hit programs={1}", streamId, programs != null ? programs.Count : 0);
@@ -787,13 +849,16 @@ namespace Emby.M3uEditor.Plugin.Service
             if (!xmltvCacheFresh && (!_xmltvFailed || xmltvFailedButRetryDue))
             {
                 var xmltvOk = await TryFetchXmltvEpgAsync(cancellationToken).ConfigureAwait(false);
+                generation = xmltvOk.Generation;
+                lock (_perChannelEpgLock)
+                    if (generation != _cacheGeneration) return new List<EpgProgram>();
                 if (IsLiveTvDiagnosticsEnabled())
                 {
                     _logger.Info("[livetv-diag] stream={0} xmltv-refetch attempted ok={1} failedFlag={2}", streamId, xmltvOk, _xmltvFailed);
                 }
-                if (xmltvOk)
+                if (xmltvOk.Success)
                 {
-                    var programs = PopulateFromXmltvCache(streamId);
+                    var programs = PopulateFromXmltvCache(streamId, generation, cancellationToken);
                     if (programs != null) return programs;
                 }
             }
@@ -802,7 +867,7 @@ namespace Emby.M3uEditor.Plugin.Service
             //    Custom URL mode does not fall back: if the user's URL failed, return empty so
             //    GetProgramsInternal shows a dummy placeholder rather than silently using a
             //    different source.
-            if (GetConfiguration().EpgSource == EpgSourceMode.CustomUrl)
+            if (GetConfiguration().EpgSource != EpgSourceMode.XtreamServer)
             {
                 _logger.Debug("FetchEpgForChannelCachedAsync: custom URL failed, returning empty for stream {0}", streamId);
                 return new List<EpgProgram>();
@@ -818,7 +883,9 @@ namespace Emby.M3uEditor.Plugin.Service
 
             lock (_perChannelEpgLock)
             {
-                _perChannelEpgCache[streamId] = (jsonPrograms, DateTime.UtcNow);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (generation == _cacheGeneration)
+                    _perChannelEpgCache[streamId] = (jsonPrograms, DateTime.UtcNow);
             }
 
             return jsonPrograms;
@@ -828,31 +895,34 @@ namespace Emby.M3uEditor.Plugin.Service
         /// Looks up programs for streamId in the XMLTV cache, populates _perChannelEpgCache, and returns them.
         /// Returns null if the channel is not present in the XMLTV data.
         /// </summary>
-        private List<EpgProgram> PopulateFromXmltvCache(int streamId)
+        private List<EpgProgram> PopulateFromXmltvCache(int streamId, long generation, CancellationToken cancellationToken)
         {
-            string epgChannelId;
-            if (!_epgChannelIdByStreamId.TryGetValue(streamId, out epgChannelId))
-            {
-                epgChannelId = streamId.ToString(CultureInfo.InvariantCulture);
-            }
-
-            List<EpgProgram> xmltvPrograms;
-            if (_xmltvCache == null || !_xmltvCache.TryGetValue(epgChannelId, out xmltvPrograms))
-            {
-                if (IsLiveTvDiagnosticsEnabled())
-                {
-                    _logger.Info("[livetv-diag] xmltv-cache-miss stream={0} epgId='{1}' xmltvCacheChannels={2}",
-                        streamId, epgChannelId, _xmltvCache != null ? _xmltvCache.Count : 0);
-                }
-                return null;
-            }
-
+            var diagnostics = IsLiveTvDiagnosticsEnabled();
             lock (_perChannelEpgLock)
             {
-                _perChannelEpgCache[streamId] = (xmltvPrograms, DateTime.UtcNow);
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (generation != _cacheGeneration) return null;
+                string epgChannelId;
+                if (!_epgChannelIdByStreamId.TryGetValue(streamId, out epgChannelId))
+                {
+                    epgChannelId = streamId.ToString(CultureInfo.InvariantCulture);
+                }
 
-            return xmltvPrograms;
+                List<EpgProgram> xmltvPrograms;
+                if (_xmltvCache == null || !_xmltvCache.TryGetValue(epgChannelId, out xmltvPrograms))
+                {
+                    if (diagnostics)
+                    {
+                        _logger.Info("[livetv-diag] xmltv-cache-miss stream={0} epgId='{1}' xmltvCacheChannels={2}",
+                            streamId, epgChannelId, _xmltvCache != null ? _xmltvCache.Count : 0);
+                    }
+                    return null;
+                }
+
+                _perChannelEpgCache[streamId] = (xmltvPrograms, DateTime.UtcNow);
+
+                return xmltvPrograms;
+            }
         }
 
         /// <summary>
@@ -860,37 +930,42 @@ namespace Emby.M3uEditor.Plugin.Service
         /// Builds the stream_id ↔ epg_channel_id mapping from the channel list.
         /// Returns true on success, false if the fetch failed (sets _xmltvFailed).
         /// </summary>
-        private async Task<bool> TryFetchXmltvEpgAsync(CancellationToken cancellationToken)
+        private async Task<(bool Success, long Generation)> TryFetchXmltvEpgAsync(CancellationToken cancellationToken)
         {
             await _xmltvLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 var config = GetConfiguration();
                 var cacheTtl = TimeSpan.FromMinutes(config.EpgCacheMinutes);
+                long generation;
+                lock (_perChannelEpgLock) generation = _cacheGeneration;
 
                 // Already fresh?
                 if (_xmltvCache != null && DateTime.UtcNow - _xmltvCacheTime < cacheTtl)
-                    return true;
-
-                string url;
-                if (config.EpgSource == EpgSourceMode.CustomUrl)
-                {
-                    url = config.CustomEpgUrl;
-                    _logger.Info("Fetching bulk XMLTV EPG from custom URL");
-                }
-                else
-                {
-                    url = string.Format(
-                        CultureInfo.InvariantCulture,
-                        "{0}/xmltv.php?username={1}&password={2}",
-                        config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty));
-                    _logger.Info("Fetching bulk XMLTV EPG from {0}/xmltv.php", config.BaseUrl);
-                }
+                    return (true, generation);
 
                 try
                 {
                     // Build stream_id → epg_channel_id mapping from the channel list
-                    var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+                    var snapshot = await GetChannelSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                    var channels = snapshot.Channels;
+                    generation = snapshot.Generation;
+                    config = GetConfiguration();
+                    if (config.EpgSource == EpgSourceMode.Disabled) return (false, generation);
+                    string url;
+                    if (config.EpgSource == EpgSourceMode.CustomUrl)
+                    {
+                        if (string.IsNullOrWhiteSpace(config.CustomEpgUrl)) return (false, generation);
+                        url = config.CustomEpgUrl;
+                        _logger.Info("Fetching bulk XMLTV EPG from custom URL");
+                    }
+                    else
+                    {
+                        url = string.Format(CultureInfo.InvariantCulture,
+                            "{0}/xmltv.php?username={1}&password={2}", config.BaseUrl,
+                            Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty));
+                        _logger.Info("Fetching bulk XMLTV EPG from {0}/xmltv.php", config.BaseUrl);
+                    }
                     var mapping = new Dictionary<int, string>(channels.Count);
                     foreach (var ch in channels)
                     {
@@ -919,25 +994,34 @@ namespace Emby.M3uEditor.Plugin.Service
                         }
                     }
 
-                    cancellationToken.ThrowIfCancellationRequested();
-                    _xmltvCache = xmltvData;
-                    _epgChannelIdByStreamId = mapping;
-                    _xmltvCacheTime = DateTime.UtcNow;
-                    _xmltvFailed = false;
-                    _xmltvFailedTime = DateTime.MinValue;
+                    lock (_perChannelEpgLock)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (generation != _cacheGeneration) return (false, generation);
+                        _xmltvCache = xmltvData;
+                        _epgChannelIdByStreamId = mapping;
+                        _xmltvCacheTime = DateTime.UtcNow;
+                        _xmltvFailed = false;
+                        _xmltvFailedTime = DateTime.MinValue;
+                    }
 
-                    _logger.Info("XMLTV EPG fetched: {0} channels with program data", _xmltvCache.Count);
-                    return true;
+                    _logger.Info("XMLTV EPG fetched: {0} channels with program data", xmltvData.Count);
+                    return (true, generation);
                 }
                 catch (Exception ex) when (!(ex is OperationCanceledException) || !cancellationToken.IsCancellationRequested)
                 {
-                    _xmltvFailed = true;
-                    _xmltvFailedTime = DateTime.UtcNow;
+                    lock (_perChannelEpgLock)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (generation != _cacheGeneration) return (false, generation);
+                        _xmltvFailed = true;
+                        _xmltvFailedTime = DateTime.UtcNow;
+                    }
                     var isCustom = config.EpgSource == EpgSourceMode.CustomUrl;
                     _logger.Warn(isCustom
                         ? "Custom EPG URL fetch failed - no fallback: {0}"
                         : "XMLTV EPG fetch failed, will fall back to per-channel JSON: {0}", ex.Message);
-                    return false;
+                    return (false, generation);
                 }
             }
             finally

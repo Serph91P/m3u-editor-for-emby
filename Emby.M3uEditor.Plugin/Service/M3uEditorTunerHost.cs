@@ -493,16 +493,17 @@ namespace Emby.M3uEditor.Plugin.Service
 
             var liveTvService = Plugin.Instance.LiveTvService;
             // Both fetches run concurrently; each handles its own errors internally.
-            async Task<List<Client.Models.LiveStreamInfo>> channelsFetch()
+            async Task<(List<Client.Models.LiveStreamInfo> Channels, long Generation)> channelsFetch()
             {
+                var generation = liveTvService.CacheGeneration;
                 try
                 {
-                    return await liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+                    return await liveTvService.GetChannelSnapshotAsync(cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (!(ex is TaskCanceledException) && !(ex is OperationCanceledException))
                 {
                     Logger.Warn("LiveTvService channel fetch failed, falling back to direct API: {0}", ex.Message);
-                    return await FetchAllChannelsDirectAsync(config).ConfigureAwait(false);
+                    return (await FetchAllChannelsDirectAsync(config, cancellationToken).ConfigureAwait(false), generation);
                 }
             }
 
@@ -526,8 +527,9 @@ namespace Emby.M3uEditor.Plugin.Service
 
             await Task.WhenAll(channelsTask, categoriesTask).ConfigureAwait(false);
 
-            var channels = channelsTask.Result;
+            var channels = channelsTask.Result.Channels;
             var categoryMap = categoriesTask.Result;
+            config = Plugin.Instance.Configuration;
 
             var newStats = CollectBackendStreamStats(channels);
 
@@ -567,10 +569,13 @@ namespace Emby.M3uEditor.Plugin.Service
                 return channelInfo;
             }).ToList();
 
-            _streamStats = newStats;
-            BackendStreamStatsCount = newStats.Count;
-            _cachedChannels = result;
-            _cacheTime = DateTime.UtcNow;
+            liveTvService.PublishIfCurrent(channelsTask.Result.Generation, cancellationToken, () =>
+            {
+                _streamStats = newStats;
+                BackendStreamStatsCount = newStats.Count;
+                _cachedChannels = result;
+                _cacheTime = DateTime.UtcNow;
+            });
             Logger.Info("Channel list cached with {0} channels ({1} with backend stream stats)",
                 result.Count, newStats.Count);
 
@@ -594,7 +599,7 @@ namespace Emby.M3uEditor.Plugin.Service
             return stats;
         }
 
-        private static async Task<List<Client.Models.LiveStreamInfo>> FetchAllChannelsDirectAsync(PluginConfiguration config)
+        private static async Task<List<Client.Models.LiveStreamInfo>> FetchAllChannelsDirectAsync(PluginConfiguration config, CancellationToken cancellationToken)
         {
             using (var httpClient = Plugin.CreateHttpClient(30))
             {
@@ -603,9 +608,14 @@ namespace Emby.M3uEditor.Plugin.Service
                     "{0}/player_api.php?username={1}&password={2}&action=get_live_streams",
                     config.BaseUrl, Uri.EscapeDataString(config.Username ?? string.Empty), Uri.EscapeDataString(config.Password ?? string.Empty));
 
-                var json = await httpClient.GetStringAsync(url).ConfigureAwait(false);
-                return STJ.JsonSerializer.Deserialize<List<Client.Models.LiveStreamInfo>>(json, JsonOptions)
-                    ?? new List<Client.Models.LiveStreamInfo>();
+                using (var response = await httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false))
+                {
+                    response.EnsureSuccessStatusCode();
+                    var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return STJ.JsonSerializer.Deserialize<List<Client.Models.LiveStreamInfo>>(json, JsonOptions)
+                        ?? new List<Client.Models.LiveStreamInfo>();
+                }
             }
         }
 

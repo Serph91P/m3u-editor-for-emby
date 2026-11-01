@@ -84,6 +84,7 @@ namespace Emby.M3uEditor.Plugin
                 if (configuration is PluginConfiguration requested)
                     ManagedSetupService.ValidateConfigurationChange(Configuration, requested, DataFolderPath);
                 base.UpdateConfiguration(configuration);
+                _liveTvService?.RefreshConfiguration();
 
                 if (Configuration is PluginConfiguration pluginConfig)
                 {

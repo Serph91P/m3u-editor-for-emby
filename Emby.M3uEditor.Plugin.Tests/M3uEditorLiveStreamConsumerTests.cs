@@ -189,9 +189,11 @@ namespace Emby.M3uEditor.Plugin.Tests
                     }
                     Assert.Equal(2, handler.Requests);
                     Assert.True(handler.Aborted.Disposed);
+                    Assert.Equal(1, handler.Responses[0].DisposeCount);
                     await stream.Close();
                     Assert.True(handler.Disposed);
                     Assert.True(handler.LastStreamDisposed);
+                    Assert.Equal(1, handler.Responses[1].DisposeCount);
                 }
             }
             finally { SetPluginInstance(previousPlugin); }
@@ -223,6 +225,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         private sealed class ReconnectHandler : HttpMessageHandler
         {
+            public System.Collections.Generic.List<TrackingHttpResponse> Responses { get; } = new System.Collections.Generic.List<TrackingHttpResponse>();
             public AbortingStream Aborted { get; } = new AbortingStream();
             public int Requests { get; private set; }
             public bool Disposed { get; private set; }
@@ -232,7 +235,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             {
                 Requests++;
                 Stream body = Requests == 1 ? Aborted : (_last = new TrackingStream());
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(body) });
+                var response = new TrackingHttpResponse(HttpStatusCode.OK) { Content = new StreamContent(body) };
+                Responses.Add(response);
+                return Task.FromResult<HttpResponseMessage>(response);
             }
             protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
         }

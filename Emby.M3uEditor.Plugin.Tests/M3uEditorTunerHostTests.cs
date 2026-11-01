@@ -735,6 +735,100 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public async System.Threading.Tasks.Task Issue124_ActualConfigurationUpdateInvalidatesWarmedLiveState()
+        {
+            var original = new PluginConfiguration { BaseUrl = "https://editor.example.test", Username = "user", Password = "pass",
+                EpgSource = EpgSourceMode.CustomUrl, CustomEpgUrl = "https://custom.example.test/old.xml" };
+            using (var env = new PluginTestEnvironment(original, new LiveTvOptions()))
+            {
+                var plugin = env.CreatePlugin();
+                var handler = new FakeHttpHandler();
+                handler.RespondWithSequence("get_live_streams", Enumerable.Repeat("[{\"stream_id\":42,\"name\":\"Synthetic\",\"epg_channel_id\":\"guide\"}]", 4));
+                var start = DateTime.UtcNow.AddMinutes(-1).ToString("yyyyMMddHHmmss");
+                var stop = DateTime.UtcNow.AddHours(1).ToString("yyyyMMddHHmmss");
+                var xml = "<tv><programme channel=\"guide\" start=\"" + start + " +0000\" stop=\"" + stop + " +0000\"><title>{0}</title></programme></tv>";
+                handler.RespondWith("old.xml", string.Format(xml, "Old"));
+                handler.RespondWith("new.xml", string.Format(xml, "New"));
+                using (var service = new LiveTvService(DispatchProxy.Create<ILogger, TestLogger>(),
+                    _ => new System.Net.Http.HttpClient(handler, false), () => plugin.Configuration, () => { }))
+                {
+                    typeof(Plugin).GetField("_liveTvService", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(plugin, service);
+                    Assert.Equal("Old", Assert.Single(await service.FetchEpgForChannelCachedAsync(42, System.Threading.CancellationToken.None)).Title);
+                    plugin.UpdateConfiguration(new PluginConfiguration { BaseUrl = original.BaseUrl, Username = "new-user", Password = "pass",
+                        EpgSource = EpgSourceMode.CustomUrl, CustomEpgUrl = "https://custom.example.test/new.xml" });
+                    Assert.False(service.HasXmltvCache);
+                    Assert.Equal(0, service.PerChannelEpgCacheCount);
+                    Assert.Equal("New", Assert.Single(await service.FetchEpgForChannelCachedAsync(42, System.Threading.CancellationToken.None)).Title);
+                    var before = handler.ReceivedUrls.Count;
+                    plugin.Configuration.ManagedLastError = "managed-only";
+                    plugin.UpdateConfiguration(plugin.Configuration);
+                    Assert.Equal("New", Assert.Single(await service.FetchEpgForChannelCachedAsync(42, System.Threading.CancellationToken.None)).Title);
+                    Assert.Equal(before, handler.ReceivedUrls.Count);
+                }
+            }
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task Issue124And125_NativeTunerRefreshAndInflightFence()
+        {
+            var config = new PluginConfiguration { BaseUrl = "https://editor.example.test", Username = "user", Password = "pass", IncludeAdultChannels = true };
+            using (var env = new PluginTestEnvironment(config, new LiveTvOptions()))
+            {
+                var plugin = env.CreatePlugin();
+                var handler = new TunerBarrierHandler();
+                using (var service = new LiveTvService(DispatchProxy.Create<ILogger, TestLogger>(), _ => new System.Net.Http.HttpClient(handler, false), () => plugin.Configuration, () => { }))
+                {
+                    typeof(Plugin).GetField("_liveTvService", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(plugin, service);
+                    var host = MakeBareHost();
+                    typeof(BaseTunerHost).GetField("Logger", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(host, DispatchProxy.Create<ILogger, TestLogger>());
+                    var instanceField = typeof(M3uEditorTunerHost).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic);
+                    var previousHost = instanceField.GetValue(null);
+                    instanceField.SetValue(null, host);
+                    try
+                    {
+                        var method = typeof(M3uEditorTunerHost).GetMethod("GetChannelsInternal", BindingFlags.Instance | BindingFlags.NonPublic);
+                        System.Threading.Tasks.Task<List<ChannelInfo>> Scan() => (System.Threading.Tasks.Task<List<ChannelInfo>>)method.Invoke(host,
+                            new object[] { new TunerHostInfo { Id = "owned-tuner" }, System.Threading.CancellationToken.None });
+                        Assert.Equal("Alpha Beta Synthetic", Assert.Single(await Scan()).Name);
+                        config.EnableChannelNameCleaning = true; config.ChannelRemoveTerms = "Alpha,Beta"; config.LiveTvOutputFormat = "m3u8";
+                        config.Username = "new-user";
+                        plugin.UpdateConfiguration(config);
+                        Assert.Equal(0, host.CachedChannelCount);
+                        Assert.Equal("Synthetic", Assert.Single(await Scan()).Name);
+                        Assert.Equal("https://editor.example.test/live/new-user/pass/42.m3u8", M3uEditorTunerHost.BuildStreamUrl(plugin.Configuration, 42));
+                        config.SelectedLiveCategoryIds = new[] { 99 };
+                        plugin.UpdateConfiguration(config);
+                        Assert.Empty(await Scan());
+                        config.SelectedLiveCategoryIds = new int[0]; plugin.UpdateConfiguration(config);
+                        handler.Block = true;
+                        var pending = Scan();
+                        await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                        service.InvalidateCache(); host.ClearCaches();
+                        handler.Release.TrySetResult(true);
+                        await pending.WaitAsync(TimeSpan.FromSeconds(3));
+                        Assert.Equal(0, host.CachedChannelCount);
+                        Assert.Single(await Scan());
+                    }
+                    finally { instanceField.SetValue(null, previousHost); }
+                }
+            }
+        }
+
+        private sealed class TunerBarrierHandler : System.Net.Http.HttpMessageHandler
+        {
+            public bool Block;
+            public System.Threading.Tasks.TaskCompletionSource<bool> Entered = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+            public System.Threading.Tasks.TaskCompletionSource<bool> Release = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+            protected override async System.Threading.Tasks.Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request, System.Threading.CancellationToken token)
+            {
+                if (Block && request.RequestUri.ToString().Contains("get_live_categories"))
+                { Block = false; Entered.TrySetResult(true); await Release.Task.WaitAsync(token); }
+                return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new System.Net.Http.StringContent(
+                    request.RequestUri.ToString().Contains("get_live_streams") ? "[{\"stream_id\":42,\"name\":\"Alpha Beta Synthetic\",\"category_id\":1}]" : "[]") };
+            }
+        }
+
         private sealed class PluginTestEnvironment : IDisposable
         {
             private readonly TempDirectory _directory;
