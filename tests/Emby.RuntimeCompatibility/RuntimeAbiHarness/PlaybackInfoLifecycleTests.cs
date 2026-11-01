@@ -40,7 +40,7 @@ namespace Emby.RuntimeCompatibility
                 Alive(otherChannelPeer, 1);
                 AssertNativeCapacity(context, plugin, true);
                 fixture.StopAndWait(replacement, stream.Key, sourceId);
-                Require(SpinWait.SpinUntil(() => Lookup(stream) == null, TimeSpan.FromSeconds(3)), "Final started replacement stop did not release the original consumer");
+                Require(WaitForClose(stream), "Final started replacement stop did not release the original consumer");
                 Closed(stream);
                 Alive(sameChannelPeer, 1);
                 Alive(otherChannelPeer, 1);
@@ -106,7 +106,7 @@ namespace Emby.RuntimeCompatibility
                     Alive(stream, 1);
                     fixture.Stop("synthetic-original", stream.Key, sourceId);
                 }
-                Require(SpinWait.SpinUntil(() => Lookup(stream) == null, TimeSpan.FromSeconds(3)), "Renegotiated final stop left original consumer registered");
+                Require(WaitForClose(stream), "Renegotiated final stop left original consumer registered");
                 Closed(stream);
                 Alive(sameChannelPeer, 1);
                 Alive(otherChannelPeer, 1);

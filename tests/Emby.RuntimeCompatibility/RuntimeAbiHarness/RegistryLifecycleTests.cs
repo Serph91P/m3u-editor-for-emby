@@ -127,6 +127,13 @@ namespace Emby.RuntimeCompatibility
             Require(stream.Handler.DisposeCount == 0 && stream.Handler.RequestCount == 0, "Transport was opened or disposed for a surviving stream");
         }
 
+        private bool WaitForClose(OpenedStream stream)
+        {
+            // Native close removes the registry entry before transport disposal finishes.
+            return SpinWait.SpinUntil(() => Lookup(stream) == null &&
+                Volatile.Read(ref stream.Handler.DisposeCount) > 0, TimeSpan.FromSeconds(3));
+        }
+
         private void Closed(OpenedStream stream)
         {
             Require(Lookup(stream) == null, "Final stop did not clear registry");
