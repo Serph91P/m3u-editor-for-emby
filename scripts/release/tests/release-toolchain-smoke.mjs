@@ -22,7 +22,8 @@ for (const [message, expected] of [
     cwd: root, logger, commits: [{ message, hash: 'a'.repeat(40) }],
   }), expected);
 }
-const { default: micromatch } = await load('micromatch');
+const releaseRequire = createRequire(require.resolve('semantic-release'));
+const { default: micromatch } = await import(pathToFileURL(releaseRequire.resolve('micromatch')).href);
 assert.deepEqual(micromatch(['main', 'develop', 'fix/synthetic'], 'main'), ['main']);
 assert.deepEqual(micromatch(['main', 'develop', 'fix/synthetic'], 'develop'), ['develop']);
 const { generateNotes } = await load('@semantic-release/release-notes-generator');
@@ -38,4 +39,15 @@ assert.match(notes, /1\.6\.1/);
 for (const name of ['semantic-release', '@semantic-release/exec', '@semantic-release/github']) {
   assert.ok(await load(name));
 }
-console.log('PASS: commit classifications, branch matching, real release notes and plugin imports; no publish hooks invoked.');
+const pluginNames = config.plugins.map(p => Array.isArray(p) ? p[0] : p);
+assert.ok(!pluginNames.includes('@semantic-release/npm'), 'npm publishing requires revisiting native dependency removal');
+for (const name of ['npm', '@semantic-release/npm']) {
+  assert.throws(() => releaseRequire.resolve(name), { code: 'MODULE_NOT_FOUND' });
+}
+const { default: getConfig } = await import(new URL('lib/get-config.js', pathToFileURL(require.resolve('semantic-release'))));
+const loaded = await getConfig({ cwd: root, env: process.env, logger });
+assert.deepEqual(loaded.options.plugins, config.plugins);
+assert.deepEqual(loaded.options.branches, config.branches);
+await assert.rejects(getConfig({ cwd: root, env: process.env, logger }, { plugins: ['@semantic-release/npm'] }),
+  /Cannot find (module|package)/);
+console.log('PASS: real configuration loader, all configured plugins, npm publishing guard, commit classifications, branch matching, real release notes and plugin imports; no publish hooks invoked.');

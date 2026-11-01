@@ -45,11 +45,11 @@ def parse_steps(workflow):
     return steps
 
 
-def resolve_source_ref(ref, event_name, tag_name, sha):
+def resolve_source_ref(ref, event_name, tag_name, sha, source_sha=None):
     expression = re.fullmatch(
         r"\$\{\{\s*github\.event_name == 'release' && "
-        r"github\.event\.release\.tag_name \|\| github\.sha\s*\}\}", ref)
-    return tag_name if expression and event_name == "release" else sha if expression else ref
+        r"github\.event\.release\.tag_name \|\| inputs\.source_sha \|\| github\.sha\s*\}\}", ref)
+    return tag_name if expression and event_name == "release" else (source_sha or sha) if expression else ref
 
 
 def bootstrap_shell(workflow_text, remote):
@@ -116,6 +116,30 @@ class UpdateManifestsWorkflowTests(unittest.TestCase):
         ]:
             with self.subTest(event_name=event_name):
                 self.assertEqual(expected, resolve_source_ref(source_ref, event_name, tag_name, sha))
+
+        self.assertEqual("exact-successful-ci-sha", resolve_source_ref(
+            source_ref, "push", None, "different-context-sha", "exact-successful-ci-sha"))
+
+    def test_successful_release_explicitly_calls_manifest_workflow_at_exact_source(self):
+        ci = (WORKFLOW.parent / "ci.yml").read_text()
+        self.assertIn("  update-manifests:", ci)
+        continuation = ci.split("  update-manifests:", 1)[1]
+        self.assertIn("needs: release", continuation)
+        self.assertIn("needs.release.result == 'success'", continuation)
+        self.assertIn("github.event_name == 'push'", continuation)
+        self.assertIn("github.ref == 'refs/heads/main'", continuation)
+        self.assertIn("github.ref == 'refs/heads/develop'", continuation)
+        self.assertIn("uses: ./.github/workflows/update-manifests.yml", continuation)
+        self.assertIn("source_sha: ${{ github.sha }}", continuation)
+        self.assertIn("contents: write", continuation)
+        self.assertNotIn("secrets:", continuation)
+        self.assertNotIn("actions: write", continuation)
+        workflow = WORKFLOW.read_text()
+        self.assertIn("workflow_call:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("group: update-manifests", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertIn("inputs.source_sha", workflow)
 
     def test_failed_checkout_bootstraps_only_gh_pages(self):
         pages = self.init_failed_checkout()
