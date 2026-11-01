@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
@@ -20,6 +21,9 @@ namespace Emby.M3uEditor.Plugin.Service
         private Stream _stream;
         private bool _disposed;
         private bool _needsReconnect;
+        private readonly object _consumerLock = new object();
+        private readonly List<string> _consumers = new List<string>();
+        private int _consumerCount;
 
         public M3uEditorLiveStream(MediaSourceInfo mediaSource, string tunerHostId, HttpClient httpClient, ILogger logger = null)
         {
@@ -29,20 +33,34 @@ namespace Emby.M3uEditor.Plugin.Service
             UniqueId = Guid.NewGuid().ToString("N");
             TunerHostId = tunerHostId;
             OriginalStreamId = mediaSource.Id;
+            // Emby derives the registry key from MediaSource.Id, not UniqueId.
+            mediaSource.Id = UniqueId;
             DateOpened = DateTimeOffset.UtcNow;
         }
 
-        public int ConsumerCount { get; set; }
+        public int ConsumerCount
+        {
+            get { lock (_consumerLock) return _consumerCount; }
+            set { lock (_consumerLock) _consumerCount = value; }
+        }
 
         public void AddConsumer(string consumerId)
         {
-            ConsumerCount++;
+            lock (_consumerLock)
+            {
+                // Emby counts each open, including repeated or absent PlaySessionIds.
+                _consumers.Add(consumerId);
+                _consumerCount++;
+            }
         }
 
         public void RemoveConsumer(string consumerId)
         {
-            if (ConsumerCount > 0)
-                ConsumerCount--;
+            lock (_consumerLock)
+            {
+                if (_consumers.Remove(consumerId) && _consumerCount > 0)
+                    _consumerCount--;
+            }
         }
 
         private interface IConsumerCallbacks
