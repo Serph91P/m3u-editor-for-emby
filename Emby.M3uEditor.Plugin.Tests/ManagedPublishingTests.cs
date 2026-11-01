@@ -171,6 +171,22 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(File.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
         }
 
+        [Fact]
+        public async Task PublishManagedMappingAsync_CancellationAfterQuarantine_RestoresBothGenerations()
+        {
+            var service = MakeService();
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1), None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64), "https://editor.example/current/"), None)).Success);
+            var before = SnapshotFiles(TempDir.Path);
+            using var cancellation = new CancellationTokenSource();
+            service.ManagedPhaseHook = phase => { if (phase == "after-quarantine") cancellation.Cancel(); };
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.PublishManagedMappingAsync(
+                MovieMapping(1, new string('d', 64), "https://editor.example/next/"), cancellation.Token));
+
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+        }
+
         [Theory]
         [InlineData("after-stage")]
         [InlineData("after-quarantine")]
