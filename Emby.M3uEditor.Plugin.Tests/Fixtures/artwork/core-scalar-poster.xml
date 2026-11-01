@@ -1,0 +1,6 @@
+<tv><programme start="20261023100000 +0000" stop="20261023110000 +0000" channel="synthetic"><title>Synthetic</title>    <icon src="https://example.com/poster.jpg"/>
+    <icon src="https://example.com/poster.jpg" width="500" height="750"/>
+    <icon src="https://example.com/backdrop.jpg" width="1280" height="720"/>
+    <image type="poster" size="3" orient="P">https://example.com/poster.jpg</image>
+    <image type="backdrop" size="3" orient="L">https://example.com/backdrop.jpg</image>
+</programme></tv>
