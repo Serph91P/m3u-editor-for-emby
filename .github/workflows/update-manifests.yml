@@ -8,6 +8,12 @@ on:
   release:
     types: [published, edited, deleted, unpublished]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact successful CI source commit
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -24,7 +30,7 @@ jobs:
       - name: Checkout manifest-generator source
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.source_sha || github.sha }}
           path: source
 
       - name: Checkout gh-pages
