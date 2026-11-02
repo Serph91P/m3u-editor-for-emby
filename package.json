@@ -13,12 +13,7 @@
   "scripts": {
     "audit:release": "audit-ci --config audit-ci.json"
   },
-  "overrides": {
-    "@semantic-release/npm": {
-      "npm": "11.21.1"
-    },
-    "handlebars": "4.7.10"
-  },
+  "packageManager": "pnpm@10.34.9",
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.0",
     "@semantic-release/exec": "^7.0.3",

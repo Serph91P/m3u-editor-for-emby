@@ -8,6 +8,16 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonPropertyName("id")]
         public string Id { get; set; } = string.Empty;
 
+        // A producer-issued identity for exactly one film or episode. Generic
+        // transport/database ids remain in Id and must not be used for grouping.
+        [JsonPropertyName("content_id")]
+        public string ContentId { get; set; } = string.Empty;
+
+        // A producer-issued identity for exactly one series. It is optional for
+        // films, one-off programmes and source records without a known series.
+        [JsonPropertyName("series_id")]
+        public string SeriesId { get; set; } = string.Empty;
+
         [JsonPropertyName("epg_id")]
         public string EpgId { get; set; } = string.Empty;
 
@@ -39,6 +49,24 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonConverter(typeof(IntAsBoolConverter))]
         public bool HasArchive { get; set; }
 
+        [JsonPropertyName("preserved_primary_url")]
+        public string PreservedPrimaryUrl { get; set; }
+
+        [JsonPropertyName("poster_url")]
+        public string PosterUrl { get; set; }
+        [JsonPropertyName("poster_width")]
+        public int PosterWidth { get; set; }
+        [JsonPropertyName("poster_height")]
+        public int PosterHeight { get; set; }
+        [JsonPropertyName("backdrop_url")]
+        public string BackdropUrl { get; set; }
+        [JsonPropertyName("still_url")]
+        public string ThumbImageUrl { get; set; }
+        [JsonPropertyName("still_width")]
+        public int ThumbWidth { get; set; }
+        [JsonPropertyName("still_height")]
+        public int ThumbHeight { get; set; }
+
         // Not from JSON - populated by XMLTV parser only
         [JsonIgnore] public bool IsLive { get; set; }
         [JsonIgnore] public bool IsNew { get; set; }
@@ -49,7 +77,6 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonIgnore] public int ImageWidth { get; set; }
         [JsonIgnore] public int ImageHeight { get; set; }
         [JsonIgnore] public string BackdropImageUrl { get; set; }
-        [JsonIgnore] public string ThumbImageUrl { get; set; }
         [JsonIgnore] public string LogoImageUrl { get; set; }
         [JsonIgnore] public List<string> Categories { get; set; }
         [JsonIgnore] public string SubTitle { get; set; }

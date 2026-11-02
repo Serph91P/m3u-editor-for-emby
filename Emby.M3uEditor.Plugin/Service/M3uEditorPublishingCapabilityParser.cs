@@ -15,6 +15,17 @@ namespace Emby.M3uEditor.Plugin.Service
         public IReadOnlyList<string> Features { get; set; }
     }
 
+    internal sealed class M3uEditorCacheControlCapability
+    {
+        public int ApiVersion { get; set; }
+        public string PrefetchAction { get; set; }
+        public string PlaybackAction { get; set; }
+        public string ReleaseAction { get; set; }
+        public int MaxTargets { get; set; }
+        public int HeartbeatSeconds { get; set; }
+        public int LeaseSeconds { get; set; }
+    }
+
     internal static class M3uEditorPublishingCapabilityParser
     {
         private static readonly string[] RequiredPublishingFeatures =
@@ -89,6 +100,45 @@ namespace Emby.M3uEditor.Plugin.Service
                 SyncResultAction = syncResultAction,
                 SnapshotMode = snapshotMode,
                 Features = advertisedFeatures
+            };
+            return true;
+        }
+
+        public static bool TryGetCacheControlCapability(JsonElement root, out M3uEditorCacheControlCapability capability)
+        {
+            capability = null;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("m3u_editor", out var m3uEditor) || m3uEditor.ValueKind != JsonValueKind.Object ||
+                !m3uEditor.TryGetProperty("library_publishing", out var publishing) || publishing.ValueKind != JsonValueKind.Object ||
+                !publishing.TryGetProperty("cache_control", out var cache) || cache.ValueKind != JsonValueKind.Object ||
+                !cache.TryGetProperty("api_version", out var apiVersion) || !apiVersion.TryGetInt32(out var version) || version != 1 ||
+                !cache.TryGetProperty("actions", out var actions) || actions.ValueKind != JsonValueKind.Object ||
+                !cache.TryGetProperty("max_targets", out var maximum) || !maximum.TryGetInt32(out var maxTargets) || maxTargets < 1 || maxTargets > 100 ||
+                !cache.TryGetProperty("heartbeat_seconds", out var heartbeat) || !heartbeat.TryGetInt32(out var heartbeatSeconds) || heartbeatSeconds != 30 ||
+                !cache.TryGetProperty("lease_seconds", out var lease) || !lease.TryGetInt32(out var leaseSeconds) || leaseSeconds != 120)
+            {
+                return false;
+            }
+
+            var prefetch = TryGetString(actions, "prefetch");
+            var playback = TryGetString(actions, "playback");
+            var release = TryGetString(actions, "release");
+            if (!string.Equals(prefetch, "m3u_editor_cache_prefetch", StringComparison.Ordinal) ||
+                !string.Equals(playback, "m3u_editor_cache_playback", StringComparison.Ordinal) ||
+                !string.Equals(release, "m3u_editor_cache_release", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            capability = new M3uEditorCacheControlCapability
+            {
+                ApiVersion = version,
+                PrefetchAction = prefetch,
+                PlaybackAction = playback,
+                ReleaseAction = release,
+                MaxTargets = maxTargets,
+                HeartbeatSeconds = heartbeatSeconds,
+                LeaseSeconds = leaseSeconds
             };
             return true;
         }

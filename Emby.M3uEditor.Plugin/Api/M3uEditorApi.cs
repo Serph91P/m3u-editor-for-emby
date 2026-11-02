@@ -207,6 +207,8 @@ namespace Emby.M3uEditor.Plugin.Api
         public int ApiVersion { get; set; }
         public int IntegrationId { get; set; }
         public bool ConfigurationValid { get; set; }
+        public bool CacheCapabilityReady { get; set; }
+        public bool ActiveManifestIdentityReady { get; set; }
         public string CatalogRevision { get; set; }
         public string ActiveGeneration { get; set; }
         public string PreviousGeneration { get; set; }
@@ -223,6 +225,7 @@ namespace Emby.M3uEditor.Plugin.Api
         public int PageSize { get; set; }
         public bool HasMore { get; set; }
         public string DryRunSummary { get; set; }
+        public string OutputRoot { get; set; }
         public int OmittedVersions { get; set; }
         public string LastError { get; set; }
         public DateTime? LastSuccess { get; set; }
@@ -269,7 +272,8 @@ namespace Emby.M3uEditor.Plugin.Api
             PluginConfiguration config,
             ManagedJobStatus job,
             int requestedPage,
-            int requestedPageSize)
+            int requestedPageSize,
+            string ownerPath = null)
         {
             var page = Math.Max(1, requestedPage);
             var pageSize = Math.Max(1, Math.Min(100, requestedPageSize));
@@ -325,6 +329,9 @@ namespace Emby.M3uEditor.Plugin.Api
                 })
                 .ToList();
             var libraryStats = BuildManagedLibraryStats(mappings);
+            var activeManifestIdentityReady = HasValidActiveManifestIdentity(
+                config.ManagedActiveGeneration, config.ManagedApprovedOutputRoots,
+                config.ManagedPublishingIntegrationId, mappings);
 
             return new ManagedDashboardStatus
             {
@@ -336,6 +343,8 @@ namespace Emby.M3uEditor.Plugin.Api
                 ConfigurationValid = config.ManagedSetupReady &&
                     config.ManagedPublishingIntegrationId > 0 &&
                     ManagedOutputPolicy.GetCanonicalRoots(config.ManagedApprovedOutputRoots).Count > 0,
+                CacheCapabilityReady = ManagedPlaybackCacheEntryPoint.IsCacheCapabilityReady(config),
+                ActiveManifestIdentityReady = activeManifestIdentityReady,
                 CatalogRevision = config.ManagedCatalogRevision,
                 ActiveGeneration = config.ManagedActiveGeneration,
                 PreviousGeneration = config.ManagedPreviousGeneration,
@@ -352,6 +361,7 @@ namespace Emby.M3uEditor.Plugin.Api
                 PageSize = pageSize,
                 HasMore = page * pageSize < mappings.Count,
                 DryRunSummary = config.ManagedDryRunSummary,
+                OutputRoot = ownerPath == null ? null : new ManagedSetupService(ownerPath).Get(config).ConfirmedRoot,
                 OmittedVersions = config.ManagedOmittedVersions,
                 LastError = config.ManagedLastError,
                 LastSuccess = config.ManagedLastSuccessTicks > 0
@@ -359,6 +369,39 @@ namespace Emby.M3uEditor.Plugin.Api
                     : (DateTime?)null,
                 Job = job
             };
+        }
+
+        private static bool HasValidActiveManifestIdentity(
+            string activeGeneration,
+            string approvedRoots,
+            int integrationId,
+            IEnumerable<ManagedMappingState> mappings)
+        {
+            if (!IsManagedRevision(activeGeneration))
+            {
+                return false;
+            }
+
+            var resolver = new ManagedPlaybackIdentityResolver();
+            return (mappings ?? Enumerable.Empty<ManagedMappingState>()).Any(mapping =>
+                HasValidActiveManifestIdentity(resolver, mapping, activeGeneration, approvedRoots, integrationId));
+        }
+
+        private static bool HasValidActiveManifestIdentity(ManagedPlaybackIdentityResolver resolver, ManagedMappingState mapping, string activeGeneration, string approvedRoots, int integrationId)
+        {
+            if (mapping == null || !mapping.Success ||
+                mapping.IntegrationId != integrationId ||
+                !string.Equals(mapping.ActiveRevision, activeGeneration, StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(mapping.OutputPath) ||
+                !ManagedOutputPolicy.IsApproved(mapping.OutputPath, approvedRoots, out _)) return false;
+            return resolver.HasValidActiveManifestIdentity(
+                mapping.OutputPath, mapping.MappingUuid, activeGeneration);
+        }
+
+        private static bool IsManagedRevision(string value)
+        {
+            return !string.IsNullOrEmpty(value) && value.Length == 64 && value.All(character =>
+                (character >= 'a' && character <= 'f') || (character >= '0' && character <= '9'));
         }
 
         internal static LibraryStats BuildManagedLibraryStats(IEnumerable<ManagedMappingState> mappings)
@@ -611,6 +654,8 @@ namespace Emby.M3uEditor.Plugin.Api
             {
                 config.ManagedLastError = rollback.Error ?? "Managed rollback failed.";
             }
+            ManagedPlaybackCacheEntryPoint.NotifyConfigurationChanged(
+                config.ManagedPlaybackCacheEnabled);
             plugin.SaveConfiguration();
 
             return new ManagedActionResult
@@ -643,7 +688,8 @@ namespace Emby.M3uEditor.Plugin.Api
                 plugin.Configuration,
                 plugin.StrmSyncService.ManagedActionJobs.GetStatus(),
                 request?.ManagedPage ?? 1,
-                request?.ManagedPageSize ?? 10);
+                request?.ManagedPageSize ?? 10,
+                plugin.DataFolderPath);
             return new DashboardResult
             {
                 PluginVersion = PluginVersionHelper.CurrentVersion,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
-  "package-manager": "npm",
+  "package-manager": "pnpm",
   "high": true,
   "skip-dev": false,
   "pass-enoaudit": false,

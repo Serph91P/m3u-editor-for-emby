@@ -22,20 +22,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_release_guard_precedes_publish_and_no_concurrent_release(self):
         release = CI[CI.index("  release:"):]
-        self.assertLess(release.index("verify-release-context.sh"), release.index("npx semantic-release"))
+        self.assertLess(release.index("verify-release-context.sh"), release.index("pnpm exec semantic-release"))
         self.assertIn("cancel-in-progress: false", CI)
 
     def test_release_uses_locked_install_and_fixed_compatible_node(self):
         self.assertIn("node-version: '22.23.2'", CI)
-        self.assertIn("npm ci", CI)
+        self.assertIn("pnpm install --frozen-lockfile --ignore-scripts", CI)
         build = CI.split("  build-and-test:", 1)[1].split("  codeql:", 1)[0]
         release = CI.split("  release:", 1)[1]
         for job in (build, release):
-            self.assertIn("npm ci", job)
-            self.assertIn("npm run audit:release", job)
-            self.assertLess(job.index("npm ci"), job.index("npm run audit:release"))
-        self.assertLess(build.index("npm run audit:release"), build.index("Test release safeguards"))
-        self.assertNotIn("npm ci || npm install", CI)
+            self.assertIn("pnpm install --frozen-lockfile --ignore-scripts", job)
+            self.assertIn("pnpm run audit:release", job)
+            self.assertLess(job.index("pnpm install --frozen-lockfile --ignore-scripts"), job.index("pnpm run audit:release"))
+        self.assertLess(build.index("pnpm run audit:release"), build.index("Test release safeguards"))
+        self.assertNotIn("pnpm install --frozen-lockfile --ignore-scripts || npm install", CI)
         self.assertIn('"node": ">=22.14.0 <23"', (ROOT / "package.json").read_text())
 
     def test_release_is_not_dispatchable_or_pr_triggered(self):

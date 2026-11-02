@@ -25,6 +25,167 @@ namespace Emby.M3uEditor.Plugin.Tests
     public class M3uEditorClientTests
     {
         [Fact]
+        public async Task SendCachePrefetchAsync_PostsCredentialsAndIdentityInBodyOnly()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_prefetch", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":false,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var result = await client.SendCachePrefetchAsync(
+                    "https://editor.example", "account", "credential", new M3uEditorCacheControlRequest
+                    {
+                        IntegrationId = 7,
+                        MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
+                        Revision = Revision,
+                        RequestId = "c15d9b25-7536-4c7f-8f5f-7b08a1989b8a",
+                        ConsumerId = new string('b', 64),
+                        Targets = new List<M3uEditorCacheControlTarget>
+                        {
+                            new M3uEditorCacheControlTarget { CanonicalId = "movie:tmdb:603", VariantKey = "1080p" }
+                        }
+                    }, CancellationToken.None);
+
+                Assert.False(result.Duplicate);
+                Assert.DoesNotContain("credential", Assert.Single(handler.ReceivedUrls));
+                var body = Assert.Single(handler.ReceivedBodies);
+                Assert.Contains("username=account", body);
+                Assert.Contains("password=credential", body);
+                Assert.Contains("action=m3u_editor_cache_prefetch", body);
+                Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=movie%3Atmdb%3A603", body);
+            }
+        }
+
+        [Fact]
+        public async Task SendCachePrefetchAsync_TransientFailureRetriesWithSameRequestId()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_prefetch", "{}", HttpStatusCode.ServiceUnavailable);
+            handler.RespondWith("action=m3u_editor_cache_prefetch", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":true,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var result = await client.SendCachePrefetchAsync("https://editor.example", "account", "credential", new M3uEditorCacheControlRequest
+                {
+                    IntegrationId = 7,
+                    MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
+                    Revision = Revision,
+                    RequestId = "c15d9b25-7536-4c7f-8f5f-7b08a1989b8a",
+                    ConsumerId = new string('b', 64),
+                    Targets = new List<M3uEditorCacheControlTarget>
+                    {
+                        new M3uEditorCacheControlTarget { CanonicalId = "movie:tmdb:603", VariantKey = "1080p" }
+                    }
+                }, CancellationToken.None);
+
+                Assert.True(result.Duplicate);
+                Assert.Equal(2, handler.ReceivedBodies.Count);
+                Assert.Equal(handler.ReceivedBodies[0], handler.ReceivedBodies[1]);
+            }
+        }
+
+        [Theory]
+        [InlineData("SendCachePlaybackAsync", "m3u_editor_cache_playback")]
+        [InlineData("SendCacheReleaseAsync", "m3u_editor_cache_release")]
+        public async Task SendCacheControlAsync_PostsBodyOnlyAction(string methodName, string action)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=" + action, "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":true,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var cacheRequest = CreateCacheRequest(request =>
+                {
+                    if (action == "m3u_editor_cache_playback")
+                    {
+                        request.SessionId = "e2fef6ac-3dc8-4dd8-a8f7-ae0606ba3b4e";
+                        request.Sequence = 1;
+                        request.State = "start";
+                    }
+                    else
+                    {
+                        request.Watched = true;
+                        request.DeleteAfterHours = 24;
+                        request.CohortComplete = true;
+                    }
+                });
+                var method = typeof(M3uEditorClient).GetMethod(methodName);
+                Assert.NotNull(method);
+                var operation = (Task)method.Invoke(client, new object[]
+                {
+                    "https://editor.example", "account", "credential", cacheRequest,
+                    CancellationToken.None
+                });
+
+                await operation;
+                var body = Assert.Single(handler.ReceivedBodies);
+                Assert.Contains("action=" + action, body);
+                Assert.Contains("username=account", body);
+                Assert.DoesNotContain("credential", Assert.Single(handler.ReceivedUrls));
+            }
+        }
+
+        [Theory]
+        [InlineData("start", 1)]
+        [InlineData("heartbeat", 2)]
+        [InlineData("stop", 3)]
+        public async Task SendCachePlaybackAsync_PostsCompleteSequencedSessionBody(string state, long sequence)
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_playback", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":false,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                await client.SendCachePlaybackAsync(
+                    "https://editor.example", "account", "credential", CreateCacheRequest(request =>
+                    {
+                        request.SessionId = "e2fef6ac-3dc8-4dd8-a8f7-ae0606ba3b4e";
+                        request.Sequence = sequence;
+                        request.State = state;
+                    }), CancellationToken.None);
+
+                var body = Assert.Single(handler.ReceivedBodies);
+                Assert.Contains("api_version=1", body);
+                Assert.Contains("integration_id=7", body);
+                Assert.Contains("mapping_uuid=123e4567-e89b-12d3-a456-426614174000", body);
+                Assert.Contains("revision=" + Revision, body);
+                Assert.Contains("request_id=c15d9b25-7536-4c7f-8f5f-7b08a1989b8a", body);
+                Assert.Contains("consumer_id=" + new string('b', 64), body);
+                Assert.Contains("targets%5B0%5D%5Bcanonical_id%5D=movie%3Atmdb%3A603", body);
+                Assert.Contains("session_id=e2fef6ac-3dc8-4dd8-a8f7-ae0606ba3b4e", body);
+                Assert.Contains("sequence=" + sequence, body);
+                Assert.Contains("state=" + state, body);
+                Assert.DoesNotContain("action=m3u_editor_cache_release", body);
+            }
+        }
+
+        [Fact]
+        public async Task SendCacheReleaseAsync_PostsWatchedCohortBodySeparateFromPlaybackStop()
+        {
+            var handler = new FakeHttpHandler();
+            handler.RespondWith("action=m3u_editor_cache_release", "{\"api_version\":1,\"data\":{\"request_id\":\"c15d9b25-7536-4c7f-8f5f-7b08a1989b8a\",\"duplicate\":false,\"results\":[]}}");
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+                await client.SendCacheReleaseAsync(
+                    "https://editor.example", "account", "credential", CreateCacheRequest(request =>
+                    {
+                        request.Watched = true;
+                        request.DeleteAfterHours = 24;
+                        request.CohortComplete = true;
+                    }), CancellationToken.None);
+
+                var body = Assert.Single(handler.ReceivedBodies);
+                Assert.Contains("action=m3u_editor_cache_release", body);
+                Assert.Contains("watched=1", body);
+                Assert.Contains("delete_after_hours=24", body);
+                Assert.Contains("cohort_complete=1", body);
+                Assert.DoesNotContain("session_id", body);
+                Assert.DoesNotContain("state=stop", body);
+            }
+        }
+
+        [Fact]
         public async Task GetCatalogAsync_ExactVersionOnePayload_DeserializesVariantsAndFailover()
         {
             var handler = new FakeHttpHandler();
@@ -1031,10 +1192,83 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task GetCatalogAsync_ValidLargeFullSnapshot_DeserializesEveryItem(bool declaredLength)
+        {
+            var template = JsonSerializer.Deserialize<M3uEditorCatalog>(CatalogJson);
+            var mapping = template.Mappings[0];
+            var itemJson = JsonSerializer.Serialize(mapping.Items[0]);
+            mapping.Items.Clear();
+            for (var index = 0; index < 4000; index++)
+            {
+                var item = JsonSerializer.Deserialize<M3uEditorCatalogItem>(itemJson);
+                item.CanonicalId = "movie:synthetic:" + index;
+                item.RelativeFolder = "synthetic-movie-" + index;
+                item.BaseFilename = item.RelativeFolder;
+                item.Nfo.Plot = new string('a', 5000);
+                mapping.Items.Add(item);
+            }
+
+            // Prove that the untouched validator accepts the actual complete contract,
+            // not an oversized invalid body that should continue to fail closed.
+            M3uEditorCatalogValidator.Validate(template);
+            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(template));
+            Assert.True(bytes.Length > M3uEditorClient.MaximumResponseBytes);
+            using (var httpClient = new HttpClient(new IncrementalContentHandler(
+                new CatalogJsonContent(bytes, declaredLength))))
+            {
+                var client = new M3uEditorClient(httpClient);
+                var catalog = await client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None);
+
+                Assert.Equal(4000, Assert.Single(catalog.Mappings).Items.Count);
+                Assert.Equal("movie:synthetic:3999", catalog.Mappings[0].Items[3999].CanonicalId);
+                Assert.Equal(Revision, catalog.Revision);
+            }
+        }
+
+        private sealed class CatalogJsonContent : HttpContent
+        {
+            private readonly byte[] _bytes;
+            private readonly bool _declaredLength;
+            private readonly MemoryStream _readStream;
+
+            public CatalogJsonContent(byte[] bytes, bool declaredLength)
+            {
+                _bytes = bytes;
+                _declaredLength = declaredLength;
+                _readStream = new MemoryStream(bytes, false);
+            }
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = _bytes.Length;
+                return _declaredLength;
+            }
+
+            protected override Task SerializeToStreamAsync(Stream stream, TransportContext context)
+            {
+                return stream.WriteAsync(_bytes, 0, _bytes.Length);
+            }
+
+            protected override Task<Stream> CreateContentReadStreamAsync()
+            {
+                return Task.FromResult<Stream>(_readStream);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) _readStream.Dispose();
+                base.Dispose(disposing);
+            }
+        }
+
         [Fact]
         public async Task GetCatalogAsync_OversizedDeclaredResponse_FailsClosed()
         {
-            var handler = new DeclaredLengthHandler(M3uEditorClient.MaximumResponseBytes + 1L);
+            var handler = new DeclaredLengthHandler(M3uEditorClient.MaximumCatalogResponseBytes + 1L);
             using (var httpClient = new HttpClient(handler))
             {
                 var client = new M3uEditorClient(httpClient);
@@ -1046,8 +1280,30 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
+        [InlineData(201)]
+        [InlineData(202)]
+        [InlineData(204)]
+        [InlineData(205)]
+        [InlineData(206)]
+        public async Task GetCatalogAsync_NonOkSuccessResponse_FailsClosedWithoutReadingBodyOrRetrying(int statusCode)
+        {
+            var content = new IncrementalContent(M3uEditorClient.MaximumResponseBytes + 8192);
+            var handler = new IncrementalContentHandler(content, (HttpStatusCode)statusCode);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(httpClient);
+
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
+                    "https://editor.example", "account", "credential", CancellationToken.None));
+
+                Assert.Contains("HTTP " + statusCode, error.Message);
+                Assert.Equal(1, handler.RequestCount);
+                Assert.Equal(0L, content.BytesRead);
+            }
+        }
+
+        [Theory]
         [InlineData("capability", "GET")]
-        [InlineData("catalog", "GET")]
         [InlineData("callback", "POST")]
         public async Task ManagedRequests_IncrementalOversizedResponse_ReadsOnlyThroughSentinel(
             string requestPath,
@@ -1199,6 +1455,24 @@ namespace Emby.M3uEditor.Plugin.Tests
 
         private const string Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+        private static M3uEditorCacheControlRequest CreateCacheRequest(Action<M3uEditorCacheControlRequest> configure)
+        {
+            var request = new M3uEditorCacheControlRequest
+            {
+                IntegrationId = 7,
+                MappingUuid = "123e4567-e89b-12d3-a456-426614174000",
+                Revision = Revision,
+                RequestId = "c15d9b25-7536-4c7f-8f5f-7b08a1989b8a",
+                ConsumerId = new string('b', 64),
+                Targets = new List<M3uEditorCacheControlTarget>
+                {
+                    new M3uEditorCacheControlTarget { CanonicalId = "movie:tmdb:603", VariantKey = "1080p" }
+                }
+            };
+            configure(request);
+            return request;
+        }
+
         private const string CapabilityJson = @"{
   ""user_info"": { ""auth"": 1 },
   ""m3u_editor"": {
@@ -1211,7 +1485,7 @@ namespace Emby.M3uEditor.Plugin.Tests
   }
 }";
 
-        private const string CatalogJson = @"{
+        internal const string CatalogJson = @"{
   ""api_version"": 1,
   ""full_snapshot"": true,
   ""revision"": ""aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"",
@@ -1283,25 +1557,29 @@ namespace Emby.M3uEditor.Plugin.Tests
         private sealed class IncrementalContentHandler : HttpMessageHandler
         {
             private readonly HttpContent _content;
+            private readonly HttpStatusCode _statusCode;
 
-            public IncrementalContentHandler(HttpContent content)
+            public IncrementalContentHandler(HttpContent content, HttpStatusCode statusCode = HttpStatusCode.OK)
             {
                 _content = content;
+                _statusCode = statusCode;
             }
 
             public string Method { get; private set; }
+            public int RequestCount { get; private set; }
 
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
                 Method = request.Method.Method;
-                return Task.FromResult(CreateResponse(_content));
+                RequestCount++;
+                return Task.FromResult(CreateResponse(_content, _statusCode));
             }
 
-            private static HttpResponseMessage CreateResponse(HttpContent content)
+            private static HttpResponseMessage CreateResponse(HttpContent content, HttpStatusCode statusCode)
             {
-                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                return new HttpResponseMessage(statusCode)
                 {
                     Content = content
                 };

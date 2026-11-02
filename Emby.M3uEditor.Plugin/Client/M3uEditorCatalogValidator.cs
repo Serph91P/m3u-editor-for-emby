@@ -12,7 +12,9 @@ namespace Emby.M3uEditor.Plugin.Client
     internal static class M3uEditorCatalogValidator
     {
         internal const int MaximumMappings = 100;
-        internal const int MaximumCatalogItems = 10000;
+        // The independent output-file budget is still the effective publication
+        // ceiling. Do not reject normal full snapshots at a smaller item count.
+        internal const int MaximumCatalogItems = MaximumGeneratedFiles;
         internal const int MaximumVariantsPerItem = 64;
         internal const int MaximumGeneratedFiles = 50000;
         internal const int MaximumIdentifierCharacters = 512;

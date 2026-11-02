@@ -10,6 +10,7 @@ using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class ManagedOnlyContractTests
     {
         [Fact]

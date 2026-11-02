@@ -96,7 +96,10 @@ DLLs.
 
 ### Build From Source
 
-Requires .NET SDK 6.0 or newer:
+Requires .NET SDK 10.0 and its .NET 10 test host for the mandatory `net10.0` tests.
+The helper restores dependencies, runs the real test suite, and publishes only
+if tests pass. The plugin still targets `netstandard2.0`; this contributor SDK
+requirement does not change the supported Emby host runtime.
 
 ```bash
 git clone https://github.com/Serph91P/m3u-editor-for-emby.git

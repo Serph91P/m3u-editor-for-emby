@@ -26,7 +26,7 @@ echo "=== Version: $VERSION (from git: $GIT_DESC) ==="
 
 echo ""
 echo "=== Running Tests ==="
-dotnet test "$SCRIPT_DIR/../Emby.M3uEditor.Plugin.Tests/" --no-restore -v minimal
+dotnet test "$SCRIPT_DIR/../Emby.M3uEditor.Plugin.Tests/" -v minimal
 
 echo ""
 echo "=== Building Emby.M3uEditor.Plugin ==="

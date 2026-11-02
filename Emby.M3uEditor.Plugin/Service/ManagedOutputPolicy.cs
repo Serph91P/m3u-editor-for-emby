@@ -48,7 +48,8 @@ namespace Emby.M3uEditor.Plugin.Service
             string candidatePath,
             string existingApprovedRoots,
             out string normalizedCandidate,
-            out string error)
+            out string error,
+            bool allowExplicitRoot = false)
         {
             normalizedCandidate = null;
             error = "The managed output root is not safe.";
@@ -57,8 +58,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 !TryNormalize(candidatePath, out normalizedCandidate) ||
                 IsFileSystemRoot(normalizedOwner) || IsFileSystemRoot(normalizedCandidate) ||
                 HasReparsePoint(normalizedOwner) || HasReparsePoint(normalizedCandidate) ||
-                !IsSameOrChild(normalizedOwner, normalizedCandidate) ||
-                string.Equals(normalizedOwner, normalizedCandidate, PathComparison))
+                (!allowExplicitRoot && !IsSameOrChild(normalizedOwner, normalizedCandidate)) ||
+                IsSameOrChild(normalizedCandidate, normalizedOwner))
             {
                 normalizedCandidate = null;
                 return false;
@@ -144,6 +145,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 return false;
             }
 
+            bool cleanupSucceeded;
             try
             {
                 Directory.CreateDirectory(probeDirectory);
@@ -163,9 +165,12 @@ namespace Emby.M3uEditor.Plugin.Service
                     stream.WriteByte(0);
                     stream.Flush();
                 }
-                File.Delete(probePath);
+                string renamedPath;
+                if (!TryJoinUnderRoot(probeDirectory, "renamed", out renamedPath))
+                    return false;
+                File.Move(probePath, renamedPath);
+                File.Delete(renamedPath);
                 Directory.Delete(probeDirectory, false);
-                return true;
             }
             catch (ArgumentException)
             {
@@ -185,27 +190,61 @@ namespace Emby.M3uEditor.Plugin.Service
             }
             finally
             {
-                DeleteProbeDirectoryIfEmpty(probeDirectory);
+                cleanupSucceeded = CleanupOwnedProbeDirectory(probeDirectory);
             }
+            return cleanupSucceeded;
         }
 
-        private static void DeleteProbeDirectoryIfEmpty(string probeDirectory)
+        internal static bool CleanupOwnedProbeDirectory(string probeDirectory)
         {
+            if (!Directory.Exists(probeDirectory)) return true;
+
+            // Attempt every owned cleanup even if an earlier operation failed.
+            var probeDeleted = TryDeleteOwnedProbeFile(probeDirectory, "probe");
+            var renamedDeleted = TryDeleteOwnedProbeFile(probeDirectory, "renamed");
+            var directoryDeleted = TryDeleteProbeDirectoryIfEmpty(probeDirectory);
+            return probeDeleted && renamedDeleted && directoryDeleted;
+        }
+
+        private static bool TryDeleteOwnedProbeFile(string probeDirectory, string name)
+        {
+            string path;
+            if (!TryJoinUnderRoot(probeDirectory, name, out path))
+                return false;
             try
             {
-                if (Directory.Exists(probeDirectory) &&
-                    !Directory.EnumerateFileSystemEntries(probeDirectory).Any())
-                {
-                    Directory.Delete(probeDirectory, false);
-                }
+                File.Delete(path);
+                return true;
             }
             catch (IOException)
             {
-                return;
+                return false;
             }
             catch (UnauthorizedAccessException)
             {
-                return;
+                return false;
+            }
+        }
+
+        private static bool TryDeleteProbeDirectoryIfEmpty(string probeDirectory)
+        {
+            try
+            {
+                if (!Directory.Exists(probeDirectory)) return true;
+                if (!Directory.EnumerateFileSystemEntries(probeDirectory).Any())
+                {
+                    Directory.Delete(probeDirectory, false);
+                    return true;
+                }
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
             }
         }
 

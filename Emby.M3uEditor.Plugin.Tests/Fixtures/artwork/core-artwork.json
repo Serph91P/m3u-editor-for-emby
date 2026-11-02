@@ -1,0 +1,79 @@
+{
+    "control": {
+        "xml": "<tv><programme start=\"20261023100000 +0000\" stop=\"20261023110000 +0000\" channel=\"synthetic\"><title>Synthetic<\/title>    <icon src=\"https:\/\/example.com\/legacy.jpg\"\/>\n    <icon src=\"https:\/\/example.com\/poster.jpg\" width=\"500\" height=\"750\"\/>\n    <icon src=\"https:\/\/example.com\/backdrop.jpg\" width=\"1280\" height=\"720\"\/>\n    <image type=\"poster\" size=\"3\" orient=\"P\">https:\/\/example.com\/poster.jpg<\/image>\n    <image type=\"backdrop\" size=\"3\" orient=\"L\">https:\/\/example.com\/backdrop.jpg<\/image>\n<\/programme><\/tv>",
+        "json": {
+            "poster_url": "https:\/\/example.com\/poster.jpg",
+            "poster_width": 500,
+            "poster_height": 750,
+            "backdrop_url": "https:\/\/example.com\/backdrop.jpg"
+        }
+    },
+    "icon_same_poster": {
+        "xml": "<tv><programme start=\"20261023100000 +0000\" stop=\"20261023110000 +0000\" channel=\"synthetic\"><title>Synthetic<\/title>    <icon src=\"https:\/\/example.com\/poster.jpg\"\/>\n    <icon src=\"https:\/\/example.com\/poster.jpg\" width=\"500\" height=\"750\"\/>\n    <icon src=\"https:\/\/example.com\/backdrop.jpg\" width=\"1280\" height=\"720\"\/>\n    <image type=\"poster\" size=\"3\" orient=\"P\">https:\/\/example.com\/poster.jpg<\/image>\n    <image type=\"backdrop\" size=\"3\" orient=\"L\">https:\/\/example.com\/backdrop.jpg<\/image>\n<\/programme><\/tv>",
+        "json": {
+            "poster_url": "https:\/\/example.com\/poster.jpg",
+            "poster_width": 500,
+            "poster_height": 750,
+            "backdrop_url": "https:\/\/example.com\/backdrop.jpg"
+        }
+    },
+    "still_only": {
+        "xml": "<tv><programme start=\"20261023100000 +0000\" stop=\"20261023110000 +0000\" channel=\"synthetic\"><title>Synthetic<\/title>    <icon src=\"https:\/\/example.com\/still.jpg\" width=\"1920\" height=\"1080\"\/>\n    <image type=\"still\" size=\"3\" orient=\"L\">https:\/\/example.com\/still.jpg<\/image>\n<\/programme><\/tv>",
+        "json": {
+            "still_url": "https:\/\/example.com\/still.jpg",
+            "still_width": 1920,
+            "still_height": 1080
+        }
+    },
+    "still_larger_than_backdrop": {
+        "xml": "<tv><programme start=\"20261023100000 +0000\" stop=\"20261023110000 +0000\" channel=\"synthetic\"><title>Synthetic<\/title>    <icon src=\"https:\/\/example.com\/poster.jpg\" width=\"500\" height=\"750\"\/>\n    <icon src=\"https:\/\/example.com\/backdrop.jpg\" width=\"1280\" height=\"720\"\/>\n    <icon src=\"https:\/\/example.com\/still.jpg\" width=\"1920\" height=\"1080\"\/>\n    <image type=\"poster\" size=\"3\" orient=\"P\">https:\/\/example.com\/poster.jpg<\/image>\n    <image type=\"backdrop\" size=\"3\" orient=\"L\">https:\/\/example.com\/backdrop.jpg<\/image>\n    <image type=\"still\" size=\"3\" orient=\"L\">https:\/\/example.com\/still.jpg<\/image>\n<\/programme><\/tv>",
+        "json": {
+            "poster_url": "https:\/\/example.com\/poster.jpg",
+            "poster_width": 500,
+            "poster_height": 750,
+            "backdrop_url": "https:\/\/example.com\/backdrop.jpg",
+            "still_url": "https:\/\/example.com\/still.jpg",
+            "still_width": 1920,
+            "still_height": 1080
+        }
+    },
+    "provider_larger_poster": {
+        "xml": "<tv><programme start=\"20261023100000 +0000\" stop=\"20261023110000 +0000\" channel=\"synthetic\"><title>Synthetic<\/title>    <icon src=\"https:\/\/example.com\/foreign.jpg\" width=\"1000\" height=\"1500\"\/>\n    <icon src=\"https:\/\/example.com\/poster.jpg\" width=\"500\" height=\"750\"\/>\n    <icon src=\"https:\/\/example.com\/backdrop.jpg\" width=\"1280\" height=\"720\"\/>\n    <image type=\"poster\" size=\"3\" orient=\"P\">https:\/\/example.com\/foreign.jpg<\/image>\n    <image type=\"backdrop\" size=\"3\" orient=\"L\">https:\/\/example.com\/backdrop.jpg<\/image>\n<\/programme><\/tv>",
+        "json": {
+            "poster_url": "https:\/\/example.com\/foreign.jpg",
+            "poster_width": 1000,
+            "poster_height": 1500,
+            "backdrop_url": "https:\/\/example.com\/backdrop.jpg"
+        }
+    },
+    "portrait_orientation_only": {
+        "xml": "<tv><programme start=\"20261023100000 +0000\" stop=\"20261023110000 +0000\" channel=\"synthetic\"><title>Synthetic<\/title>    <icon src=\"https:\/\/example.com\/poster.jpg\"\/>\n    <icon src=\"https:\/\/example.com\/backdrop.jpg\" width=\"1280\" height=\"720\"\/>\n    <image type=\"poster\" size=\"3\" orient=\"P\">https:\/\/example.com\/poster.jpg<\/image>\n    <image type=\"backdrop\" size=\"3\" orient=\"L\">https:\/\/example.com\/backdrop.jpg<\/image>\n<\/programme><\/tv>",
+        "json": {
+            "poster_url": "https:\/\/example.com\/poster.jpg",
+            "poster_width": 0,
+            "poster_height": 0,
+            "backdrop_url": "https:\/\/example.com\/backdrop.jpg"
+        }
+    },
+    "import_first_icon": {
+        "icon": "https:\/\/example.com\/first.jpg",
+        "images": [
+            {
+                "url": "https:\/\/example.com\/first.jpg",
+                "type": "",
+                "width": 500,
+                "height": 750,
+                "orient": "",
+                "size": 0
+            },
+            {
+                "url": "https:\/\/example.com\/first.jpg",
+                "type": "poster",
+                "width": 0,
+                "height": 0,
+                "orient": "P",
+                "size": 0
+            }
+        ]
+    }
+}

@@ -85,7 +85,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     if (useBeta)
                     {
                         var allJson = await httpClient.GetStringAsync(GitHubAllReleasesUrl).ConfigureAwait(false);
-                        releaseJson = SelectHighestRelease(allJson) ?? ExtractFirstRelease(allJson);
+                        releaseJson = SelectHighestRelease(allJson) ?? "{}";
                     }
                     else
                     {
@@ -324,52 +324,16 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static string ExtractJsonString(string json, string key)
         {
-            var search = "\"" + key + "\"";
-            var idx = json.IndexOf(search, StringComparison.Ordinal);
-            if (idx < 0) return null;
-            idx += search.Length;
-            return ExtractJsonStringAt(json, idx);
+            using (var document = System.Text.Json.JsonDocument.Parse(json))
+                return GetString(document.RootElement, key);
         }
 
-        /// <summary>
-        /// Extracts a JSON string value starting from the given position (after the key).
-        /// Skips whitespace/colon, reads quoted string with escape handling.
-        /// </summary>
-        internal static string ExtractJsonStringAt(string json, int idx)
+        private static string GetString(System.Text.Json.JsonElement element, string key)
         {
-            // Skip whitespace and colon
-            while (idx < json.Length && (json[idx] == ' ' || json[idx] == ':' || json[idx] == '\t' || json[idx] == '\n' || json[idx] == '\r'))
-                idx++;
-
-            if (idx >= json.Length) return null;
-
-            if (json[idx] == 'n') return null; // null value
-
-            if (json[idx] != '"') return null;
-            idx++; // skip opening quote
-
-            var sb = new System.Text.StringBuilder();
-            while (idx < json.Length)
-            {
-                var c = json[idx];
-                if (c == '\\' && idx + 1 < json.Length)
-                {
-                    var next = json[idx + 1];
-                    if (next == '"') { sb.Append('"'); idx += 2; continue; }
-                    if (next == '\\') { sb.Append('\\'); idx += 2; continue; }
-                    if (next == 'n') { sb.Append('\n'); idx += 2; continue; }
-                    if (next == 'r') { sb.Append('\r'); idx += 2; continue; }
-                    if (next == 't') { sb.Append('\t'); idx += 2; continue; }
-                    sb.Append(c);
-                    idx++;
-                    continue;
-                }
-                if (c == '"') break;
-                sb.Append(c);
-                idx++;
-            }
-
-            return sb.ToString();
+            System.Text.Json.JsonElement value;
+            return element.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                element.TryGetProperty(key, out value) && value.ValueKind == System.Text.Json.JsonValueKind.String
+                ? value.GetString() : null;
         }
 
         /// <summary>
@@ -381,78 +345,17 @@ namespace Emby.M3uEditor.Plugin.Service
             if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(assetName))
                 return null;
 
-            // Find the "assets" array
-            var assetsKey = "\"assets\"";
-            var assetsIdx = json.IndexOf(assetsKey, StringComparison.Ordinal);
-            if (assetsIdx < 0) return null;
-
-            // Find the opening bracket of the assets array
-            var bracketIdx = json.IndexOf('[', assetsIdx + assetsKey.Length);
-            if (bracketIdx < 0) return null;
-
-            // Find the closing bracket of the assets array
-            var closingBracket = FindMatchingBracket(json, bracketIdx);
-            if (closingBracket < 0) return null;
-
-            var assetsSection = json.Substring(bracketIdx, closingBracket - bracketIdx + 1);
-
-            // Scan through each "name" in the assets section
-            var searchFrom = 0;
-            while (searchFrom < assetsSection.Length)
+            using (var document = System.Text.Json.JsonDocument.Parse(json))
             {
-                var nameKey = "\"name\"";
-                var nameIdx = assetsSection.IndexOf(nameKey, searchFrom, StringComparison.Ordinal);
-                if (nameIdx < 0) break;
-
-                var valueStart = nameIdx + nameKey.Length;
-                var name = ExtractJsonStringAt(assetsSection, valueStart);
-
-                if (name != null && string.Equals(name, assetName, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Found the matching asset - now find browser_download_url near this position
-                    // Look backwards for the start of this object (the '{' before this "name")
-                    var objStart = assetsSection.LastIndexOf('{', nameIdx);
-                    // Look forwards for the end of this object
-                    var objEnd = FindMatchingBrace(assetsSection, objStart);
-                    if (objStart >= 0 && objEnd > objStart)
-                    {
-                        var assetObj = assetsSection.Substring(objStart, objEnd - objStart + 1);
-                        var urlKey = "\"browser_download_url\"";
-                        var urlIdx = assetObj.IndexOf(urlKey, StringComparison.Ordinal);
-                        if (urlIdx >= 0)
-                        {
-                            return ExtractJsonStringAt(assetObj, urlIdx + urlKey.Length);
-                        }
-                    }
-                }
-
-                searchFrom = valueStart + 1;
+                System.Text.Json.JsonElement assets;
+                if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                    !document.RootElement.TryGetProperty("assets", out assets) ||
+                    assets.ValueKind != System.Text.Json.JsonValueKind.Array) return null;
+                foreach (var asset in assets.EnumerateArray())
+                    if (string.Equals(GetString(asset, "name"), assetName, StringComparison.OrdinalIgnoreCase))
+                        return GetString(asset, "browser_download_url");
             }
-
             return null;
-        }
-
-        private static int FindMatchingBracket(string json, int openIdx)
-        {
-            var depth = 0;
-            for (var i = openIdx; i < json.Length; i++)
-            {
-                if (json[i] == '[') depth++;
-                else if (json[i] == ']') { depth--; if (depth == 0) return i; }
-            }
-            return -1;
-        }
-
-        private static int FindMatchingBrace(string json, int openIdx)
-        {
-            if (openIdx < 0) return -1;
-            var depth = 0;
-            for (var i = openIdx; i < json.Length; i++)
-            {
-                if (json[i] == '{') depth++;
-                else if (json[i] == '}') { depth--; if (depth == 0) return i; }
-            }
-            return -1;
         }
 
         /// <summary>
@@ -466,46 +369,24 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             if (string.IsNullOrEmpty(json)) return null;
 
-            // Walk top-level objects in the array. We rely on FindMatchingBrace
-            // to skip over nested objects (e.g. assets/uploader) safely.
-            var arrayStart = json.IndexOf('[');
-            if (arrayStart < 0) return null;
-            var arrayEnd = FindMatchingBracket(json, arrayStart);
-            if (arrayEnd < 0) return null;
-
-            string bestJson = null;
-            SemVer bestVer = null;
-
-            var i = arrayStart + 1;
-            while (i < arrayEnd)
+            using (var document = System.Text.Json.JsonDocument.Parse(json))
             {
-                // Find next top-level '{'
-                while (i < arrayEnd && json[i] != '{') i++;
-                if (i >= arrayEnd) break;
-
-                var objEnd = FindMatchingBrace(json, i);
-                if (objEnd < 0 || objEnd > arrayEnd) break;
-
-                var obj = json.Substring(i, objEnd - i + 1);
-                i = objEnd + 1;
-
-                // Skip drafts
-                if (ExtractJsonBool(obj, "draft")) continue;
-
-                var tag = ExtractJsonString(obj, "tag_name");
-                if (string.IsNullOrEmpty(tag)) continue;
-
-                SemVer ver;
-                if (!SemVer.TryParse(tag, out ver)) continue;
-
-                if (bestVer == null || SemVer.Compare(ver, bestVer) > 0)
+                if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    throw new System.Text.Json.JsonException("Expected a releases array.");
+                string bestJson = null;
+                SemVer bestVer = null;
+                foreach (var release in document.RootElement.EnumerateArray().Where(item => !GetBool(item, "draft")))
                 {
-                    bestVer = ver;
-                    bestJson = obj;
+                    SemVer version;
+                    if (!SemVer.TryParse(GetString(release, "tag_name"), out version)) continue;
+                    if (bestVer == null || SemVer.Compare(version, bestVer) > 0)
+                    {
+                        bestVer = version;
+                        bestJson = release.GetRawText();
+                    }
                 }
+                return bestJson;
             }
-
-            return bestJson;
         }
 
         /// <summary>
@@ -516,13 +397,14 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             if (string.IsNullOrEmpty(json)) return "{}";
 
-            var openBrace = json.IndexOf('{');
-            if (openBrace < 0) return "{}";
-
-            var closeBrace = FindMatchingBrace(json, openBrace);
-            if (closeBrace < 0) return "{}";
-
-            return json.Substring(openBrace, closeBrace - openBrace + 1);
+            using (var document = System.Text.Json.JsonDocument.Parse(json))
+            {
+                if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    throw new System.Text.Json.JsonException("Expected a releases array.");
+                foreach (var release in document.RootElement.EnumerateArray())
+                    return release.GetRawText();
+                return "{}";
+            }
         }
 
         /// <summary>
@@ -533,20 +415,15 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             if (string.IsNullOrEmpty(json)) return false;
 
-            var search = "\"" + key + "\"";
-            var idx = json.IndexOf(search, StringComparison.Ordinal);
-            if (idx < 0) return false;
+            using (var document = System.Text.Json.JsonDocument.Parse(json))
+                return GetBool(document.RootElement, key);
+        }
 
-            idx += search.Length;
-
-            // Skip whitespace and colon
-            while (idx < json.Length && (json[idx] == ' ' || json[idx] == ':' || json[idx] == '\t' || json[idx] == '\n' || json[idx] == '\r'))
-                idx++;
-
-            if (idx >= json.Length) return false;
-
-            if (idx + 4 <= json.Length && json.Substring(idx, 4) == "true") return true;
-            return false;
+        private static bool GetBool(System.Text.Json.JsonElement element, string key)
+        {
+            System.Text.Json.JsonElement value;
+            return element.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                element.TryGetProperty(key, out value) && value.ValueKind == System.Text.Json.JsonValueKind.True;
         }
     }
 }

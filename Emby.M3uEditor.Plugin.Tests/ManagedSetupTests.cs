@@ -44,6 +44,41 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void Setup_ExplicitOutputDirectoryOutsidePluginState_IsConfirmed()
+        {
+            using (var temp = new TempDirectory())
+            {
+                var owner = Path.Join(temp.Path, "plugin-state");
+                Directory.CreateDirectory(owner);
+                var output = Path.Join(temp.Path, "media", "publishing");
+                var config = new PluginConfiguration();
+                config.ManagedPublishingOutputRoot = output;
+                var service = new ManagedSetupService(owner);
+                var result = service.Put(config, 17, () => { });
+
+                Assert.True(result.Ready, result.Result);
+                Assert.Equal(output, result.ConfirmedRoot);
+                Assert.Equal(output, service.Get(config).ConfirmedRoot);
+                Assert.False(Directory.Exists(Path.Join(owner, "managed-publishing")));
+            }
+        }
+
+        [Fact]
+        public void Setup_ExplicitFilesystemRoot_IsRejectedInsteadOfFallingBack()
+        {
+            using (var temp = new TempDirectory())
+            {
+                var config = new PluginConfiguration();
+                config.ManagedPublishingOutputRoot = Path.GetPathRoot(temp.Path);
+                var result = new ManagedSetupService(temp.Path).Put(config, 17, () => { });
+
+                Assert.False(result.Ready);
+                Assert.Null(result.ConfirmedRoot);
+                Assert.False(config.ManagedSetupReady);
+            }
+        }
+
+        [Fact]
         public void Setup_PositiveBinding_CreatesAndPersistsOneCanonicalWritableRoot()
         {
             var mappings = "[]";

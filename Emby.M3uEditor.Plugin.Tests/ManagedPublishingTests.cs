@@ -14,8 +14,29 @@ using Xunit;
 
 namespace Emby.M3uEditor.Plugin.Tests
 {
+    [Collection(PluginSingletonCollection.Name)]
     public class ManagedPublishingTests : SyncTestBase
     {
+        [Fact]
+        public async Task PublishManagedMappingAsync_StrmManifestStoresIdentityWithoutPlaybackUrl()
+        {
+            var mapping = MovieMapping(1);
+
+            var result = await MakeService().PublishManagedMappingAsync(mapping, None);
+
+            Assert.True(result.Success, result.Error);
+            using (var manifest = JsonDocument.Parse(File.ReadAllText(Path.Join(
+                TempDir.Path, ".m3u-editor-for-emby", "active.json"))))
+            {
+                var strm = manifest.RootElement.GetProperty("Files")
+                    .EnumerateArray().Single(file => file.GetProperty("RelativePath").GetString().EndsWith(".strm"));
+                Assert.Equal("movie:tmdb:603", strm.GetProperty("CanonicalId").GetString());
+                Assert.Equal("v00", strm.GetProperty("VariantKey").GetString());
+                Assert.Equal(1, strm.GetProperty("SourceId").GetInt32());
+                Assert.False(strm.TryGetProperty("PlaybackUrl", out _));
+            }
+        }
+
         [Fact]
         public async Task PublishManagedMappingAsync_UnapprovedOutputRoot_FailsBeforeWriting()
         {
@@ -30,12 +51,17 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Empty(Directory.GetFiles(TempDir.Path, "*", SearchOption.AllDirectories));
         }
 
-        [Fact]
-        public async Task PublishManagedMappingAsync_MissingOwnedMappingLeaf_IsProvisionedOnFirstReconcile()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task PublishManagedMappingAsync_MissingOwnedMappingLeaf_IsProvisionedOnFirstReconcile(bool explicitOutput)
         {
             using (var owner = new TempDirectory())
             {
-                var config = new PluginConfiguration();
+                var config = new PluginConfiguration
+                {
+                    ManagedPublishingOutputRoot = explicitOutput ? Path.Join(TempDir.Path, "custom-publishing") : string.Empty
+                };
                 Assert.True(new ManagedSetupService(owner.Path).Put(config, 71, () => { }).Ready);
                 var libraries = new ManagedLibraryProvisioningService(owner.Path);
                 var operation = Guid.NewGuid().ToString("D");
@@ -145,6 +171,44 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.True(File.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "active.json")));
         }
 
+        [Fact]
+        public async Task PublishManagedMappingAsync_CancellationAfterQuarantine_RestoresBothGenerations()
+        {
+            var service = MakeService();
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1), None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64), "https://editor.example/current/"), None)).Success);
+            var before = SnapshotFiles(TempDir.Path);
+            using var cancellation = new CancellationTokenSource();
+            service.ManagedPhaseHook = phase => { if (phase == "after-quarantine") cancellation.Cancel(); };
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.PublishManagedMappingAsync(
+                MovieMapping(1, new string('d', 64), "https://editor.example/next/"), cancellation.Token));
+
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+        }
+
+        [Fact]
+        public async Task PublishManagedMappingAsync_StageFailure_PreservesForeignCompensationFile()
+        {
+            var service = MakeService();
+            var original = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
+            var before = SnapshotFiles(TempDir.Path);
+            string foreign = null;
+            service.ManagedPhaseHook = phase =>
+            {
+                if (phase != "after-stage") return;
+                var staging = Directory.GetDirectories(Path.Join(TempDir.Path, ".m3u-editor-for-emby"), "staging-*").Single();
+                foreign = Path.Join(staging, "foreign.bin");
+                File.WriteAllBytes(foreign, new byte[] { 0, 255, 3 });
+                throw new IOException("Injected staging failure.");
+            };
+            var result = await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64)), None);
+            Assert.False(result.Success);
+            Assert.Equal(new byte[] { 0, 255, 3 }, File.ReadAllBytes(foreign));
+            foreach (var file in before) Assert.Equal(file.Value, File.ReadAllBytes(JoinUnderRoot(TempDir.Path, file.Key)));
+        }
+
         [Theory]
         [InlineData("after-stage")]
         [InlineData("after-quarantine")]
@@ -228,6 +292,140 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.False(failed.Success);
             AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
             Assert.Equal(new byte[] { 0, 1, 2, 255 }, File.ReadAllBytes(foreignPath));
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task EmptyManagedGenerations_RemainPublishableAndRollbackable(bool legacyMissingEmptyBackup)
+        {
+            var service = MakeService();
+            service.ManagedConfigurationProvider = DefaultConfig;
+            var empty = MovieMapping(1);
+            empty.Items.Clear();
+            Assert.True((await service.PublishManagedMappingAsync(empty, None)).Success);
+            var populated = MovieMapping(1, new string('c', 64));
+            Assert.True((await service.PublishManagedMappingAsync(populated, None)).Success);
+            var backup = Path.Join(TempDir.Path, ".m3u-editor-for-emby", "previous-files");
+            if (legacyMissingEmptyBackup) Directory.Delete(backup);
+
+            var rollback = await service.RollbackManagedMappingAsync(TempDir.Path, empty.MappingUuid, None, null, TempDir.Path);
+            Assert.True(rollback.Success, rollback.Error);
+            Assert.Equal(empty.Revision, rollback.Revision);
+            Assert.Empty(Directory.GetFiles(Path.Join(TempDir.Path, "Movie"), "*.strm"));
+            Assert.True((await service.PublishManagedMappingAsync(populated, None)).Success);
+            if (legacyMissingEmptyBackup) Directory.Delete(backup);
+            var next = MovieMapping(1, new string('d', 64));
+            var publish = await service.PublishManagedMappingAsync(next, None);
+            Assert.True(publish.Success, publish.Error);
+            for (var revision = 'e'; revision <= 'f'; revision++)
+            {
+                empty.Revision = new string(revision, 64);
+                var result = await service.PublishManagedMappingAsync(empty, None);
+                Assert.True(result.Success, result.Error);
+            }
+            rollback = await service.RollbackManagedMappingAsync(TempDir.Path, empty.MappingUuid, None, null, TempDir.Path);
+            Assert.True(rollback.Success, rollback.Error);
+            Assert.True((await service.PublishManagedMappingAsync(populated, None)).Success);
+        }
+
+        [Theory]
+        [InlineData("after-journal")]
+        [InlineData("after-quarantine")]
+        public async Task PublishManagedMappingAsync_LegacyEmptyBackupFailure_RestoresBothGenerations(string phase)
+        {
+            var service = MakeService();
+            var empty = MovieMapping(1);
+            empty.Items.Clear();
+            Assert.True((await service.PublishManagedMappingAsync(empty, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64)), None)).Success);
+            Directory.Delete(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "previous-files"));
+            var before = SnapshotFiles(TempDir.Path);
+            service.ManagedPhaseHook = current => { if (current == phase) throw new IOException("Injected failure."); };
+            var failed = await service.PublishManagedMappingAsync(MovieMapping(1, new string('d', 64)), None);
+            Assert.False(failed.Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+        }
+
+        [Fact]
+        public async Task MissingNonemptyBackup_RejectsPublicationAndRollbackWithoutMutation()
+        {
+            var service = MakeService();
+            service.ManagedConfigurationProvider = DefaultConfig;
+            var original = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(original, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64)), None)).Success);
+            Directory.Delete(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "previous-files"), true);
+            var before = SnapshotFiles(TempDir.Path);
+            Assert.False((await service.RollbackManagedMappingAsync(TempDir.Path, original.MappingUuid, None, null, TempDir.Path)).Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            Assert.False((await service.PublishManagedMappingAsync(MovieMapping(1, new string('d', 64)), None)).Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+        }
+
+        [Theory]
+        [InlineData("previous-files")]
+        [InlineData("rollback-current")]
+        public async Task RollbackManagedMappingAsync_ForeignMetadataFile_RejectsBeforeMutation(string directory)
+        {
+            var service = MakeService();
+            service.ManagedConfigurationProvider = DefaultConfig;
+            var mapping = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(mapping, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64)), None)).Success);
+            var foreignRoot = Path.Join(TempDir.Path, ".m3u-editor-for-emby", directory);
+            Directory.CreateDirectory(foreignRoot);
+            File.WriteAllBytes(Path.Join(foreignRoot, "foreign.bin"), new byte[] { 0, 255, 3 });
+            var before = SnapshotFiles(TempDir.Path);
+            var manifests = new[] { "active.json", "previous.json" }.Select(name => Path.Join(TempDir.Path, ".m3u-editor-for-emby", name)).ToArray();
+            var timestamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            foreach (var manifest in manifests) File.SetLastWriteTimeUtc(manifest, timestamp);
+            var result = await service.RollbackManagedMappingAsync(TempDir.Path, mapping.MappingUuid, None, null, TempDir.Path);
+            Assert.False(result.Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            Assert.All(manifests, manifest => Assert.Equal(timestamp, File.GetLastWriteTimeUtc(manifest)));
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task RollbackManagedMappingAsync_DamagedBackup_RejectsBeforeMutation(bool missing)
+        {
+            var service = MakeService();
+            service.ManagedConfigurationProvider = DefaultConfig;
+            var mapping = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(mapping, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64)), None)).Success);
+            var file = Directory.GetFiles(Path.Join(TempDir.Path, ".m3u-editor-for-emby", "previous-files"), "*.strm", SearchOption.AllDirectories).Single();
+            if (missing) File.Delete(file); else File.WriteAllText(file, "corrupt");
+            var before = SnapshotFiles(TempDir.Path);
+            Assert.False((await service.RollbackManagedMappingAsync(TempDir.Path, mapping.MappingUuid, None, null, TempDir.Path)).Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+        }
+
+        [Fact]
+        public async Task RollbackManagedMappingAsync_FailedMove_PreservesForeignCompensationFile()
+        {
+            var service = MakeService();
+            service.ManagedConfigurationProvider = DefaultConfig;
+            var mapping = MovieMapping(1);
+            Assert.True((await service.PublishManagedMappingAsync(mapping, None)).Success);
+            Assert.True((await service.PublishManagedMappingAsync(MovieMapping(1, new string('c', 64)), None)).Success);
+            var before = SnapshotFiles(TempDir.Path);
+            var foreign = Path.Join(TempDir.Path, ".m3u-editor-for-emby", "rollback-current", "foreign.bin");
+            service.ManagedFileMoveHook = (operation, path) =>
+            {
+                if (operation != "rollback-previous") return;
+                File.WriteAllBytes(foreign, new byte[] { 0, 255, 3 });
+                throw new IOException("Injected rollback failure.");
+            };
+            Assert.False((await service.RollbackManagedMappingAsync(TempDir.Path, mapping.MappingUuid, None, null, TempDir.Path)).Success);
+            Assert.Equal(new byte[] { 0, 255, 3 }, File.ReadAllBytes(foreign));
+            before.Add(Path.GetRelativePath(TempDir.Path, foreign), File.ReadAllBytes(foreign));
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            service.ManagedFileMoveHook = null;
+            Assert.False((await service.RollbackManagedMappingAsync(TempDir.Path, mapping.MappingUuid, None, null, TempDir.Path)).Success);
+            AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
         }
 
         [Fact]
@@ -338,6 +536,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         public async Task RollbackManagedMappingAsync_MidMoveFailure_RestoresBothGenerations(string operation)
         {
             var service = MakeService();
+            service.ManagedConfigurationProvider = DefaultConfig;
             var original = MovieMapping(1);
             var replacement = MovieMapping(
                 1,
@@ -360,6 +559,9 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.False(failed.Success);
             AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
             Assert.Equal(new byte[] { 0, 1, 2, 255 }, File.ReadAllBytes(foreignPath));
+            service.ManagedFileMoveHook = null;
+            var retry = await service.RollbackManagedMappingAsync(TempDir.Path, original.MappingUuid, None, null, TempDir.Path);
+            Assert.True(retry.Success, retry.Error);
         }
 
         [Fact]
@@ -464,11 +666,45 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task PublishManagedMappingAsync_LargeCatalogAboveLegacyOutputBudget_Succeeds()
+        {
+            var mapping = MovieMappingWithItems(
+                48,
+                new string('a', 220000),
+                "large-catalog",
+                "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+
+            var result = await MakeService().PublishManagedMappingAsync(mapping, None);
+
+            Assert.True(result.Success, result.Error);
+            Assert.Equal(48, Directory.GetFiles(TempDir.Path, "*.nfo", SearchOption.AllDirectories).Length);
+            Assert.True(Directory.GetFiles(TempDir.Path, "*.nfo", SearchOption.AllDirectories)
+                .Sum(path => new FileInfo(path).Length) > 8L * 1024L * 1024L);
+        }
+
+        [Fact]
+        public async Task PublishManagedMappingAsync_NewGenerationExceedsAggregateBudget_WritesNothing()
+        {
+            var mapping = MovieMappingWithItems(
+                (int)(StrmSyncService.MaximumGeneratedBytes / 220000) + 1,
+                new string('a', 220000),
+                "over-budget",
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+
+            var result = await MakeService().PublishManagedMappingAsync(mapping, None);
+
+            Assert.False(result.Success);
+            Assert.Equal("Managed publication aggregate generated byte limit exceeded.", result.Error);
+            Assert.Empty(Directory.GetFiles(TempDir.Path, "*", SearchOption.AllDirectories));
+            Assert.False(Directory.Exists(Path.Join(TempDir.Path, ".m3u-editor-for-emby")));
+        }
+
+        [Fact]
         public async Task PublishManagedMappingAsync_CleanupKeepExceedsAggregateBudget_PreservesActiveGeneration()
         {
             var service = MakeService();
             var original = MovieMappingWithItems(
-                32,
+                (int)(StrmSyncService.MaximumGeneratedBytes / 220000) - 4,
                 new string('a', 220000),
                 "original",
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
@@ -485,7 +721,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             var result = await service.PublishManagedMappingAsync(replacement, None);
 
             Assert.False(result.Success);
-            Assert.Contains("aggregate generated byte limit", result.Error);
+            Assert.Equal("Managed publication aggregate generated byte limit exceeded.", result.Error);
             AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
         }
 
@@ -962,6 +1198,40 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public async Task ReconcileManagedAsync_FirstCallbackFailure_PreservesForeignMetadata()
+        {
+            var mapping = MovieMapping(1);
+            ConfigureReconcile(mapping);
+            var config = DefaultConfig();
+            var foreign = Path.Join(TempDir.Path, ".m3u-editor-for-emby", "foreign.bin");
+            using var client = new HttpClient(new CallbackFailureHandler(Handler, () =>
+            {
+                File.WriteAllBytes(foreign, new byte[] { 0, 255, 3 });
+                throw new HttpRequestException("Callback failed.");
+            }));
+            var service = MakeService(client);
+            service.ManagedConfigurationProvider = () => config;
+            var result = await ReconcileWithRefresh(service, config, () => { });
+            Assert.False(result.Success);
+            Assert.Equal(new byte[] { 0, 255, 3 }, File.ReadAllBytes(foreign));
+            Assert.Empty(Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories));
+        }
+
+        private sealed class CallbackFailureHandler : DelegatingHandler
+        {
+            private readonly Action _onCallback;
+            public CallbackFailureHandler(HttpMessageHandler inner, Action onCallback) : base(inner)
+            {
+                _onCallback = onCallback;
+            }
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+            {
+                if (request.RequestUri.ToString().Contains("action=m3u_editor_sync_result")) _onCallback();
+                return base.SendAsync(request, token);
+            }
+        }
+
+        [Fact]
         public async Task ReconcileManagedAsync_CallbackFailure_RemovesFirstGenerationAndDoesNotReportSuccess()
         {
             var mapping = MovieMapping(1);
@@ -1077,6 +1347,59 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("[]", config.ManagedMappingsJson);
             AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
             Assert.DoesNotContain(Handler.ReceivedUrls, url => url.Contains("action=m3u_editor_sync_result"));
+        }
+
+        [Theory]
+        [InlineData("503", true)]
+        [InlineData("timeout", true)]
+        [InlineData("cancel", true)]
+        [InlineData("success", true)]
+        [InlineData("503", false)]
+        [InlineData("timeout", false)]
+        [InlineData("cancel", false)]
+        public async Task ReconcileManagedAsync_CallbackOutcome_CompensatesOnlyNewGeneration(string outcome, bool duplicate)
+        {
+            var config = DefaultConfig();
+            var service = MakeService();
+            service.ManagedConfigurationProvider = () => config;
+            var previous = MovieMapping(1);
+            ConfigureReconcile(previous);
+            Assert.True((await ReconcileWithRefresh(service, config, () => { })).Success);
+            var current = MovieMapping(1, new string('c', 64), "https://editor.example/current/");
+            ConfigureReconcile(current);
+            Assert.True((await ReconcileWithRefresh(service, config, () => { })).Success);
+            var before = SnapshotFiles(TempDir.Path);
+            var next = duplicate ? current : MovieMapping(2, new string('d', 64), "https://editor.example/next/");
+            if (outcome == "503") Handler.RespondWith("action=m3u_editor_sync_result", "{}", HttpStatusCode.ServiceUnavailable);
+            ConfigureReconcile(next);
+            using var cancellation = new CancellationTokenSource();
+            using var client = new HttpClient(new CallbackFailureHandler(Handler, () =>
+            {
+                if (outcome == "timeout") throw new TaskCanceledException("HTTP timeout");
+                if (outcome == "cancel") { cancellation.Cancel(); cancellation.Token.ThrowIfCancellationRequested(); }
+            }));
+            service = MakeService(client);
+            service.ManagedConfigurationProvider = () => config;
+            var refreshed = false;
+            var reconcile = service.ReconcileManagedAsync(config, SaveConfig, null, cancellation.Token, () => refreshed = true);
+            if (outcome == "cancel") await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reconcile);
+            else Assert.Equal(outcome == "success", (await reconcile).Success);
+            Assert.False(refreshed);
+            if (duplicate) AssertFilesEqual(before, SnapshotFiles(TempDir.Path));
+            var metadata = Path.Join(TempDir.Path, ".m3u-editor-for-emby");
+            using var active = JsonDocument.Parse(File.ReadAllText(Path.Join(metadata, "active.json")));
+            using var backup = JsonDocument.Parse(File.ReadAllText(Path.Join(metadata, "previous.json")));
+            Assert.Equal(current.Revision, active.RootElement.GetProperty("Revision").GetString());
+            Assert.Equal(duplicate ? previous.Revision : next.Revision, backup.RootElement.GetProperty("Revision").GetString());
+            Assert.Equal(current.Revision, config.ManagedActiveGeneration);
+            Assert.Equal(duplicate ? previous.Revision : next.Revision, config.ManagedPreviousGeneration);
+            var state = Assert.Single(JsonSerializer.Deserialize<List<ManagedMappingState>>(config.ManagedMappingsJson));
+            Assert.Equal(config.ManagedActiveGeneration, state.ActiveRevision);
+            Assert.Equal(config.ManagedPreviousGeneration, state.PreviousRevision);
+            Assert.Equal(active.RootElement.GetProperty("Files").GetArrayLength(), state.FileCount);
+            Assert.Equal(1, state.StrmFileCount);
+            Assert.Equal(outcome == "success", state.Success);
+            Assert.Equal(duplicate, state.Duplicate);
         }
 
         [Fact]
@@ -1261,6 +1584,65 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Theory]
+        [InlineData(1, true, true)]
+        [InlineData(2, true, true)]
+        [InlineData(10, true, true)]
+        [InlineData(2, false, true)]
+        [InlineData(2, true, false)]
+        [InlineData(2, false, false)]
+        public async Task PublishManagedMappingAsync_SeriesEpisodeVersions_MatchEveryVisibleStrmSidecar(int variants, bool versions, bool nfo)
+        {
+            var mapping = SeriesMapping();
+            mapping.Options.Versions = versions;
+            mapping.Options.Nfo = nfo;
+            var episode = mapping.Items[0].Episodes[0];
+            var template = episode.Variants[0];
+            episode.Variants = Enumerable.Range(0, variants).Select(index => new M3uEditorVariant
+            {
+                Key = variants == 1 ? "default" : "v" + index.ToString("00"),
+                Preferred = template.Preferred,
+                TechnicalMetadata = EmptyJsonArray()
+            }).ToList();
+            episode.Nfo.Plot = "Synthetic episode plot";
+            using (var genres = JsonDocument.Parse("[\"Synthetic genre\"]")) episode.Nfo.Genres = genres.RootElement.Clone();
+            var service = MakeService();
+            service.ManagedConfigurationProvider = DefaultConfig;
+            var result = await service.PublishManagedMappingAsync(mapping, None);
+            Assert.True(result.Success, result.Error);
+            var strms = Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories);
+            Assert.Equal(versions ? Math.Min(variants, 8) : 1, strms.Length);
+            Assert.Equal(variants - strms.Length, result.OmittedVersions);
+            foreach (var sidecar in strms.Select(strm => Path.ChangeExtension(strm, ".nfo")))
+            {
+                Assert.Equal(nfo, File.Exists(sidecar));
+                if (!nfo) continue;
+                var xml = System.Xml.Linq.XDocument.Load(sidecar).Root;
+                Assert.Equal("episodedetails", xml.Name.LocalName);
+                Assert.Equal(episode.Nfo.Title, xml.Element("title").Value);
+                Assert.Equal(episode.Nfo.Plot, xml.Element("plot").Value);
+                Assert.Equal("Synthetic genre", xml.Element("genre").Value);
+            }
+            Assert.Equal(nfo ? strms.Length + 1 : 0, Directory.GetFiles(TempDir.Path, "*.nfo", SearchOption.AllDirectories).Length);
+            Assert.Equal(nfo, File.Exists(Path.Join(TempDir.Path, "show", "tvshow.nfo")));
+            var metadata = Path.Join(TempDir.Path, ".m3u-editor-for-emby");
+            var manifest = JsonSerializer.Deserialize<ManagedGenerationManifest>(File.ReadAllText(Path.Join(metadata, "active.json")));
+            Assert.Equal(result.FileCount, manifest.Files.Count);
+            Assert.Equal(manifest.Files.Count, manifest.Files.Select(file => file.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            foreach (var file in manifest.Files)
+            {
+                var content = File.ReadAllBytes(JoinUnderRoot(TempDir.Path, file.RelativePath));
+                Assert.Equal(file.Length, content.LongLength);
+                Assert.Equal(file.Sha256, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)).ToLowerInvariant());
+            }
+            var before = SnapshotFiles(TempDir.Path);
+            mapping.Revision = new string('e', 64);
+            episode.Nfo.Plot = "Replacement plot";
+            Assert.True((await service.PublishManagedMappingAsync(mapping, None)).Success);
+            Assert.True((await service.RollbackManagedMappingAsync(TempDir.Path, mapping.MappingUuid, None, null, TempDir.Path)).Success);
+            foreach (var file in manifest.Files) Assert.Equal(before[file.RelativePath], File.ReadAllBytes(JoinUnderRoot(TempDir.Path, file.RelativePath)));
+        }
+
         [Fact]
         public async Task PublishManagedMappingAsync_SeriesEpisodeVersions_WriteCanonicalNfos()
         {
@@ -1270,8 +1652,8 @@ namespace Emby.M3uEditor.Plugin.Tests
 
             Assert.True(result.Success, result.Error);
             Assert.Single(Directory.GetFiles(TempDir.Path, "tvshow.nfo", SearchOption.AllDirectories));
-            Assert.Single(Directory.GetFiles(TempDir.Path, "*.nfo", SearchOption.AllDirectories)
-                .Where(path => !path.EndsWith("tvshow.nfo")));
+            Assert.Equal(2, Directory.GetFiles(TempDir.Path, "*.nfo", SearchOption.AllDirectories)
+                .Count(path => !path.EndsWith("tvshow.nfo")));
             var episodes = Directory.GetFiles(TempDir.Path, "*.strm", SearchOption.AllDirectories);
             Assert.Equal(2, episodes.Length);
             Assert.All(episodes, path => Assert.Contains("s01e02", Path.GetFileName(path)));

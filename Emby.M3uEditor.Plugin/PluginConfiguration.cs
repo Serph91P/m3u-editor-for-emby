@@ -22,11 +22,22 @@ namespace Emby.M3uEditor.Plugin
         public string ManagedPreviousGeneration { get; set; } = string.Empty;
         public string ManagedMappingsJson { get; set; } = string.Empty;
         public string ManagedApprovedOutputRoots { get; set; } = string.Empty;
+        // Empty preserves the legacy DataFolderPath/managed-publishing location.
+        public string ManagedPublishingOutputRoot { get; set; } = string.Empty;
         public string ManagedDirectoryOwnershipJson { get; set; } = string.Empty;
         public string ManagedDryRunSummary { get; set; } = string.Empty;
         public int ManagedOmittedVersions { get; set; }
         public string ManagedLastError { get; set; } = string.Empty;
         public long ManagedLastSuccessTicks { get; set; }
+
+        // Managed playback cache is deliberately opt-in. These primitive values
+        // remain XML-compatible durable configuration, not runtime state.
+        public bool ManagedPlaybackCacheEnabled { get; set; } = false;
+        public string ManagedPlaybackCacheMode { get; set; } = "off";
+        public int ManagedPlaybackCacheNextCount { get; set; } = 1;
+        public bool ManagedPlaybackCacheDeleteAfterWatched { get; set; } = false;
+        public int ManagedPlaybackCacheDeleteGraceHours { get; set; } = 24;
+        public string[] ManagedPlaybackCacheUserIds { get; set; } = new string[0];
 
         // Live TV
         public bool EnableLiveTv { get; set; } = true;
@@ -36,10 +47,21 @@ namespace Emby.M3uEditor.Plugin
         public bool EnableLiveTvDiagnostics { get; set; }
 
         // EPG / Guide Data
-        public EpgSourceMode EpgSource { get; set; } = EpgSourceMode.XtreamServer;
+        private EpgSourceMode? _epgSource;
+        private bool _enableEpg = true;
+        // A setter invocation proves modern XML/JSON presence, independent of element order.
+        public EpgSourceMode EpgSource
+        {
+            get => _epgSource ?? (_enableEpg ? EpgSourceMode.XtreamServer : EpgSourceMode.Disabled);
+            set => _epgSource = value;
+        }
         public string CustomEpgUrl { get; set; } = string.Empty;
         // Back-compat: migrate EnableEpg (bool) → EpgSource on first load
-        [Obsolete("Use EpgSource instead")] public bool EnableEpg { get; set; } = true;
+        [Obsolete("Use EpgSource instead")] public bool EnableEpg
+        {
+            get => _enableEpg;
+            set => _enableEpg = value;
+        }
         public int EpgCacheMinutes { get; set; } = 30;
         public int EpgDaysToFetch { get; set; } = 2;
         public int M3UCacheMinutes { get; set; } = 15;
