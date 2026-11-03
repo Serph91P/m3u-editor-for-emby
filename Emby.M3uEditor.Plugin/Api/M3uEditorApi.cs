@@ -18,9 +18,11 @@ using MediaBrowser.Model.Services;
 namespace Emby.M3uEditor.Plugin.Api
 {
     [Route("/M3uEditor/Epg", "GET", Summary = "Gets XMLTV EPG data for Live TV channels")]
+    [Authenticated(Roles = "Admin")]
     public class GetEpgXml : IReturnVoid { }
 
     [Route("/M3uEditor/LiveTv", "GET", Summary = "Gets M3U playlist for Live TV channels")]
+    [Authenticated(Roles = "Admin")]
     public class GetM3UPlaylist : IReturnVoid { }
 
     [Route("/M3uEditor/Categories/Live", "GET", Summary = "Gets Live TV categories from m3u-editor")]
