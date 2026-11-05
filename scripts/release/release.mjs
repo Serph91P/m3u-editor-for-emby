@@ -33,7 +33,7 @@ export async function planRelease({ cwd, source, branch, excludeTag }) {
     for (const tag of git(cwd, 'tag', '--merged', source).split('\n').filter(Boolean)) {
       if (tag !== excludeTag) git(remote, 'fetch', '--no-tags', cwd, `refs/tags/${tag}:refs/tags/${tag}`);
     }
-    for (const ref of git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/notes/semantic-release').split('\n').filter(Boolean)) {
+    for (const ref of git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/notes').split('\n').filter(ref => ref.startsWith('refs/notes/semantic-release'))) {
       git(remote, 'fetch', cwd, `${ref}:${ref}`);
     }
     git(dir, 'clone', '--branch', branch, remote, snapshot);
