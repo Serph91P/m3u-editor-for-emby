@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Emby.M3uEditor.Plugin.Client;
@@ -515,7 +516,9 @@ namespace Emby.M3uEditor.Plugin.Service
                 extinf.Append("#EXTINF:-1");
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-id=\"{0}\"", EscapeAttribute(epgId));
                 extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-name=\"{0}\"", EscapeAttribute(cleanName));
-                extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-chno=\"{0}\"", channel.DisplayChannelNumber);
+                var channelNumber = channel.DisplayChannelNumber;
+                extinf.AppendFormat(CultureInfo.InvariantCulture, " tvg-chno=\"{0}\"",
+                    Regex.IsMatch(channelNumber, @"\A[0-9]+(?:\.[0-9]+)?\z") ? channelNumber : "0");
 
                 if (!string.IsNullOrEmpty(channel.StreamIcon))
                 {
@@ -529,7 +532,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     extinf.AppendFormat(CultureInfo.InvariantCulture, " group-title=\"{0}\"", EscapeAttribute(groupTitle));
                 }
 
-                extinf.AppendFormat(CultureInfo.InvariantCulture, ",{0}", cleanName);
+                extinf.AppendFormat(CultureInfo.InvariantCulture, ",{0}", EscapeAttribute(cleanName));
 
                 sb.Append(extinf).AppendLine();
                 sb.AppendLine(BuildStreamUrl(config, channel));
@@ -1155,9 +1158,15 @@ namespace Emby.M3uEditor.Plugin.Service
                 return string.Empty;
             }
 
-            return value
-                .Replace("\"", "&quot;")
-                .Replace("&", "&amp;");
+            // M3U has no portable quote escape. Normalize delimiters, not HTML/URL data.
+            var result = new StringBuilder(value.Length);
+            foreach (var character in value)
+            {
+                result.Append(char.IsControl(character) || character == '\u2028' || character == '\u2029'
+                    ? ' '
+                    : character == '"' ? '\'' : character);
+            }
+            return result.ToString();
         }
 
         protected virtual void Dispose(bool disposing)
