@@ -135,6 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
       issues: write
       pull-requests: write
     steps:
@@ -172,7 +173,9 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec semantic-release
+          RELEASE_BUILD_RESULT: ${{ needs.build-and-test.result }}
+          RELEASE_CODEQL_RESULT: ${{ needs.codeql.result }}
+        run: node scripts/release/release.mjs
 
   # GITHUB_TOKEN release events do not start another workflow. Reuse it directly
   # only after this run's publication succeeded, with the same immutable source.

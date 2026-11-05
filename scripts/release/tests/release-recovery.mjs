@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtemp, rm, writeFile, readFile, mkdir, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -26,7 +26,7 @@ async function githubFixture(failure) {
     if (/^\/actions\/runs\/\d+\/jobs$/.test(path)) return send(200, { jobs: runs.find(run => run.id === Number(path.split('/')[3])).jobs });
     const operation = req.method === 'POST' && path === '/releases' ? 'create' : req.method === 'POST' ? 'upload' : req.method === 'PATCH' ? 'publish' : null;
     if (operation) writes++;
-    const fail = operation === failure?.operation && !injected;
+    const fail = operation === failure?.operation && (!injected || failure.always);
     if (fail && !failure.after) { injected = true; return send(failure.status, {}); }
     let result;
     if (req.method === 'GET' && path === '/releases') {
@@ -87,6 +87,36 @@ for (const failure of [null, ...['create', 'upload', 'publish'].flatMap(operatio
 }
 
 
+for (const operation of ['create', 'upload', 'publish']) {
+  test(`permanent ${operation} failure terminates with bounded writes`, async () => {
+    const f = await githubFixture({ operation, after: false, status: 500, always: true });
+    try {
+      const { GitHub, publishRelease } = await import('../release.mjs');
+      await assert.rejects(publishRelease({ github: new GitHub('synthetic-token', f.base, f.base), plan: { gitTag: 'v1.0.1', gitHead: 'a'.repeat(40), channel: null, notes: 'notes' }, assets: new Map([['one.dll', Buffer.from('dll')], ['one.zip', Buffer.from('zip')]]) }), operation === 'publish' ? /Published release readback failed/ : /converge/);
+      assert.equal(f.writes(), operation === 'create' ? 3 : operation === 'upload' ? 4 : 6);
+      assert.equal(f.releases.length, operation === 'create' ? 0 : 1);
+      if (f.releases.length) assert.equal(f.releases[0].draft, true);
+    } finally { await f.close(); }
+  });
+}
+
+for (const stop of [1, 2, 4]) {
+  test(`source authority loss before write ${stop} stops publisher and remains restartable`, async () => {
+    const f = await githubFixture();
+    try {
+      const { GitHub, publishRelease } = await import('../release.mjs');
+      const github = new GitHub('synthetic-token', f.base, f.base);
+      const plan = { gitTag: 'v1.0.1', channel: null, gitHead: 'a'.repeat(40), notes: 'notes' };
+      const assets = new Map([['one.dll', Buffer.from('dll')], ['one.zip', Buffer.from('zip')]]);
+      let checks = 0;
+      await assert.rejects(publishRelease({ github, plan, assets, beforeWrite: () => { if (++checks === stop) throw new Error('source moved'); } }), /source moved/);
+      assert.equal(f.writes(), stop - 1);
+      await publishRelease({ github, plan, assets });
+      assert.equal(f.releases.length, 1); assert.equal(f.releases[0].draft, false);
+    } finally { await f.close(); }
+  });
+}
+
 for (const mutation of ['sha', 'notes', 'channel', 'version', 'bytes', 'starter', 'empty', 'published-incomplete', 'duplicate']) {
   test(`conflicting ${mutation} is fail-closed without changing assets`, async () => {
     const f = await githubFixture();
@@ -114,25 +144,61 @@ for (const mutation of ['sha', 'notes', 'channel', 'version', 'bytes', 'starter'
   });
 }
 
-for (const status of [403, 500, 'malformed']) {
+for (const status of [403, 500, 'malformed', 'malformed-list', 'timeout']) {
   test(`read failure ${status} cannot authorize creation`, async () => {
     let requests = 0;
     const server = createServer((req, res) => {
       requests++;
-      res.writeHead(status === 'malformed' ? 200 : status, { 'Content-Type': 'application/json' });
-      res.end(status === 'malformed' ? '{' : '{}');
+      if (req.url === '/repos/Serph91P/m3u-editor-for-emby') { res.writeHead(200); return res.end(JSON.stringify({ full_name: 'Serph91P/m3u-editor-for-emby', fork: false, permissions: { push: true } })); }
+      if (status === 'timeout') return;
+      res.writeHead(typeof status === 'string' ? 200 : status, { 'Content-Type': 'application/json' });
+      res.end(status === 'malformed' ? '{' : status === 'malformed-list' ? '[{}]' : '{}');
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
       const { GitHub, publishRelease } = await import('../release.mjs');
       const github = new GitHub('synthetic-token', `http://127.0.0.1:${server.address().port}`);
-      await assert.rejects(publishRelease({ github, plan: {}, assets: new Map() }));
-      assert.equal(requests, status === 500 ? 3 : 1);
-    } finally { await new Promise(resolve => server.close(resolve)); }
+      await assert.rejects(publishRelease({ github, plan: { gitTag: 'v1.0.1', gitHead: 'a'.repeat(40), channel: null, notes: 'notes' }, assets: new Map() }));
+      assert.equal(requests, status === 500 || status === 'timeout' ? 4 : 2);
+    } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   });
 }
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
+const run = (command, args, options) => new Promise((resolve, reject) => {
+  const child = spawn(command, args, options); let out = '', err = '';
+  child.stdout.on('data', chunk => out += chunk); child.stderr.on('data', chunk => err += chunk);
+  child.stdin?.end(options?.input);
+  child.on('error', reject); child.on('close', code => resolve({ code, out, err }));
+});
+
+test('ephemeral token Git authentication works without persisted credentials and never reaches another host', async () => {
+  const { gitEnvironment } = await import('../release.mjs');
+  assert.equal(typeof gitEnvironment, 'function');
+  const dir = await mkdtemp(join(tmpdir(), 'release-auth-'));
+  let authenticated = 0, leaked = 0;
+  const foreign = createServer((req, res) => { if (req.headers.authorization) leaked++; res.writeHead(403); res.end(); });
+  await new Promise(resolve => foreign.listen(0, '127.0.0.1', resolve));
+  const server = createServer((req, res) => {
+    if (req.headers.authorization === `basic ${Buffer.from('x-access-token:synthetic-token').toString('base64')}`) authenticated++;
+    res.writeHead(302, { Location: `http://localhost:${foreign.address().port}${req.url}` }); res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const env = gitEnvironment({ ...process.env, GITHUB_TOKEN: 'synthetic-token' });
+    // Map the canonical HTTPS transport to a disposable HTTP server, keeping the header's URL scope.
+    const key = Object.keys(env).find(key => key.startsWith('GIT_CONFIG_KEY_') && env[key].endsWith('.extraheader'));
+    assert.ok(key);
+    env[key] = `http.http://127.0.0.1:${server.address().port}/.extraheader`;
+    const result = await run('git', ['ls-remote', `http://127.0.0.1:${server.address().port}/remote.git`], { cwd: dir, env });
+    assert.notEqual(result.code, 0);
+    assert.ok(authenticated > 0, 'native Git must actually transmit scoped auth');
+    assert.equal(leaked, 0);
+    assert.equal(result.err.includes('synthetic-token'), false);
+    assert.equal(await readFile(join(dir, '.gitconfig'), 'utf8').catch(() => ''), '');
+  } finally { await rm(dir, { recursive: true, force: true }); await new Promise(resolve => server.close(resolve)); await new Promise(resolve => foreign.close(resolve)); }
+});
+
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 async function fixture(branch = 'develop', product = false) {
   const dir = await mkdtemp(join(tmpdir(), 'release-recovery-'));
@@ -161,15 +227,28 @@ async function fixture(branch = 'develop', product = false) {
   return { dir, cwd, source, remote, stable, branch, close: () => rm(dir, { recursive: true, force: true }) };
 }
 
-for (const scenario of ['main-fresh', 'develop-fresh', 'tag-only-old-source', 'notes-only-old-source', 'notes-push-failure']) {
-  test(`real runner and builder: ${scenario}, immutable source and verified rerun`, { timeout: 180000 }, async () => {
+for (const scenario of ['main-first', 'develop-first', 'main-fresh', 'develop-fresh', 'tag-only-old-source', 'tag-only-old-source-main-advanced', 'notes-only-old-source', 'notes-push-failure', 'tag-push-failure', 'legacy-published-noop', 'original-zip-partial']) {
+  test(`real runner and builder: ${scenario}, immutable source and ${scenario === 'develop-first' ? 'mandatory stable-floor rejection' : 'verified rerun'}`, { timeout: 180000 }, async () => {
     const branch = scenario.startsWith('main') ? 'main' : 'develop';
     const f = await fixture(branch, true), http = await githubFixture({ operation: 'upload', after: true, status: 'disconnect' });
     try {
-      const { GitHub, runRelease, planRelease } = await import('../release.mjs');
+      const { GitHub, runRelease, planRelease, reconcileBundle } = await import('../release.mjs');
       assert.equal(typeof runRelease, 'function', 'real release controller is required');
+      if (scenario.endsWith('-first')) {
+        git(f.cwd, 'tag', '-d', 'v1.0.0'); git(f.remote, 'update-ref', '-d', 'refs/tags/v1.0.0');
+      }
+      if (scenario === 'develop-first') {
+        redirectOrigin(f); const refs = git(f.remote, 'show-ref');
+        await assert.rejects(runRelease({ cwd: f.cwd, env: runnerEnv(f), github: new GitHub('synthetic-token', http.base, http.base) }), error => error.errors?.some(cause => cause.message.includes('Stable main release metadata is unavailable')));
+        assert.equal(http.writes(), 0); assert.equal(git(f.remote, 'show-ref'), refs);
+        return;
+      }
       const initial = await planRelease({ cwd: f.cwd, source: f.source, branch });
-      http.releases.push({ id: 900, tag_name: 'v1.0.0', draft: false });
+      if (branch === 'main' && !scenario.endsWith('-first')) {
+        git(f.cwd, 'notes', '--ref=semantic-release-v1.0.0', 'add', '-m', '{"channels":[null]}', 'v1.0.0');
+        git(f.cwd, 'push', 'origin', 'refs/notes/semantic-release-v1.0.0');
+        http.releases.push({ id: 900, tag_name: 'v1.0.0', name: 'v1.0.0', target_commitish: 'main', prerelease: false, body: 'legacy stable notes', draft: false });
+      }
       if (scenario.includes('old-source')) {
         git(f.cwd, 'tag', initial.gitTag, f.source);
         git(f.cwd, 'push', 'origin', `refs/tags/${initial.gitTag}`);
@@ -187,18 +266,24 @@ for (const scenario of ['main-fresh', 'develop-fresh', 'tag-only-old-source', 'n
         ] });
       }
       const controller = git(f.cwd, 'rev-parse', 'HEAD');
+      if (scenario === 'tag-only-old-source-main-advanced') {
+        git(f.cwd, 'checkout', 'main');
+        await writeFile(join(f.cwd, 'fixture'), 'later main branch movement');
+        git(f.cwd, 'commit', '-am', 'ci: later main controller'); git(f.cwd, 'push', 'origin', 'main');
+        git(f.cwd, 'checkout', branch);
+      }
       // Only a disposable Git remote is redirected; the real guard sees the canonical identity.
       git(f.cwd, 'config', `url.${f.remote}.insteadOf`, 'https://github.com/Serph91P/m3u-editor-for-emby.git');
       git(f.cwd, 'remote', 'set-url', 'origin', 'https://github.com/Serph91P/m3u-editor-for-emby.git');
       const env = { ...process.env, GITHUB_EVENT_NAME: 'push', GITHUB_REPOSITORY: 'Serph91P/m3u-editor-for-emby', GITHUB_REF_NAME: branch, GITHUB_REF: `refs/heads/${branch}`, GITHUB_SHA: controller, RELEASE_BUILD_RESULT: 'success', RELEASE_CODEQL_RESULT: 'success' };
       const github = new GitHub('synthetic-token', http.base, http.base);
-      if (scenario === 'notes-push-failure') {
+      if (scenario === 'notes-push-failure' || scenario === 'tag-push-failure') {
         const hook = join(f.remote, 'hooks/pre-receive');
-        await writeFile(hook, '#!/bin/sh\nwhile read old new ref; do\n case "$ref" in refs/notes/*) exit 1;; esac\ndone\n');
+        await writeFile(hook, `#!/bin/sh\nwhile read old new ref; do\n case "$ref" in refs/${scenario.startsWith('notes') ? 'notes' : 'tags'}/*) exit 1;; esac\ndone\n`);
         execFileSync('chmod', ['+x', hook]);
-        await assert.rejects(runRelease({ cwd: f.cwd, env, github }), /notes push|notes readback/);
+        await assert.rejects(runRelease({ cwd: f.cwd, env, github }), /notes push|notes readback|tag source mismatch/);
         assert.equal(http.writes(), 0);
-        assert.equal(git(f.remote, 'rev-parse', initial.gitTag), f.source);
+        if (scenario === 'notes-push-failure') assert.equal(git(f.remote, 'rev-parse', initial.gitTag), f.source);
         await rm(hook);
       }
       await runRelease({ cwd: f.cwd, env, github });
@@ -210,6 +295,48 @@ for (const scenario of ['main-fresh', 'develop-fresh', 'tag-only-old-source', 'n
       assert.deepEqual(JSON.parse(git(f.remote, 'notes', `--ref=semantic-release-${initial.gitTag}`, 'show', initial.gitTag)), { channels: [initial.channel] });
       assert.equal(env.GITHUB_SHA, controller);
       assert.equal(git(f.cwd, 'rev-parse', 'HEAD'), controller);
+      if (scenario === 'original-zip-partial') {
+        const canonical = new Map(release.assets.map(asset => [asset.name, Buffer.from(asset.bytes)]));
+        const legacy = join(f.dir, 'legacy-build');
+        git(f.dir, 'clone', '--no-hardlinks', f.cwd, legacy);
+        git(legacy, 'checkout', '--detach', f.source);
+        execFileSync('bash', [join(root, 'scripts/release/inject-version.sh'), initial.version], { cwd: legacy, stdio: 'pipe' });
+        execFileSync('dotnet', ['build', '-c', 'Release', 'Emby.M3uEditor.Plugin/Emby.M3uEditor.Plugin.csproj', `-p:SourceRevisionId=${f.source}`], { cwd: legacy, stdio: 'pipe' });
+        const dll = release.assets.find(a => a.name.endsWith('.dll'));
+        dll.bytes = await readFile(join(legacy, 'Emby.M3uEditor.Plugin/bin/Release/netstandard2.0/Emby.M3uEditor.Plugin.dll'));
+        dll.size = dll.bytes.length; dll.digest = `sha256:${createHash('sha256').update(dll.bytes).digest('hex')}`;
+        const zip = release.assets.find(a => a.name.endsWith('.zip'));
+        zip.bytes = execFileSync('python3', ['-c', 'import io,sys,zipfile; b=io.BytesIO(); z=zipfile.ZipFile(b,"w"); z.write(sys.argv[1],"Emby.M3uEditor.Plugin.dll"); z.comment=b"original"; z.close(); sys.stdout.buffer.write(b.getvalue())', join(legacy, 'Emby.M3uEditor.Plugin/bin/Release/netstandard2.0/Emby.M3uEditor.Plugin.dll')], { maxBuffer: 20000000 });
+        zip.size = zip.bytes.length;
+        zip.digest = `sha256:${createHash('sha256').update(zip.bytes).digest('hex')}`;
+        const sha = release.assets.find(a => a.name.endsWith('.sha256'));
+        sha.bytes = Buffer.from(`${zip.digest.slice(7)}  ${zip.name}\n`); sha.size = sha.bytes.length;
+        sha.digest = `sha256:${createHash('sha256').update(sha.bytes).digest('hex')}`;
+        release.draft = true;
+        const original = new Map(release.assets.filter(a => !a.name.endsWith('.md5')).map(a => [a.name, Buffer.from(a.bytes)]));
+        release.assets = release.assets.filter(a => !a.name.endsWith('.md5'));
+        await runRelease({ cwd: f.cwd, env, github });
+        assert.equal(release.draft, false); assert.equal(release.assets.length, 4);
+        for (const [name, bytes] of original) assert.deepEqual(release.assets.find(a => a.name === name).bytes, bytes);
+        const saved = release.assets;
+        for (const mismatch of ['source', 'version', 'method']) {
+          const corrupt = { ...dll, bytes: Buffer.from(dll.bytes) };
+          const offset = mismatch === 'source' ? corrupt.bytes.indexOf(f.source) : mismatch === 'version' ? corrupt.bytes.indexOf(initial.version) : 0x250;
+          assert.ok(offset >= 0); corrupt.bytes[offset] ^= 1;
+          corrupt.digest = `sha256:${createHash('sha256').update(corrupt.bytes).digest('hex')}`;
+          release.assets = [corrupt]; release.draft = true;
+          const writes = http.writes();
+          await assert.rejects(reconcileBundle({ github, plan: initial, built: canonical, release }), /Conflicting DLL/);
+          assert.equal(http.writes(), writes);
+        }
+        release.assets = saved; release.draft = false;
+      }
+      if (scenario === 'legacy-published-noop') {
+        release.body = 'Original native notes with historical date, never regenerate';
+        release.target_commitish = branch;
+        git(f.cwd, 'notes', '--ref=semantic-release-v0.5.0', 'add', '-m', '{"channels":[null]}', f.source);
+        git(f.cwd, 'push', 'origin', 'refs/notes/semantic-release-v0.5.0');
+      }
       const before = JSON.stringify(http.releases), writes = http.writes();
       await runRelease({ cwd: f.cwd, env, github });
       assert.equal(http.writes(), writes);
@@ -219,24 +346,147 @@ for (const scenario of ['main-fresh', 'develop-fresh', 'tag-only-old-source', 'n
   });
 }
 
-test('unresolved legacy tags below a published successor require an explicit recovery boundary', async () => {
-  const f = await fixture('develop'), http = await githubFixture();
+test('superseded legacy gap is untouched while the current orphan recovers above a published frontier', async () => {
+  const f = await fixture('develop', true), http = await githubFixture();
   try {
     const { GitHub, runRelease, planRelease } = await import('../release.mjs');
     const plan = await planRelease({ cwd: f.cwd, source: f.source, branch: 'develop' });
     git(f.cwd, 'tag', 'v0.9.1-beta.1', f.stable);
+    git(f.cwd, 'tag', 'v0.8.0-beta.1', f.stable);
     git(f.cwd, 'tag', plan.gitTag, f.source);
+    git(f.cwd, 'tag', 'v1.0.0-beta.1', f.stable);
+    git(f.cwd, 'notes', '--ref=semantic-release-v1.0.0-beta.1', 'add', '-m', '{"channels":["develop"]}', 'v1.0.0-beta.1');
+    git(f.cwd, 'push', 'origin', 'refs/notes/semantic-release-v1.0.0-beta.1');
     git(f.cwd, 'push', 'origin', '--tags');
-    http.releases.push({ id: 900, tag_name: 'v1.0.0', draft: false }, { id: 901, tag_name: 'v1.0.0-beta.1', draft: false });
+    http.releases.push({ id: 901, tag_name: 'v1.0.0-beta.1', name: 'v1.0.0-beta.1', target_commitish: 'develop', prerelease: true, body: 'original legacy notes', draft: false });
+    const legacy = JSON.stringify(http.releases[0]);
+    http.releases.push({ id: 902, tag_name: 'v0.8.0-beta.1', name: 'v0.8.0-beta.1', target_commitish: 'develop', prerelease: true, body: 'ancient notes with no recoverable channel note', draft: false });
     git(f.cwd, 'config', `url.${f.remote}.insteadOf`, 'https://github.com/Serph91P/m3u-editor-for-emby.git');
     git(f.cwd, 'remote', 'set-url', 'origin', 'https://github.com/Serph91P/m3u-editor-for-emby.git');
     const env = { ...process.env, GITHUB_EVENT_NAME: 'push', GITHUB_REPOSITORY: 'Serph91P/m3u-editor-for-emby', GITHUB_REF_NAME: 'develop', GITHUB_REF: 'refs/heads/develop', GITHUB_SHA: f.source, RELEASE_BUILD_RESULT: 'success', RELEASE_CODEQL_RESULT: 'success' };
-    await assert.rejects(runRelease({ cwd: f.cwd, env, github: new GitHub('synthetic-token', http.base, http.base) }), /Multiple unresolved release tags/);
-    assert.equal(http.writes(), 0);
+    await runRelease({ cwd: f.cwd, env, github: new GitHub('synthetic-token', http.base, http.base) });
+    assert.equal(JSON.stringify(http.releases[0]), legacy);
+    assert.equal(http.releases.find(r => r.tag_name === plan.gitTag).draft, false);
+    assert.equal(git(f.remote, 'rev-parse', 'v0.9.1-beta.1'), f.stable);
+    assert.equal(git(f.remote, 'for-each-ref', '--format=%(refname)', 'refs/notes/semantic-release-v0.9.1-beta.1'), '');
     assert.equal(git(f.remote, 'rev-parse', plan.gitTag), f.source);
-    assert.equal(http.releases.length, 2);
+    assert.equal(http.releases.length, 3);
   } finally { await f.close(); await http.close(); }
 });
+
+test('native authenticated HTTP Git fetch and push use the ephemeral token with no stored credentials', async () => {
+  const f = await fixture(); let authenticated = 0;
+  git(f.remote, 'config', 'http.receivepack', 'true');
+  const server = createServer(async (req, res) => {
+    if (req.headers.authorization !== `basic ${Buffer.from('x-access-token:synthetic-token').toString('base64')}`) { res.writeHead(403); return res.end(); }
+    authenticated++;
+    const url = new URL(req.url, 'http://localhost'); const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const backend = spawn('git', ['http-backend'], { env: { ...process.env, GIT_PROJECT_ROOT: f.dir, GIT_HTTP_EXPORT_ALL: '1', PATH_INFO: url.pathname, QUERY_STRING: url.search.slice(1), REQUEST_METHOD: req.method, CONTENT_TYPE: req.headers['content-type'] || '', REMOTE_USER: 'synthetic' } });
+    const output = []; backend.stdout.on('data', chunk => output.push(chunk)); backend.stderr.resume();
+    backend.stdin.end(Buffer.concat(chunks));
+    backend.on('close', () => {
+      const bytes = Buffer.concat(output), split = bytes.indexOf('\r\n\r\n');
+      if (split < 0) { res.writeHead(500); return res.end(); }
+      const headers = bytes.subarray(0, split).toString().split('\r\n');
+      let status = 200;
+      for (const line of headers) { const colon = line.indexOf(':'); const key = line.slice(0, colon), value = line.slice(colon + 1).trim(); if (key === 'Status') status = Number(value.split(' ')[0]); else res.setHeader(key, value); }
+      res.writeHead(status); res.end(bytes.subarray(split + 4));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { gitEnvironment } = await import('../release.mjs');
+    const env = gitEnvironment({ ...process.env, GITHUB_TOKEN: 'synthetic-token' });
+    const key = Object.keys(env).find(key => key.startsWith('GIT_CONFIG_KEY_') && env[key].endsWith('.extraheader'));
+    env[key] = `http.http://127.0.0.1:${server.address().port}/.extraheader`;
+    const clone = join(f.dir, 'http-clone');
+    const result = await run('git', ['clone', `http://127.0.0.1:${server.address().port}/remote.git`, clone], { env });
+    assert.equal(result.code, 0, result.err);
+    const tag = 'v1.0.1-beta.1'; git(clone, 'tag', tag, f.source);
+    const pushed = await run('git', ['push', 'origin', `refs/tags/${tag}`], { cwd: clone, env });
+    assert.equal(pushed.code, 0, pushed.err); assert.equal(git(f.remote, 'rev-parse', tag), f.source);
+    assert.ok(authenticated >= 4);
+    assert.equal((await readFile(join(clone, '.git/config'), 'utf8')).includes('synthetic-token'), false);
+  } finally { await new Promise(resolve => server.close(resolve)); await f.close(); }
+});
+
+const runnerEnv = (f, changes = {}) => ({ ...process.env, GITHUB_EVENT_NAME: 'push', GITHUB_REPOSITORY: 'Serph91P/m3u-editor-for-emby', GITHUB_REF_NAME: f.branch, GITHUB_REF: `refs/heads/${f.branch}`, GITHUB_SHA: git(f.cwd, 'rev-parse', 'HEAD'), RELEASE_BUILD_RESULT: 'success', RELEASE_CODEQL_RESULT: 'success', ...changes });
+const redirectOrigin = f => {
+  git(f.cwd, 'config', `url.${f.remote}.insteadOf`, 'https://github.com/Serph91P/m3u-editor-for-emby.git');
+  git(f.cwd, 'remote', 'set-url', 'origin', 'https://github.com/Serph91P/m3u-editor-for-emby.git');
+};
+const trustedRun = f => ({ id: 100, workflow_id: 42, path: '.github/workflows/ci.yml', head_sha: f.source, head_branch: f.branch, event: 'push', head_repository: { full_name: 'Serph91P/m3u-editor-for-emby', fork: false }, status: 'completed', conclusion: 'failure', jobs: [
+  { name: 'Build & Test', conclusion: 'success', head_sha: f.source },
+  { name: 'CodeQL Security Analysis', conclusion: 'success', head_sha: f.source },
+] });
+
+for (const mutation of ['fork', 'repository', 'pr', 'sha', 'branch', 'workflow', 'path', 'pending', 'build', 'codeql', 'job-sha', 'duplicate-job', 'no-runs']) {
+  test(`historical ${mutation} CI evidence is rejected before any remote mutation`, async () => {
+    const f = await fixture(), http = await githubFixture();
+    try {
+      const { GitHub, runRelease, planRelease } = await import('../release.mjs');
+      const plan = await planRelease({ cwd: f.cwd, source: f.source, branch: f.branch });
+      git(f.cwd, 'tag', plan.gitTag, f.source); git(f.cwd, 'push', 'origin', '--tags');
+      await writeFile(join(f.cwd, 'fixture'), 'controller'); git(f.cwd, 'commit', '-am', 'ci: controller'); git(f.cwd, 'push', 'origin', f.branch);
+      const run = trustedRun(f);
+      if (mutation === 'fork') run.head_repository.fork = true;
+      if (mutation === 'repository') run.head_repository.full_name = 'foreign/repo';
+      if (mutation === 'pr') run.event = 'pull_request';
+      if (mutation === 'sha') run.head_sha = 'b'.repeat(40);
+      if (mutation === 'branch') run.head_branch = 'main';
+      if (mutation === 'workflow') run.workflow_id = 43;
+      if (mutation === 'path') run.path = '.github/workflows/other.yml';
+      if (mutation === 'pending') run.status = 'in_progress';
+      if (mutation === 'build') run.jobs[0].conclusion = 'failure';
+      if (mutation === 'codeql') run.jobs[1].conclusion = 'skipped';
+      if (mutation === 'job-sha') run.jobs[1].head_sha = 'b'.repeat(40);
+      if (mutation === 'duplicate-job') run.jobs.push({ ...run.jobs[0] });
+      if (mutation !== 'no-runs') http.runs.push(run);
+      redirectOrigin(f);
+      const refs = git(f.remote, 'show-ref');
+      await assert.rejects(runRelease({ cwd: f.cwd, env: runnerEnv(f), github: new GitHub('synthetic-token', http.base, http.base) }), /No trusted push CI/);
+      assert.equal(http.writes(), 0); assert.equal(git(f.remote, 'show-ref'), refs);
+    } finally { await f.close(); await http.close(); }
+  });
+}
+
+for (const mutation of ['pr', 'fork', 'controller-sha', 'source-moved', 'origin', 'build', 'codeql', 'multiple-above-frontier', 'multiple-no-frontier', 'notes-channel', 'tag-version', 'release-notes', 'release-sha']) {
+  test(`real controller rejects ${mutation} with zero writes`, async () => {
+    const f = await fixture('develop', mutation.startsWith('release-')), http = await githubFixture();
+    try {
+      const { GitHub, runRelease, planRelease } = await import('../release.mjs');
+      const plan = await planRelease({ cwd: f.cwd, source: f.source, branch: f.branch });
+      if (mutation.startsWith('release-')) http.releases.push({ id: 901, tag_name: plan.gitTag, name: plan.gitTag, target_commitish: mutation === 'release-sha' ? 'b'.repeat(40) : f.source, prerelease: true, body: mutation === 'release-notes' ? 'foreign notes' : plan.notes, draft: true, assets: [] });
+      git(f.cwd, 'tag', plan.gitTag, f.source);
+      if (mutation.startsWith('multiple')) git(f.cwd, 'tag', 'v0.9.1-beta.1', f.stable);
+      if (mutation === 'multiple-above-frontier') {
+        git(f.cwd, 'tag', 'v0.8.0-beta.1', f.stable);
+        git(f.cwd, 'notes', '--ref=semantic-release-v0.8.0-beta.1', 'add', '-m', '{"channels":["develop"]}', f.stable);
+        git(f.cwd, 'push', 'origin', 'refs/notes/semantic-release-v0.8.0-beta.1');
+        http.releases.push({ id: 901, tag_name: 'v0.8.0-beta.1', name: 'v0.8.0-beta.1', target_commitish: 'develop', prerelease: true, body: 'old', draft: false });
+      }
+      if (mutation === 'notes-channel') {
+        git(f.cwd, 'notes', `--ref=semantic-release-${plan.gitTag}`, 'add', '-m', '{"channels":["beta"]}', plan.gitTag);
+        git(f.cwd, 'push', 'origin', `refs/notes/semantic-release-${plan.gitTag}`);
+      }
+      if (mutation === 'tag-version') { git(f.cwd, 'tag', '-d', plan.gitTag); git(f.cwd, 'tag', 'v9.0.0-beta.1', f.source); }
+      git(f.cwd, 'push', 'origin', '--tags');
+      const env = runnerEnv(f);
+      if (mutation === 'pr') env.GITHUB_EVENT_NAME = 'pull_request';
+      if (mutation === 'fork') env.GITHUB_REPOSITORY = 'foreign/repo';
+      if (mutation === 'controller-sha') env.GITHUB_SHA = f.stable;
+      if (mutation === 'source-moved') git(f.remote, 'update-ref', `refs/heads/${f.branch}`, f.stable);
+      if (mutation === 'build') env.RELEASE_BUILD_RESULT = 'failure';
+      if (mutation === 'codeql') env.RELEASE_CODEQL_RESULT = 'pending';
+      redirectOrigin(f);
+      if (mutation === 'origin') git(f.cwd, 'config', 'remote.origin.url', f.remote);
+      const refs = git(f.remote, 'show-ref');
+      await assert.rejects(runRelease({ cwd: f.cwd, env, github: new GitHub('synthetic-token', http.base, http.base) }));
+      assert.equal(http.writes(), 0); assert.equal(git(f.remote, 'show-ref'), refs);
+    } finally { await f.close(); await http.close(); }
+  });
+}
 
 for (const branch of ['main', 'develop']) {
   test(`native planner computes ${branch}, reconstructs orphan and recognizes v25 notes`, async () => {

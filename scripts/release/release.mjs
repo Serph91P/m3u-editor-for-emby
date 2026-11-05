@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, symlink, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,6 +47,7 @@ export class GitHub {
       const { data, link } = await this.request(next);
       const items = key ? data[key] : data;
       requireState(Array.isArray(items), 'Malformed GitHub list');
+      if (path === `${repoPath}/releases`) requireState(items.every(release => release && Number.isSafeInteger(release.id) && release.id > 0 && typeof release.tag_name === 'string' && typeof release.draft === 'boolean' && typeof release.prerelease === 'boolean' && typeof release.body === 'string' && typeof release.target_commitish === 'string'), 'Malformed GitHub release list');
       values.push(...items);
       const target = link?.match(/<([^>]+)>;\s*rel="next"/)?.[1];
       if (target) {
@@ -72,15 +73,16 @@ async function uncertainWrite(github, path, options) {
   }
 }
 
-export async function publishRelease({ github, plan, assets }) {
+export async function publishRelease({ github, plan, assets, publishedIdentity, beforeWrite }) {
   await github.authenticate();
-  const expected = { tag_name: plan.gitTag, target_commitish: plan.gitHead, name: plan.gitTag, body: plan.notes, prerelease: plan.channel != null };
+  const expected = { tag_name: plan.gitTag, target_commitish: publishedIdentity?.target_commitish ?? plan.gitHead, name: plan.gitTag, body: publishedIdentity?.body ?? plan.notes, prerelease: plan.channel != null };
   const find = async () => {
     const matches = (await github.list(`${repoPath}/releases`)).filter(release => release.tag_name === plan.gitTag);
     requireState(matches.length <= 1, `Duplicate releases for ${plan.gitTag}`);
     const release = matches[0];
     if (release) {
       requireState(Number.isSafeInteger(release.id) && typeof release.draft === 'boolean', 'Malformed release identity');
+      requireState(!publishedIdentity || release.draft === false, 'Published release changed state; refusing mutation');
       for (const [key, value] of Object.entries(expected)) requireState(release[key] === value, `Conflicting release ${key} for ${plan.gitTag}`);
     }
     return release;
@@ -89,6 +91,7 @@ export async function publishRelease({ github, plan, assets }) {
   for (let attempt = 0; attempt < 3; attempt++) {
     release = await find();
     if (release) break;
+    await beforeWrite?.();
     await uncertainWrite(github, `${repoPath}/releases`, { method: 'POST', body: { ...expected, draft: true } });
   }
   release = await find();
@@ -110,6 +113,7 @@ export async function publishRelease({ github, plan, assets }) {
   requireState(release.draft || !missing.length, 'Published release is incomplete; refusing mutation');
   for (const name of missing) {
     for (let attempt = 0; attempt < 3 && (await verify()).includes(name); attempt++) {
+      await beforeWrite?.();
       await uncertainWrite(github, `${repoPath}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`, { method: 'POST', body: assets.get(name), upload: true });
     }
     requireState(!(await verify()).includes(name), `Asset upload did not converge: ${name}`);
@@ -118,6 +122,7 @@ export async function publishRelease({ github, plan, assets }) {
   for (let attempt = 0; attempt < 3; attempt++) {
     release = await find();
     if (!release.draft) break;
+    await beforeWrite?.();
     await uncertainWrite(github, `${repoPath}/releases/${release.id}`, { method: 'PATCH', body: { draft: false } });
   }
   release = await find();
@@ -126,7 +131,21 @@ export async function publishRelease({ github, plan, assets }) {
 }
 const repository = 'Serph91P/m3u-editor-for-emby';
 const repositoryUrl = `https://github.com/${repository}.git`;
-const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_AUTHOR_NAME: 'release', GIT_AUTHOR_EMAIL: 'release@example.invalid', GIT_COMMITTER_NAME: 'release', GIT_COMMITTER_EMAIL: 'release@example.invalid' };
+export function gitEnvironment(env) {
+  const result = { ...env, GIT_TERMINAL_PROMPT: '0', GIT_AUTHOR_NAME: 'release', GIT_AUTHOR_EMAIL: 'release@example.invalid', GIT_COMMITTER_NAME: 'release', GIT_COMMITTER_EMAIL: 'release@example.invalid' };
+  if (env.GITHUB_TOKEN) {
+    const settings = [
+      ['credential.helper', ''],
+      ['http.followRedirects', 'false'],
+      ['http.https://github.com/.extraheader', `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${env.GITHUB_TOKEN}`).toString('base64')}`],
+    ];
+    let count = Number(env.GIT_CONFIG_COUNT || 0);
+    for (const [key, value] of settings) { result[`GIT_CONFIG_KEY_${count}`] = key; result[`GIT_CONFIG_VALUE_${count++}`] = value; }
+    result.GIT_CONFIG_COUNT = String(count);
+  }
+  return result;
+}
+const gitEnv = gitEnvironment(process.env);
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: gitEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const ancestor = (cwd, a, b) => { try { git(cwd, 'merge-base', '--is-ancestor', a, b); return true; } catch (error) { if (error.status === 1) return false; throw error; } };
 const config = JSON.parse(await readFile(join(root, '.releaserc.json'), 'utf8'));
@@ -137,7 +156,7 @@ const notesRefs = cwd => git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/n
 
 function checkNotes(cwd, plan) {
   let found = false;
-  for (const ref of notesRefs(cwd)) {
+  for (const ref of notesRefs(cwd).filter(ref => ref === `refs/notes/semantic-release-${plan.gitTag}` || ref === 'refs/notes/semantic-release')) {
     const entries = git(cwd, 'notes', `--ref=${ref}`, 'list').split('\n').filter(Boolean);
     const entry = entries.find(line => line.split(' ')[1] === plan.gitHead);
     if (!entry) continue;
@@ -153,6 +172,7 @@ async function remoteNotes(cwd, plan) {
   try {
     git(dir, 'init', '--bare');
     git(dir, 'fetch', '--no-tags', git(cwd, 'remote', 'get-url', 'origin'), `refs/tags/${plan.gitTag}:refs/tags/${plan.gitTag}`, 'refs/notes/*:refs/notes/*');
+    requireState(git(dir, 'rev-parse', `${plan.gitTag}^{commit}`) === plan.gitHead, 'Remote tag source mismatch');
     return checkNotes(dir, plan);
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
@@ -197,10 +217,108 @@ export async function buildBundle({ cwd, plan }) {
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
+// Compare managed identity, metadata, every method body, static data and resources, not compiler/PDB paths.
+// No assembly is loaded/executed; unsupported native payloads fail closed.
+async function verifyOriginalDll(original, rebuilt) {
+  if (original.equals(rebuilt)) return;
+  const dir = await mkdtemp(join(tmpdir(), 'release-dll-'));
+  try {
+    await writeFile(join(dir, 'verify.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>');
+    await writeFile(join(dir, 'Program.cs'), `
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
+class Verify {
+  static byte[] Identity(string path) {
+    using var pe = new PEReader(File.OpenRead(path));
+    if (!pe.HasMetadata || pe.PEHeaders.CorHeader.Flags != CorFlags.ILOnly) throw new Exception("Unsupported DLL");
+    var md = pe.GetMetadataReader();
+    using var output = new MemoryStream();
+    var metadata = pe.GetMetadata().GetContent().ToArray();
+    var mvid = md.GetGuid(md.GetModuleDefinition().Mvid).ToByteArray();
+    var offsets = Enumerable.Range(0, metadata.Length - 15).Where(i => metadata.AsSpan(i, 16).SequenceEqual(mvid)).ToArray();
+    if (offsets.Length != 1) throw new Exception("Ambiguous MVID");
+    Array.Clear(metadata, offsets[0], 16);
+    for (var row = 0; row < md.GetTableRowCount(TableIndex.FieldRva); row++)
+      Array.Clear(metadata, md.GetTableMetadataOffset(TableIndex.FieldRva) + row * md.GetTableRowSize(TableIndex.FieldRva), 4);
+    output.Write(metadata);
+    foreach (var handle in md.MethodDefinitions) {
+      var method = md.GetMethodDefinition(handle);
+      if (method.RelativeVirtualAddress != 0) {
+        var body = pe.GetMethodBody(method.RelativeVirtualAddress);
+        output.Write(pe.GetSectionData(method.RelativeVirtualAddress).GetContent(0, body.Size).ToArray());
+      }
+    }
+    foreach (var handle in md.FieldDefinitions) {
+      var field = md.GetFieldDefinition(handle);
+      if (field.GetRelativeVirtualAddress() == 0) continue;
+      var signature = md.GetBlobReader(field.Signature);
+      if (signature.ReadByte() != 0x06 || signature.ReadByte() != 0x11) throw new Exception("Unsupported FieldRVA signature");
+      var type = signature.ReadTypeHandle();
+      if (type.Kind != HandleKind.TypeDefinition) throw new Exception("Unsupported FieldRVA type");
+      var size = md.GetTypeDefinition((TypeDefinitionHandle)type).GetLayout().Size;
+      if (size <= 0 || size > 20000000) throw new Exception("Invalid FieldRVA layout");
+      output.Write(pe.GetSectionData(field.GetRelativeVirtualAddress()).GetContent(0, size).ToArray());
+    }
+    var resources = pe.PEHeaders.CorHeader.ResourcesDirectory;
+    if (resources.Size != 0) output.Write(pe.GetSectionData(resources.RelativeVirtualAddress).GetContent(0, resources.Size).ToArray());
+    return SHA256.HashData(output.ToArray());
+  }
+  static int Main(string[] args) => Identity(args[0]).SequenceEqual(Identity(args[1])) ? 0 : 1;
+}`);
+    await writeFile(join(dir, 'original.dll'), original); await writeFile(join(dir, 'rebuilt.dll'), rebuilt);
+    execFileSync('dotnet', ['run', '--project', join(dir, 'verify.csproj'), '--configuration', 'Release', '--', join(dir, 'original.dll'), join(dir, 'rebuilt.dll')], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+  } catch (error) { throw new Error(`Conflicting DLL version, source or managed payload: ${String(error.stdout || '')}${String(error.stderr || '')}`); }
+  finally { await rm(dir, { recursive: true, force: true }); }
+}
+
+export async function reconcileBundle({ github, plan, built, release }) {
+  const assets = new Map(built), original = new Map();
+  if (release) {
+    for (const asset of await github.list(`${repoPath}/releases/${release.id}/assets`)) {
+      requireState(assets.has(asset.name) && !original.has(asset.name) && Number.isSafeInteger(asset.id) && asset.state === 'uploaded' && asset.size > 0, `Conflicting or incomplete asset ${asset.name}`);
+      const bytes = (await github.request(`${repoPath}/releases/assets/${asset.id}`, { binary: true })).data;
+      requireState(bytes.length === asset.size && (!asset.digest || asset.digest === digest(bytes)), `Conflicting asset digest: ${asset.name}`);
+      original.set(asset.name, bytes);
+    }
+    if (release?.draft === false) requireState(original.size === 4, 'Published release is incomplete; refusing mutation');
+  }
+  const dllName = 'Emby.M3uEditor.Plugin.dll', zipName = `m3u-editor-for-emby-${plan.version}.zip`;
+  const dir = await mkdtemp(join(tmpdir(), 'release-bundle-'));
+  try {
+    for (const [name, bytes] of assets) { requireState(!name.includes('/'), 'Invalid asset path'); await writeFile(join(dir, name), bytes); }
+    if (original.has(zipName)) {
+      await writeFile(join(dir, zipName), original.get(zipName));
+      const dll = execFileSync('python3', ['-c', 'import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert z.namelist()==[sys.argv[2]]; assert z.getinfo(sys.argv[2]).file_size < 20000000; sys.stdout.buffer.write(z.read(sys.argv[2]))', join(dir, zipName), dllName], { maxBuffer: 20000000 });
+      requireState(!original.has(dllName) || original.get(dllName).equals(dll), 'Conflicting ZIP/DLL payload');
+      original.set(dllName, dll);
+    }
+    if (original.has(dllName)) await verifyOriginalDll(original.get(dllName), built.get(dllName));
+    for (const [name, bytes] of original) assets.set(name, bytes);
+    if (!original.has(zipName) && original.has(dllName)) {
+      await writeFile(join(dir, dllName), assets.get(dllName));
+      execFileSync('python3', ['-c', 'import sys,pathlib,zipfile; e=zipfile.ZipInfo(sys.argv[2],(1980,1,1,0,0,0)); e.compress_type=zipfile.ZIP_DEFLATED; e.create_system=3; e.external_attr=0o100644<<16; z=zipfile.ZipFile(sys.argv[1],"w"); z.writestr(e,pathlib.Path(sys.argv[3]).read_bytes(),compresslevel=9); z.close()', join(dir, zipName), dllName, join(dir, dllName)]);
+      assets.set(zipName, await readFile(join(dir, zipName)));
+    }
+    for (const [suffix, target, algorithm] of [['sha256', zipName, 'sha256'], ['md5', dllName, 'md5']]) {
+      const name = `m3u-editor-for-emby-${plan.version}.${suffix}`;
+      const hash = createHash(algorithm).update(assets.get(target)).digest('hex');
+      if (original.has(name)) requireState(original.get(name).toString() === `${hash}  ${target}\n`, `Conflicting ${suffix} sidecar`);
+      else assets.set(name, Buffer.from(`${hash}  ${target}\n`));
+    }
+    if (release?.draft === false) requireState(original.size === 4, 'Published release is incomplete; refusing mutation');
+    return assets;
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}
+
 export async function runRelease({ cwd = process.cwd(), env = process.env, github = new GitHub(env.GITHUB_TOKEN) } = {}) {
   const branch = env.GITHUB_REF_NAME, controller = env.GITHUB_SHA;
   const authority = () => {
-    execFileSync('bash', [join(root, 'scripts/release/verify-release-context.sh')], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync('bash', [join(root, 'scripts/release/verify-release-context.sh')], { cwd, env: gitEnvironment(env), stdio: ['ignore', 'pipe', 'pipe'] });
     requireState(git(cwd, 'rev-parse', 'HEAD') === controller, 'Controller HEAD differs from CI source');
     const origin = git(cwd, 'config', '--get', 'remote.origin.url');
     requireState([repositoryUrl, `git@github.com:${repository}.git`, `ssh://git@github.com/${repository}.git`].includes(origin), 'Untrusted origin repository');
@@ -213,8 +331,23 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
     const version = semver.valid(tag);
     return version && (branch === 'develop' ? semver.prerelease(version)?.[0] === 'beta' : !semver.prerelease(version));
   }).sort((a, b) => semver.compare(a, b));
-  const incomplete = tags.filter(tag => !releases.some(release => release.tag_name === tag && release.draft === false));
-  // Published releases do not hide an earlier interrupted candidate, including notes-present tags.
+  const channel = branch === 'develop' ? 'develop' : null;
+  let frontier;
+  for (const tag of [...tags].reverse()) {
+    const matches = releases.filter(release => release.tag_name === tag);
+    requireState(matches.length <= 1, `Duplicate releases for ${tag}`);
+    const release = matches[0];
+    if (!release || release.draft !== false) continue;
+    const source = git(cwd, 'rev-parse', `${tag}^{commit}`);
+    requireState(release.name === tag && release.prerelease === (channel !== null) &&
+      [source, branch].includes(release.target_commitish) && typeof release.body === 'string', `Conflicting published identity for ${tag}`);
+    requireState(await remoteNotes(cwd, { gitTag: tag, gitHead: source, channel }), `Missing published channel notes for ${tag}`);
+    frontier = tag;
+    break;
+  }
+  const incomplete = tags.filter(tag => (!frontier || semver.gt(tag, frontier)) &&
+    !releases.some(release => release.tag_name === tag && release.draft === false));
+  // Older gaps are superseded only by an authenticated, source-reachable channel frontier.
   let plan;
   if (incomplete.length) {
     requireState(incomplete.length === 1, 'Multiple unresolved release tags; refusing version advance');
@@ -235,11 +368,15 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
   requireState(plan.channel === (branch === 'develop' ? 'develop' : null), 'Unexpected native channel');
   const hasNotes = checkNotes(cwd, plan);
   if (plan.gitHead !== controller) await verifyHistoricalSource({ github, source: plan.gitHead, branch });
-  const assets = await buildBundle({ cwd, plan });
+  const existing = releases.find(release => release.tag_name === plan.gitTag);
+  if (existing && existing.draft !== false) requireState(existing.name === plan.gitTag && existing.target_commitish === plan.gitHead && existing.prerelease === (plan.channel !== null) && existing.body === plan.notes, 'Conflicting draft release identity or notes');
+  const built = await buildBundle({ cwd, plan });
+  const assets = await reconcileBundle({ github, plan, built, release: existing });
   authority();
   let remoteTag = git(cwd, 'ls-remote', 'origin', `refs/tags/${plan.gitTag}`, `refs/tags/${plan.gitTag}^{}`);
   if (!remoteTag) {
-    git(cwd, 'tag', plan.gitTag, plan.gitHead);
+    if (!git(cwd, 'tag', '--list', plan.gitTag)) git(cwd, 'tag', plan.gitTag, plan.gitHead);
+    requireState(git(cwd, 'rev-parse', `${plan.gitTag}^{commit}`) === plan.gitHead, 'Conflicting local tag source');
     try { git(cwd, 'push', 'origin', `refs/tags/${plan.gitTag}`); } catch { /* Confirm an uncertain push by exact remote readback below. */ }
   }
   remoteTag = git(cwd, 'ls-remote', 'origin', `refs/tags/${plan.gitTag}`, `refs/tags/${plan.gitTag}^{}`);
@@ -250,7 +387,14 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
   }
   requireState(await remoteNotes(cwd, plan), 'Remote semantic-release notes readback failed');
   authority();
-  const release = await publishRelease({ github, plan, assets });
+  const publishedIdentity = plan.gitTag === frontier ? releases.find(release => release.tag_name === frontier) : undefined;
+  const beforeWrite = async () => {
+    authority();
+    const tag = git(cwd, 'ls-remote', 'origin', `refs/tags/${plan.gitTag}`, `refs/tags/${plan.gitTag}^{}`);
+    requireState(tag.split('\n').at(-1)?.split(/\s+/)[0] === plan.gitHead, 'Remote tag source changed');
+    requireState(await remoteNotes(cwd, plan), 'Remote channel notes changed');
+  };
+  const release = await publishRelease({ github, plan, assets, publishedIdentity, beforeWrite });
   authority();
   console.log(`Verified published ${plan.gitTag} at ${plan.gitHead} (release ${release.id}); controller ${controller}`);
   return { plan, release };
@@ -272,12 +416,18 @@ export async function planRelease({ cwd, source, branch, excludeTag }) {
     git(remote, 'update-ref', `refs/heads/${branch}`, source);
     git(remote, 'symbolic-ref', 'HEAD', `refs/heads/${branch}`);
     if (branch === 'develop') {
-      const main = git(cwd, 'rev-parse', 'refs/remotes/origin/main');
-      if (!ancestor(cwd, main, source)) throw new Error('Historical main branch cannot be proven from source ancestry');
+      let main = git(cwd, 'rev-parse', 'refs/remotes/origin/main');
+      if (excludeTag && !ancestor(cwd, main, source)) {
+        const bases = git(cwd, 'merge-base', '--all', main, source).split('\n');
+        requireState(bases.length === 1 && /^[0-9a-f]{40}$/.test(bases[0]), 'Historical main ancestry is ambiguous');
+        main = bases[0];
+      }
       git(remote, 'fetch', '--no-tags', cwd, main);
       git(remote, 'update-ref', 'refs/heads/main', main);
     }
-    for (const tag of git(cwd, 'tag', '--merged', source).split('\n').filter(Boolean)) {
+    const planningTags = new Set(git(cwd, 'tag', '--merged', source).split('\n').filter(Boolean));
+    if (branch === 'develop' && !excludeTag) for (const tag of git(cwd, 'tag', '--merged', 'refs/remotes/origin/main').split('\n').filter(Boolean)) planningTags.add(tag);
+    for (const tag of planningTags) {
       if (tag !== excludeTag) git(remote, 'fetch', '--no-tags', cwd, `refs/tags/${tag}:refs/tags/${tag}`);
     }
     for (const ref of git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/notes').split('\n').filter(ref => ref.startsWith('refs/notes/semantic-release'))) {

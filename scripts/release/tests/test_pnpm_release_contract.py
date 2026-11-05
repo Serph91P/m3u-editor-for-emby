@@ -24,7 +24,8 @@ class PnpmReleaseContractTests(unittest.TestCase):
             self.assertIn('pnpm install --frozen-lockfile --ignore-scripts', job)
             self.assertIn('pnpm run audit:release', job)
             self.assertNotIn('npm ci', job)
-        self.assertIn('pnpm exec semantic-release', ci)
+        self.assertIn('node scripts/release/release.mjs', ci)
+        self.assertNotIn('pnpm exec semantic-release', ci)
 
 
 if __name__ == '__main__':
