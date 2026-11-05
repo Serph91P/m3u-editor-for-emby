@@ -201,8 +201,11 @@ namespace Emby.M3uEditor.Plugin.Tests
                 else if (request.RequestUri.Query.Contains("get_live_categories"))
                     body = JsonSerializer.Serialize(new[] { new { category_id = 1, category_name = Group } });
                 else throw new InvalidOperationException("Unexpected synthetic request: " + request.RequestUri.AbsolutePath);
-                var response = new HttpResponseMessage(HttpStatusCode.OK);
-                response.Content = new StringContent(body);
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body)
+                };
+                token.Register(response.Dispose);
                 return Task.FromResult(response);
             }
         }
