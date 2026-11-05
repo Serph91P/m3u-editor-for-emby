@@ -205,7 +205,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 {
                     Content = new StringContent(body)
                 };
-                token.Register(response.Dispose);
+                request.RegisterForDispose(response);
                 return Task.FromResult(response);
             }
         }
