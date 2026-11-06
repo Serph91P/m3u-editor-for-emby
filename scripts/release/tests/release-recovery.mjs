@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, writeFile, readFile, mkdir, copyFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, mkdir, copyFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -187,9 +187,9 @@ test('ephemeral token Git authentication works without persisted credentials and
   try {
     const env = gitEnvironment({ ...process.env, GITHUB_TOKEN: 'synthetic-token' });
     // Map the canonical HTTPS transport to a disposable HTTP server, keeping the header's URL scope.
-    const key = Object.keys(env).find(key => key.startsWith('GIT_CONFIG_KEY_') && env[key].endsWith('.extraheader'));
-    assert.ok(key);
-    env[key] = `http.http://127.0.0.1:${server.address().port}/.extraheader`;
+    const keys = Object.keys(env).filter(key => key.startsWith('GIT_CONFIG_KEY_') && env[key].endsWith('.extraheader'));
+    assert.ok(keys.length > 0);
+    for (const key of keys) env[key] = `http.http://127.0.0.1:${server.address().port}/.extraheader`;
     const result = await run('git', ['ls-remote', `http://127.0.0.1:${server.address().port}/remote.git`], { cwd: dir, env });
     assert.notEqual(result.code, 0);
     assert.ok(authenticated > 0, 'native Git must actually transmit scoped auth');
@@ -407,8 +407,7 @@ test('native authenticated HTTP Git fetch and push use the ephemeral token with 
   try {
     const { gitEnvironment } = await import('../release.mjs');
     const env = gitEnvironment({ ...process.env, GITHUB_TOKEN: 'synthetic-token' });
-    const key = Object.keys(env).find(key => key.startsWith('GIT_CONFIG_KEY_') && env[key].endsWith('.extraheader'));
-    env[key] = `http.http://127.0.0.1:${server.address().port}/.extraheader`;
+    for (const key of Object.keys(env).filter(key => key.startsWith('GIT_CONFIG_KEY_') && env[key].endsWith('.extraheader'))) env[key] = `http.http://127.0.0.1:${server.address().port}/.extraheader`;
     const clone = join(f.dir, 'http-clone');
     const result = await run('git', ['clone', `http://127.0.0.1:${server.address().port}/remote.git`, clone], { env });
     assert.equal(result.code, 0, result.err);
@@ -456,6 +455,71 @@ for (const [origin, trusted] of [
       assert.equal(git(f.remote, 'show-ref'), remoteRefs, 'no remote tag/notes/branch writes');
       assert.equal(git(f.cwd, 'show-ref'), localRefs, 'no local tag/notes/branch writes');
     } finally { await f.close(); }
+  });
+}
+
+for (const scenario of ['omitted', 'false', 'omitted-readonly', 'false-readonly', 'not-installation', 'false-not-installation', 'foreign', 'fork', 'invalid-token']) {
+  test(`installation token authority before writes: ${scenario}`, async () => {
+    const f = await fixture();
+    const authority = { full_name: 'Serph91P/m3u-editor-for-emby', fork: false, clone_url: 'https://github.com/Serph91P/m3u-editor-for-emby.git' };
+    if (scenario.startsWith('false')) authority.permissions = { push: false };
+    if (scenario === 'foreign') authority.full_name = 'foreign/repo';
+    if (scenario === 'fork') authority.fork = true;
+    let writes = 0, gitRequests = 0, installationChecks = 0;
+    git(f.remote, 'config', 'http.receivepack', 'true');
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      if (!['GET', 'HEAD'].includes(req.method)) writes++;
+      if (url.pathname.startsWith('/remote.git/')) {
+        gitRequests++;
+        if (scenario.endsWith('readonly') || req.headers.authorization !== `basic ${Buffer.from('x-access-token:synthetic-token').toString('base64')}`) { res.writeHead(403); return res.end(); }
+        const backend = spawn('git', ['http-backend'], { env: { ...process.env, GIT_PROJECT_ROOT: f.dir, GIT_HTTP_EXPORT_ALL: '1', PATH_INFO: url.pathname, QUERY_STRING: url.search.slice(1), REQUEST_METHOD: req.method, REMOTE_USER: 'synthetic' } });
+        const output = []; backend.stdout.on('data', chunk => output.push(chunk)); backend.stderr.resume(); backend.stdin.end();
+        backend.on('close', () => {
+          const bytes = Buffer.concat(output), split = bytes.indexOf('\r\n\r\n');
+          if (split < 0) { res.writeHead(500); return res.end(); }
+          for (const line of bytes.subarray(0, split).toString().split('\r\n')) { const colon = line.indexOf(':'); res.setHeader(line.slice(0, colon), line.slice(colon + 1).trim()); }
+          res.writeHead(200); res.end(bytes.subarray(split + 4));
+        });
+        return;
+      }
+      if (req.headers.authorization !== 'Bearer synthetic-token' || scenario === 'invalid-token') { res.writeHead(401); return res.end('{}'); }
+      if (url.pathname === '/installation/repositories' && req.method === 'HEAD') {
+        installationChecks++; res.writeHead(scenario.endsWith('not-installation') ? 403 : 200); return res.end();
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(authority));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { GitHub, runRelease, publishRelease } = await import('../release.mjs');
+      const base = `http://127.0.0.1:${server.address().port}`;
+      git(f.cwd, 'remote', 'set-url', 'origin', 'https://github.com/Serph91P/m3u-editor-for-emby');
+      git(f.cwd, 'config', `url.${f.remote}.insteadOf`, 'https://github.com/Serph91P/m3u-editor-for-emby');
+      git(f.cwd, 'config', `url.${base}/remote.git.insteadOf`, 'https://github.com/Serph91P/m3u-editor-for-emby.git');
+      git(f.cwd, 'config', `http.${base}/.extraheader`, 'AUTHORIZATION: wrong-persisted-token');
+      // Translate only the scoped auth header to the isolated HTTP transport; run real Git unchanged.
+      const bin = join(f.dir, 'bin'), calls = join(f.dir, 'git-calls'); await mkdir(bin);
+      const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+      await writeFile(join(bin, 'git'), `#!/usr/bin/env python3\nimport os,sys,json\nenv=dict(os.environ)\nfor key in env:\n if key.startswith('GIT_CONFIG_KEY_') and env[key]=='http.https://github.com/.extraheader': env[key]=${JSON.stringify(`http.${base}/.extraheader`)}\nif 'push' in sys.argv: open(${JSON.stringify(calls)},'a').write(json.dumps(sys.argv[1:])+'\\n')\nos.execve(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+sys.argv[1:],env)\n`);
+      await chmod(join(bin, 'git'), 0o755);
+      const env = runnerEnv(f, { PATH: `${bin}:${process.env.PATH}`, GITHUB_TOKEN: 'different-env-token' });
+      const remoteRefs = git(f.remote, 'show-ref'), localRefs = git(f.cwd, 'show-ref');
+      const github = new GitHub('synthetic-token', base, base);
+      const boundary = new Error('stop after authenticated authority');
+      github.list = async () => { throw boundary; };
+      const trusted = ['omitted', 'false'].includes(scenario);
+      const rejection = scenario.endsWith('readonly') ? /Cannot prove installation token repository push authority/ : scenario.endsWith('not-installation') ? /GitHub HEAD .*HTTP 403/ : scenario === 'invalid-token' ? /GitHub GET .*HTTP 401/ : /Cannot prove repository identity/;
+      await assert.rejects(runRelease({ cwd: f.cwd, env, github }), trusted ? error => error === boundary : rejection);
+      if (trusted) await assert.rejects(publishRelease({ cwd: f.cwd, env, github, plan: { gitTag: 'v1.0.1-beta.1' } }), error => error === boundary);
+      const pushes = (await readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+      if (trusted || scenario.endsWith('readonly')) {
+        assert.deepEqual(pushes, Array.from({ length: trusted ? 2 : 1 }, () => ['push', '--dry-run', '--no-verify', '--', 'https://github.com/Serph91P/m3u-editor-for-emby.git', 'HEAD:refs/heads/develop']));
+        assert.equal(installationChecks, trusted ? 2 : 1); assert.ok(gitRequests > 0);
+      } else assert.deepEqual(pushes, []);
+      assert.equal(writes, 0, 'neither REST writes nor Git receive-pack POSTs');
+      assert.equal(git(f.remote, 'show-ref'), remoteRefs);
+      assert.equal(git(f.cwd, 'show-ref'), localRefs);
+    } finally { await new Promise(resolve => server.close(resolve)); await f.close(); }
   });
 }
 
