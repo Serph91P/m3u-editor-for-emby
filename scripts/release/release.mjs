@@ -366,7 +366,7 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
     execFileSync('bash', [join(root, 'scripts/release/verify-release-context.sh')], { cwd, env: gitEnvironment(env), stdio: ['ignore', 'pipe', 'pipe'] });
     requireState(git(cwd, 'rev-parse', 'HEAD') === controller, 'Controller HEAD differs from CI source');
     const origin = git(cwd, 'config', '--get', 'remote.origin.url');
-    requireState([repositoryUrl, `git@github.com:${repository}.git`, `ssh://git@github.com/${repository}.git`].includes(origin), 'Untrusted origin repository');
+    requireState([repositoryUrl, `https://github.com/${repository}`, `git@github.com:${repository}.git`, `ssh://git@github.com/${repository}.git`].includes(origin), 'Untrusted origin repository');
   };
   authority();
   await github.authenticate();

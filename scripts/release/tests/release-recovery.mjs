@@ -425,6 +425,40 @@ const redirectOrigin = f => {
   git(f.cwd, 'config', `url.${f.remote}.insteadOf`, 'https://github.com/Serph91P/m3u-editor-for-emby.git');
   git(f.cwd, 'remote', 'set-url', 'origin', 'https://github.com/Serph91P/m3u-editor-for-emby.git');
 };
+for (const [origin, trusted] of [
+  ['https://github.com/Serph91P/m3u-editor-for-emby', true], // actions/checkout@v6 fetch URL
+  ['https://github.com/Serph91P/m3u-editor-for-emby.git', true],
+  ['git@github.com:Serph91P/m3u-editor-for-emby.git', true],
+  ['ssh://git@github.com/Serph91P/m3u-editor-for-emby.git', true],
+  ['https://github.com/Serph91P/other-repo', false],
+  ['https://github.com/foreign/m3u-editor-for-emby', false],
+  ['https://example.invalid/Serph91P/m3u-editor-for-emby', false],
+  ['https://github.com.example.invalid/Serph91P/m3u-editor-for-emby', false],
+  ['https://user@github.com/Serph91P/m3u-editor-for-emby', false],
+  ['https://github.com@example.invalid/Serph91P/m3u-editor-for-emby', false],
+  ['https://github.com/Serph91P/m3u-editor-for-emby?repo=other', false],
+  ['https://github.com/Serph91P/m3u-editor-for-emby#other', false],
+]) {
+  test(`origin authority before API access: ${origin}`, async () => {
+    const f = await fixture();
+    try {
+      const { runRelease } = await import('../release.mjs');
+      // Keep the real context guard's Git fetch local even for rejected origins.
+      git(f.cwd, 'config', `url.${f.remote}.insteadOf`, origin);
+      git(f.cwd, 'remote', 'set-url', 'origin', origin);
+      const remoteRefs = git(f.remote, 'show-ref'), localRefs = git(f.cwd, 'show-ref');
+      const boundary = new Error('stop before API access');
+      let authentications = 0;
+      await assert.rejects(runRelease({ cwd: f.cwd, env: runnerEnv(f), github: {
+        authenticate: async () => { authentications++; throw boundary; },
+      } }), trusted ? error => error === boundary : /Untrusted origin repository/);
+      assert.equal(authentications, trusted ? 1 : 0);
+      assert.equal(git(f.remote, 'show-ref'), remoteRefs, 'no remote tag/notes/branch writes');
+      assert.equal(git(f.cwd, 'show-ref'), localRefs, 'no local tag/notes/branch writes');
+    } finally { await f.close(); }
+  });
+}
+
 const trustedRun = f => ({ id: 100, workflow_id: 42, path: '.github/workflows/ci.yml', head_sha: f.source, head_branch: f.branch, event: 'push', head_repository: { full_name: 'Serph91P/m3u-editor-for-emby', fork: false }, status: 'completed', conclusion: 'failure', jobs: [
   { name: 'Build & Test', conclusion: 'success', head_sha: f.source },
   { name: 'CodeQL Security Analysis', conclusion: 'success', head_sha: f.source },
