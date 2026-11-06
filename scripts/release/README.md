@@ -71,10 +71,35 @@ computed from the retained original bytes, not from a replacement ZIP.
 Conflicting source/version/channel/notes, duplicate or corrupt assets, empty/starter
 uploads and incomplete published releases stop safely. No automatic asset cleanup.
 403, malformed responses, persistent 500s and timeouts never mean “not found”. Reads
-and uncertain create/upload/publish writes have at most three attempts, with a
-15-second request deadline. Source authority is rechecked before publication writes.
-A later trusted push/re-run uses this same entrypoint; no dispatch/release-event
-workaround or new account is needed.
+have at most three attempts, with a 15-second request deadline. Creation sends **at
+most one POST per invocation**. A successful response supplies only an ID hint:
+its exact authenticated `GET /releases/{id}` must match the expected identity
+before asset writes. The full paginated list still detects duplicates/conflicts;
+a stale empty list does not override an independently verified exact ID.
+Without a response ID (500, disconnect, timeout or 422), only up to three bounded
+list readbacks may establish creation. Missing exact IDs are likewise read back
+at most three times. If visibility cannot be proved, the invocation fails with
+creation uncertainty and no uploads, rather than sending another create POST.
+Upload likewise sends at most one POST per missing asset per invocation. Its
+response supplies only an asset-ID locator: authenticated metadata and byte GETs,
+plus membership in this release, must prove the expected name/state/size/digest and
+bytes. An uncertain upload uses up to three readback rounds, then fails closed
+without publishing or blindly uploading again. Existing drafts also bind their
+known release ID and independently fetch it. Verification checks both the complete
+paginated asset collection and the exact release's asset view; either view's
+unknown, duplicate or conflicting assets stop the run. An empty stale collection
+cannot erase assets freshly verified on that release. Publish retains its bounded
+three-attempt PATCH path, but determines state from the exact release-ID GET, not
+just the release collection or write acknowledgement.
+Source authority is rechecked before publication writes.
+
+A later trusted push/re-run uses this same entrypoint and first reconciles visible
+releases. There is no persistent creation journal or globally atomic POST
+idempotency: after an ambiguous create, restarting while the server still hides
+that draft in the list can create a duplicate. Establish visibility before retrying
+an uncertain run; visible duplicate/conflicting drafts fail closed and are never
+automatically selected, renamed or deleted. No dispatch/release-event workaround
+or new account is needed.
 
 ## Offline verification
 
