@@ -227,6 +227,15 @@ async function fixture(branch = 'develop', product = false) {
   return { dir, cwd, source, remote, stable, branch, close: () => rm(dir, { recursive: true, force: true }) };
 }
 
+async function seedPublishedRelease(http, f, tag, source, channel, body) {
+  const { buildBundle } = await import('../release.mjs');
+  const built = await buildBundle({ cwd: f.cwd, plan: { version: tag.slice(1), gitTag: tag, gitHead: source, channel } });
+  const release = { id: 901, tag_name: tag, name: tag, target_commitish: f.branch, prerelease: channel !== null, body, draft: false,
+    assets: [...built].map(([name, bytes], i) => ({ id: 1000 + i, name, bytes, size: bytes.length, state: 'uploaded', digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` })) };
+  http.releases.push(release);
+  return release;
+}
+
 for (const scenario of ['main-first', 'develop-first', 'main-fresh', 'develop-fresh', 'tag-only-old-source', 'tag-only-old-source-main-advanced', 'notes-only-old-source', 'notes-push-failure', 'tag-push-failure', 'legacy-published-noop', 'original-zip-partial']) {
   test(`real runner and builder: ${scenario}, immutable source and ${scenario === 'develop-first' ? 'mandatory stable-floor rejection' : 'verified rerun'}`, { timeout: 180000 }, async () => {
     const branch = scenario.startsWith('main') ? 'main' : 'develop';
@@ -247,7 +256,7 @@ for (const scenario of ['main-first', 'develop-first', 'main-fresh', 'develop-fr
       if (branch === 'main' && !scenario.endsWith('-first')) {
         git(f.cwd, 'notes', '--ref=semantic-release-v1.0.0', 'add', '-m', '{"channels":[null]}', 'v1.0.0');
         git(f.cwd, 'push', 'origin', 'refs/notes/semantic-release-v1.0.0');
-        http.releases.push({ id: 900, tag_name: 'v1.0.0', name: 'v1.0.0', target_commitish: 'main', prerelease: false, body: 'legacy stable notes', draft: false });
+        await seedPublishedRelease(http, f, 'v1.0.0', f.stable, null, 'legacy stable notes');
       }
       if (scenario.includes('old-source')) {
         git(f.cwd, 'tag', initial.gitTag, f.source);
@@ -358,7 +367,7 @@ test('superseded legacy gap is untouched while the current orphan recovers above
     git(f.cwd, 'notes', '--ref=semantic-release-v1.0.0-beta.1', 'add', '-m', '{"channels":["develop"]}', 'v1.0.0-beta.1');
     git(f.cwd, 'push', 'origin', 'refs/notes/semantic-release-v1.0.0-beta.1');
     git(f.cwd, 'push', 'origin', '--tags');
-    http.releases.push({ id: 901, tag_name: 'v1.0.0-beta.1', name: 'v1.0.0-beta.1', target_commitish: 'develop', prerelease: true, body: 'original legacy notes', draft: false });
+    await seedPublishedRelease(http, f, 'v1.0.0-beta.1', f.stable, 'develop', 'original legacy notes');
     const legacy = JSON.stringify(http.releases[0]);
     http.releases.push({ id: 902, tag_name: 'v0.8.0-beta.1', name: 'v0.8.0-beta.1', target_commitish: 'develop', prerelease: true, body: 'ancient notes with no recoverable channel note', draft: false });
     git(f.cwd, 'config', `url.${f.remote}.insteadOf`, 'https://github.com/Serph91P/m3u-editor-for-emby.git');
@@ -453,7 +462,7 @@ for (const mutation of ['fork', 'repository', 'pr', 'sha', 'branch', 'workflow',
 
 for (const mutation of ['pr', 'fork', 'controller-sha', 'source-moved', 'origin', 'build', 'codeql', 'multiple-above-frontier', 'multiple-no-frontier', 'notes-channel', 'tag-version', 'release-notes', 'release-sha']) {
   test(`real controller rejects ${mutation} with zero writes`, async () => {
-    const f = await fixture('develop', mutation.startsWith('release-')), http = await githubFixture();
+    const f = await fixture('develop', mutation.startsWith('release-') || mutation === 'multiple-above-frontier'), http = await githubFixture();
     try {
       const { GitHub, runRelease, planRelease } = await import('../release.mjs');
       const plan = await planRelease({ cwd: f.cwd, source: f.source, branch: f.branch });
@@ -464,7 +473,7 @@ for (const mutation of ['pr', 'fork', 'controller-sha', 'source-moved', 'origin'
         git(f.cwd, 'tag', 'v0.8.0-beta.1', f.stable);
         git(f.cwd, 'notes', '--ref=semantic-release-v0.8.0-beta.1', 'add', '-m', '{"channels":["develop"]}', f.stable);
         git(f.cwd, 'push', 'origin', 'refs/notes/semantic-release-v0.8.0-beta.1');
-        http.releases.push({ id: 901, tag_name: 'v0.8.0-beta.1', name: 'v0.8.0-beta.1', target_commitish: 'develop', prerelease: true, body: 'old', draft: false });
+        await seedPublishedRelease(http, f, 'v0.8.0-beta.1', f.stable, 'develop', 'old');
       }
       if (mutation === 'notes-channel') {
         git(f.cwd, 'notes', `--ref=semantic-release-${plan.gitTag}`, 'add', '-m', '{"channels":["beta"]}', plan.gitTag);
@@ -482,7 +491,7 @@ for (const mutation of ['pr', 'fork', 'controller-sha', 'source-moved', 'origin'
       redirectOrigin(f);
       if (mutation === 'origin') git(f.cwd, 'config', 'remote.origin.url', f.remote);
       const refs = git(f.remote, 'show-ref');
-      await assert.rejects(runRelease({ cwd: f.cwd, env, github: new GitHub('synthetic-token', http.base, http.base) }));
+      await assert.rejects(runRelease({ cwd: f.cwd, env, github: new GitHub('synthetic-token', http.base, http.base) }), mutation.startsWith('multiple') ? /Multiple unresolved/ : undefined);
       assert.equal(http.writes(), 0); assert.equal(git(f.remote, 'show-ref'), refs);
     } finally { await f.close(); await http.close(); }
   });
@@ -514,3 +523,95 @@ for (const branch of ['main', 'develop']) {
     } finally { await f.close(); }
   });
 }
+
+for (const branch of ['main', 'develop']) {
+  test(`published frontier ${branch} blocks missing/conflicting assets before a newer release`, { timeout: 180000 }, async t => {
+    const f = await fixture(branch, true), http = await githubFixture();
+    try {
+      const { GitHub, runRelease } = await import('../release.mjs');
+      if (branch === 'main') {
+        git(f.cwd, 'tag', '-d', 'v1.0.0'); git(f.remote, 'update-ref', '-d', 'refs/tags/v1.0.0');
+      }
+      redirectOrigin(f);
+      const github = new GitHub('synthetic-token', http.base, http.base);
+      await runRelease({ cwd: f.cwd, env: runnerEnv(f), github });
+      const release = http.releases[0];
+      const complete = release.assets.map(asset => ({ ...asset, bytes: Buffer.from(asset.bytes) }));
+      await writeFile(join(f.cwd, 'fixture'), 'new releasable change');
+      git(f.cwd, 'commit', '-am', 'fix: next synthetic product change');
+      git(f.cwd, 'push', 'origin', f.branch);
+      const refs = git(f.remote, 'show-ref'), writes = http.writes();
+      for (const mutation of ['missing-md5', 'conflicting-md5']) {
+        await t.test(mutation, async () => {
+          release.assets = complete.map(asset => ({ ...asset, bytes: Buffer.from(asset.bytes) }));
+          if (mutation === 'missing-md5') release.assets = release.assets.filter(asset => !asset.name.endsWith('.md5'));
+          else {
+            const asset = release.assets.find(asset => asset.name.endsWith('.md5'));
+            asset.bytes[0] ^= 1;
+            asset.digest = `sha256:${createHash('sha256').update(asset.bytes).digest('hex')}`;
+          }
+          const original = JSON.stringify(http.releases);
+          await assert.rejects(runRelease({ cwd: f.cwd, env: runnerEnv(f), github }), /incomplete|Conflicting md5/);
+          assert.equal(http.writes(), writes, 'must not repair published assets or publish a successor');
+          assert.equal(git(f.remote, 'show-ref'), refs, 'must not push successor tag or notes');
+          assert.equal(JSON.stringify(http.releases), original);
+        });
+      }
+      // Restore only the synthetic fixture, not through the publisher; a valid frontier must permit progress.
+      release.assets = complete;
+      const frontier = JSON.stringify(release);
+      const result = await runRelease({ cwd: f.cwd, env: runnerEnv(f), github });
+      assert.notEqual(result.plan.gitTag, release.tag_name);
+      assert.equal(http.releases.length, 2);
+      assert.equal(result.release.draft, false);
+      assert.equal(JSON.stringify(release), frontier);
+    } finally { await f.close(); await http.close(); }
+  });
+}
+
+test('original DLL with incompatible PE/CLR headers is rejected with a real loader negative control', { timeout: 180000 }, async t => {
+  const f = await fixture('develop', true), http = await githubFixture();
+  try {
+    const { GitHub, buildBundle, planRelease, reconcileBundle } = await import('../release.mjs');
+    const github = new GitHub('synthetic-token', http.base, http.base);
+    const plan = await planRelease({ cwd: f.cwd, source: f.source, branch: f.branch });
+    const built = await buildBundle({ cwd: f.cwd, plan });
+    const name = 'Emby.M3uEditor.Plugin.dll', bytes = Buffer.from(built.get(name));
+    const pe = bytes.readUInt32LE(0x3c);
+    assert.equal(bytes.readUInt16LE(pe + 4), 0x014c);
+    bytes.writeUInt16LE(0xaa64, pe + 4);
+    const release = { id: 999, draft: true, assets: [{ id: 998, name, state: 'uploaded', bytes, size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` }] };
+    http.releases.push(release);
+    const loader = join(f.dir, 'loader'); await mkdir(loader);
+    await writeFile(join(loader, 'loader.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>');
+    await writeFile(join(loader, 'Program.cs'), 'using System; using System.Runtime.Loader; class Probe { static int Main(string[] a) { try { Console.WriteLine(AssemblyLoadContext.Default.LoadFromAssemblyPath(a[0]).FullName); return 0; } catch(Exception e) { Console.WriteLine(e.GetType().Name); return 1; } } }');
+    const good = join(f.dir, 'good.dll'), bad = join(f.dir, 'bad.dll');
+    await writeFile(good, built.get(name)); await writeFile(bad, bytes);
+    const runLoader = path => run('dotnet', ['run', '--project', join(loader, 'loader.csproj'), '--configuration', 'Release', '--', path]);
+    const control = await runLoader(good), broken = await runLoader(bad);
+    assert.equal(control.code, 0, control.out + control.err);
+    assert.equal(broken.code, 1, broken.out + broken.err);
+    assert.match(broken.out, /BadImageFormatException/);
+    const optional = pe + 24, sections = optional + bytes.readUInt16LE(pe + 20);
+    const corRva = bytes.readUInt32LE(optional + 96 + 14 * 8);
+    let cor;
+    for (let i = 0; i < bytes.readUInt16LE(pe + 6); i++) {
+      const section = sections + i * 40, rva = bytes.readUInt32LE(section + 12);
+      if (corRva >= rva && corRva < rva + bytes.readUInt32LE(section + 8)) cor = bytes.readUInt32LE(section + 20) + corRva - rva;
+    }
+    assert.ok(cor);
+    for (const [mutation, offset] of [['machine', pe + 4], ['coff-characteristics', pe + 22], ['subsystem', optional + 68], ['dll-characteristics', optional + 70], ['alignment', optional + 32], ['runtime-version', cor + 4], ['entrypoint', cor + 20], ['native-header', cor + 64], ['section-permissions', sections + 36], ['image-size', optional + 56], ['header-size', optional + 60], ['native-entrypoint', optional + 16], ['tls-directory', optional + 96 + 9 * 8]]) {
+      await t.test(mutation, async () => {
+        const asset = release.assets[0];
+        asset.bytes = Buffer.from(built.get(name));
+        asset.bytes[offset] ^= 1;
+        if (mutation === 'machine') asset.bytes.writeUInt16LE(0xaa64, offset);
+        asset.digest = `sha256:${createHash('sha256').update(asset.bytes).digest('hex')}`;
+        const original = JSON.stringify(release);
+        await assert.rejects(reconcileBundle({ github, plan, built, release }), /Conflicting DLL/);
+        assert.equal(http.writes(), 0);
+        assert.equal(JSON.stringify(release), original);
+      });
+    }
+  } finally { await f.close(); await http.close(); }
+});

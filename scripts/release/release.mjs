@@ -238,6 +238,51 @@ class Verify {
     if (!pe.HasMetadata || pe.PEHeaders.CorHeader.Flags != CorFlags.ILOnly) throw new Exception("Unsupported DLL");
     var md = pe.GetMetadataReader();
     using var output = new MemoryStream();
+    var headers = pe.PEHeaders; var coff = headers.CoffHeader; var image = headers.PEHeader; var cor = headers.CorHeader;
+    if (image == null || new[] { cor.StrongNameSignatureDirectory, cor.CodeManagerTableDirectory,
+        cor.VtableFixupsDirectory, cor.ExportAddressTableJumpsDirectory, cor.ManagedNativeHeaderDirectory }
+        .Any(d => d.RelativeVirtualAddress != 0 || d.Size != 0)) throw new Exception("Unsupported CLR payload");
+    if (new[] { image.ExportTableDirectory, image.ExceptionTableDirectory, image.CertificateTableDirectory,
+        image.CopyrightTableDirectory, image.GlobalPointerTableDirectory, image.ThreadLocalStorageTableDirectory,
+        image.LoadConfigTableDirectory, image.BoundImportTableDirectory, image.DelayImportTableDirectory }
+        .Any(d => d.RelativeVirtualAddress != 0 || d.Size != 0)) throw new Exception("Unsupported PE payload");
+    var end = headers.SectionHeaders.Max(s => checked(s.VirtualAddress + s.VirtualSize));
+    if (image.SectionAlignment <= 0 || image.SizeOfImage != checked((end + image.SectionAlignment - 1) / image.SectionAlignment * image.SectionAlignment))
+      throw new Exception("Invalid image layout");
+    // Supported Roslyn AnyCPU DLLs have one x86 jump through the CLR import address table.
+    var iat = image.ImportAddressTableDirectory; var imports = image.ImportTableDirectory;
+    if (coff.Machine != Machine.I386 || image.Magic != PEMagic.PE32 || iat.Size != 8 || imports.Size != 79)
+      throw new Exception("Unsupported PE startup");
+    var stub = pe.GetSectionData(image.AddressOfEntryPoint).GetContent(0, 6).ToArray();
+    if (stub[0] != 0xff || stub[1] != 0x25 || BitConverter.ToUInt32(stub, 2) != checked(image.ImageBase + (uint)iat.RelativeVirtualAddress))
+      throw new Exception("Invalid PE entrypoint");
+    var importBytes = pe.GetSectionData(imports.RelativeVirtualAddress).GetContent(0, imports.Size).ToArray();
+    foreach (var offset in new[] { 0, 12, 40 })
+      BitConverter.GetBytes(checked(BitConverter.ToInt32(importBytes, offset) - imports.RelativeVirtualAddress)).CopyTo(importBytes, offset);
+    output.Write(importBytes);
+    var iatBytes = pe.GetSectionData(iat.RelativeVirtualAddress).GetContent(0, iat.Size).ToArray();
+    BitConverter.GetBytes(checked(BitConverter.ToInt32(iatBytes, 0) - imports.RelativeVirtualAddress)).CopyTo(iatBytes, 0);
+    output.Write(iatBytes);
+    var reloc = image.BaseRelocationTableDirectory;
+    if (reloc.Size != 12) throw new Exception("Unsupported PE relocations");
+    var relocation = pe.GetSectionData(reloc.RelativeVirtualAddress).GetContent(0, reloc.Size).ToArray();
+    var operand = checked(image.AddressOfEntryPoint + 2);
+    if (BitConverter.ToInt32(relocation, 0) != (operand & ~0xfff) || BitConverter.ToInt32(relocation, 4) != 12 ||
+        BitConverter.ToUInt16(relocation, 8) != (0x3000 | (operand & 0xfff)) || BitConverter.ToUInt16(relocation, 10) != 0)
+      throw new Exception("Invalid PE relocations");
+    // Compare loader identity; only compiler timestamps and debug-driven sizes/RVAs may differ.
+    output.Write(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new {
+      coff.Machine, coff.Characteristics, coff.SizeOfOptionalHeader, coff.NumberOfSections,
+      coff.PointerToSymbolTable, coff.NumberOfSymbols,
+      image.Magic, image.MajorLinkerVersion, image.MinorLinkerVersion, image.ImageBase,
+      image.SectionAlignment, image.FileAlignment, image.SizeOfHeaders, image.BaseOfCode, image.BaseOfData,
+      image.SizeOfUninitializedData, image.MajorOperatingSystemVersion, image.MinorOperatingSystemVersion,
+      image.MajorImageVersion, image.MinorImageVersion, image.MajorSubsystemVersion, image.MinorSubsystemVersion,
+      image.Subsystem, image.DllCharacteristics, image.SizeOfStackReserve, image.SizeOfStackCommit,
+      image.SizeOfHeapReserve, image.SizeOfHeapCommit, image.NumberOfRvaAndSizes,
+      cor.MajorRuntimeVersion, cor.MinorRuntimeVersion, cor.Flags, cor.EntryPointTokenOrRelativeVirtualAddress,
+      Sections = headers.SectionHeaders.Select(s => new { s.Name, s.SectionCharacteristics })
+    }));
     var metadata = pe.GetMetadata().GetContent().ToArray();
     var mvid = md.GetGuid(md.GetModuleDefinition().Mvid).ToByteArray();
     var offsets = Enumerable.Range(0, metadata.Length - 15).Where(i => metadata.AsSpan(i, 16).SequenceEqual(mvid)).ToArray();
@@ -332,7 +377,7 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
     return version && (branch === 'develop' ? semver.prerelease(version)?.[0] === 'beta' : !semver.prerelease(version));
   }).sort((a, b) => semver.compare(a, b));
   const channel = branch === 'develop' ? 'develop' : null;
-  let frontier;
+  let frontier, frontierAssets;
   for (const tag of [...tags].reverse()) {
     const matches = releases.filter(release => release.tag_name === tag);
     requireState(matches.length <= 1, `Duplicate releases for ${tag}`);
@@ -342,6 +387,9 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
     requireState(release.name === tag && release.prerelease === (channel !== null) &&
       [source, branch].includes(release.target_commitish) && typeof release.body === 'string', `Conflicting published identity for ${tag}`);
     requireState(await remoteNotes(cwd, { gitTag: tag, gitHead: source, channel }), `Missing published channel notes for ${tag}`);
+    // A published identity is a frontier only after its immutable bundle is verified, even before a newer plan.
+    const publishedPlan = { version: semver.valid(tag), gitTag: tag, gitHead: source, channel };
+    frontierAssets = await reconcileBundle({ github, plan: publishedPlan, built: await buildBundle({ cwd, plan: publishedPlan }), release });
     frontier = tag;
     break;
   }
@@ -370,8 +418,8 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
   if (plan.gitHead !== controller) await verifyHistoricalSource({ github, source: plan.gitHead, branch });
   const existing = releases.find(release => release.tag_name === plan.gitTag);
   if (existing && existing.draft !== false) requireState(existing.name === plan.gitTag && existing.target_commitish === plan.gitHead && existing.prerelease === (plan.channel !== null) && existing.body === plan.notes, 'Conflicting draft release identity or notes');
-  const built = await buildBundle({ cwd, plan });
-  const assets = await reconcileBundle({ github, plan, built, release: existing });
+  const assets = plan.gitTag === frontier ? frontierAssets :
+    await reconcileBundle({ github, plan, built: await buildBundle({ cwd, plan }), release: existing });
   authority();
   let remoteTag = git(cwd, 'ls-remote', 'origin', `refs/tags/${plan.gitTag}`, `refs/tags/${plan.gitTag}^{}`);
   if (!remoteTag) {

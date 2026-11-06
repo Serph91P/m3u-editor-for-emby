@@ -27,8 +27,11 @@ Unprovable source history or unsupported historical configuration stops publicat
 ## Recovery boundary and states
 
 For each native channel, the highest published, source-reachable version with
-matching tag identity and native channel notes is the recovery frontier. The full
-authenticated release list is paginated, including drafts. Missing older releases
+matching tag identity, native channel notes and a fully verified immutable bundle is
+the recovery frontier. Its assets are checked before any successor tag, notes or
+release write, even when a newer releasable commit exists; incomplete or conflicting
+published assets stop the run and are never repaired. The full authenticated release
+list is paginated, including drafts. Missing older releases
 below that frontier are superseded historical gaps and remain untouched. Without a
 frontier, all matching candidates are considered. A tag-only or notes-present
 candidate **above** the frontier is reconciled before any new version; multiple
@@ -57,9 +60,12 @@ The controller resumes these states:
 DLL/ZIP/SHA256/MD5 form one bundle. New builds normalize compiler paths and ZIP
 metadata. An original non-reproducible ZIP is retained after checking its single DLL
 payload and sidecars. A path-dependent original DLL is compared to the exact-source
-rebuild without loading it: full managed metadata (including version/source), method
-bodies, static data and resources must match; only MVID/PDB layout differences are
-normalized. Unsupported native/static layouts fail closed. Missing sidecars are
+rebuild without loading it: PE/CLR machine, runtime, flags, section permissions and
+loader settings, managed metadata (including version/source), method bodies, static
+data and resources must match. Debug-driven layout changes are accepted only with a
+valid image size and the standard Roslyn AnyCPU CLR import/jump/relocation layout;
+other native directories are refused. MVID/PDB differences are normalized, never
+machine or runtime identity. Unsupported native/static layouts fail closed. Missing sidecars are
 computed from the retained original bytes, not from a replacement ZIP.
 
 Conflicting source/version/channel/notes, duplicate or corrupt assets, empty/starter
