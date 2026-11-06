@@ -83,10 +83,10 @@ async function uncertainWrite(github, path, options) {
 export async function publishRelease({ github, plan, assets, publishedIdentity, beforeWrite, cwd, env }) {
   await github.authenticate({ cwd, env });
   const expected = { tag_name: plan.gitTag, target_commitish: publishedIdentity?.target_commitish ?? plan.gitHead, name: plan.gitTag, body: publishedIdentity?.body ?? plan.notes, prerelease: plan.channel != null };
-  let createdId;
+  let releaseId;
   const validate = release => {
     requireState(release && Number.isSafeInteger(release.id) && release.id > 0 && typeof release.draft === 'boolean', 'Malformed release identity');
-    requireState(createdId === undefined || release.id === createdId, 'Conflicting created release ID');
+    requireState(releaseId === undefined || release.id === releaseId, 'Conflicting release ID');
     requireState(!publishedIdentity || release.draft === false, 'Published release changed state; refusing mutation');
     for (const [key, value] of Object.entries(expected)) requireState(release[key] === value, `Conflicting release ${key} for ${plan.gitTag}`);
     return release;
@@ -95,11 +95,11 @@ export async function publishRelease({ github, plan, assets, publishedIdentity, 
     const matches = (await github.list(`${repoPath}/releases`)).filter(release => release.tag_name === plan.gitTag);
     requireState(matches.length <= 1, `Duplicate releases for ${plan.gitTag}`);
     const release = matches[0];
-    if (release) validate(release);
-    if (createdId !== undefined) {
-      // A create response only locates the effect; authenticate and verify it independently.
+    if (release) { validate(release); releaseId ??= release.id; }
+    if (releaseId !== undefined) {
+      // Lists and write responses locate identity; exact authenticated GET proves current state.
       let result;
-      try { result = await github.request(`${repoPath}/releases/${createdId}`); }
+      try { result = await github.request(`${repoPath}/releases/${releaseId}`); }
       catch (error) { if (error.status === 404) return undefined; throw error; }
       return validate(result.data);
     }
@@ -107,11 +107,12 @@ export async function publishRelease({ github, plan, assets, publishedIdentity, 
   };
   let release = await find();
   if (!release) {
+    requireState(releaseId === undefined, 'Known release readback remains uncertain; refusing another create');
     await beforeWrite?.();
     const response = await uncertainWrite(github, `${repoPath}/releases`, { method: 'POST', body: { ...expected, draft: true } });
     if (response) {
       requireState(Number.isSafeInteger(response.data?.id) && response.data.id > 0, 'Malformed created release ID');
-      createdId = response.data.id;
+      releaseId = response.data.id;
     }
     // Never repeat an uncertain create within this invocation, even after a successful empty list.
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -121,27 +122,63 @@ export async function publishRelease({ github, plan, assets, publishedIdentity, 
     }
     requireState(release, 'Release creation remains uncertain after three readbacks; refusing another create or asset writes');
   }
+  const uploadedIds = new Map();
+  const validateAsset = asset => {
+    requireState(asset && Number.isSafeInteger(asset.id) && asset.id > 0, 'Malformed release asset identity');
+    const bytes = assets.get(asset.name);
+    requireState(bytes && bytes.length > 0 && asset.state === 'uploaded' && asset.size === bytes.length && (!asset.digest || asset.digest === digest(bytes)), `Conflicting or incomplete asset ${asset.name}; no assets will be deleted`);
+  };
   const verify = async () => {
+    release = await find();
+    requireState(release, 'Release readback remains uncertain; refusing asset writes');
     const remote = await github.list(`${repoPath}/releases/${release.id}/assets`);
-    const names = new Set();
-    for (const asset of remote) {
-      requireState(Number.isSafeInteger(asset.id) && !names.has(asset.name), 'Malformed or duplicate release asset');
-      names.add(asset.name);
-      const bytes = assets.get(asset.name);
-      requireState(bytes && bytes.length > 0 && asset.state === 'uploaded' && asset.size === bytes.length && (!asset.digest || asset.digest === digest(bytes)), `Conflicting or incomplete asset ${asset.name}; no assets will be deleted`);
-      const downloaded = (await github.request(`${repoPath}/releases/assets/${asset.id}`, { binary: true })).data;
-      requireState(downloaded.equals(bytes), `Conflicting asset bytes: ${asset.name}`);
+    const names = new Map(), ids = new Map();
+    // Neither collection may hide unknown/conflicting assets; the exact release can fill stale omissions.
+    for (const view of [remote, release.assets]) {
+      requireState(Array.isArray(view), 'Malformed release assets');
+      const seen = new Set();
+      for (const asset of view) {
+        validateAsset(asset);
+        requireState(!seen.has(asset.name) && (!names.has(asset.name) || names.get(asset.name).id === asset.id) && (!ids.has(asset.id) || ids.get(asset.id) === asset.name), 'Malformed or duplicate release asset');
+        seen.add(asset.name); names.set(asset.name, asset); ids.set(asset.id, asset.name);
+      }
     }
-    return [...assets.keys()].filter(name => !names.has(name));
+    const pending = new Set();
+    for (const [name, id] of uploadedIds) {
+      let metadata;
+      try { metadata = (await github.request(`${repoPath}/releases/assets/${id}`)).data; }
+      catch (error) { if (error.status === 404) { pending.add(name); continue; } throw error; }
+      validateAsset(metadata);
+      requireState(metadata.id === id && metadata.name === name, 'Conflicting uploaded asset identity');
+      // A foreign release's asset ID cannot prove membership in this release.
+      if (names.get(name)?.id !== id) pending.add(name);
+    }
+    for (const asset of names.values()) {
+      if (pending.has(asset.name)) continue;
+      const downloaded = (await github.request(`${repoPath}/releases/assets/${asset.id}`, { binary: true })).data;
+      requireState(downloaded.equals(assets.get(asset.name)), `Conflicting asset bytes: ${asset.name}`);
+    }
+    return [...assets.keys()].filter(name => !names.has(name) || pending.has(name));
   };
   let missing = await verify();
   requireState(release.draft || !missing.length, 'Published release is incomplete; refusing mutation');
   for (const name of missing) {
-    for (let attempt = 0; attempt < 3 && (await verify()).includes(name); attempt++) {
+    let pending = await verify();
+    if (pending.includes(name)) {
+      requireState(release.draft, 'Published release is incomplete; refusing mutation');
       await beforeWrite?.();
-      await uncertainWrite(github, `${repoPath}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`, { method: 'POST', body: assets.get(name), upload: true });
+      const response = await uncertainWrite(github, `${repoPath}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`, { method: 'POST', body: assets.get(name), upload: true });
+      if (response) {
+        requireState(Number.isSafeInteger(response.data?.id) && response.data.id > 0, 'Malformed uploaded asset ID');
+        uploadedIds.set(name, response.data.id);
+      }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+        pending = await verify();
+        if (!pending.includes(name)) break;
+      }
     }
-    requireState(!(await verify()).includes(name), `Asset upload did not converge: ${name}`);
+    requireState(!pending.includes(name), `Asset upload did not converge; effect remains uncertain: ${name}`);
   }
   requireState(!(await verify()).length, 'Incomplete release asset readback');
   for (let attempt = 0; attempt < 3; attempt++) {

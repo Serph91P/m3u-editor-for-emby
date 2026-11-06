@@ -36,7 +36,7 @@ async function githubFixture(failure, creation = {}) {
       const page = Number(url.searchParams.get('page') || 1);
       if (page === 1) res.setHeader('Link', `<http://127.0.0.1:${server.address().port}${url.pathname}?page=2>; rel="next"`);
       if (page === 2 && releases.length && staleLists-- > 0) return send(200, []);
-      return send(200, page === 1 ? [] : releases.map(({ assets, ...release }) => release));
+      return send(200, page === 1 ? [] : releases.map(({ assets, ...release }) => ({ ...release, ...(creation.stalePublishedList ? { draft: true } : {}) })));
     }
     if (req.method === 'GET' && /^\/releases\/\d+$/.test(path)) {
       if (missingIds-- > 0) return send(404, {});
@@ -62,20 +62,26 @@ async function githubFixture(failure, creation = {}) {
       const release = releases.find(r => r.id === Number(path.split('/')[2]));
       const page = Number(url.searchParams.get('page') || 1);
       if (page === 1) res.setHeader('Link', `<http://127.0.0.1:${server.address().port}${url.pathname}?page=2>; rel="next"`);
+      if (creation.staleAssetList) return send(200, []);
       return send(200, page === 1 ? [] : release.assets.map(({ bytes, ...asset }) => asset));
     } else if (req.method === 'GET' && path.startsWith('/releases/assets/')) {
       const asset = releases.flatMap(r => r.assets || []).find(a => a.id === Number(path.split('/')[3]));
+      if (req.headers.accept !== 'application/octet-stream') {
+        if (creation.assetIdStatus) return send(creation.assetIdStatus, {});
+        const { bytes, ...metadata } = asset;
+        return send(200, { ...metadata, ...creation.assetIdOverride });
+      }
       res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(asset.bytes);
     } else return send(404, {});
     if (fail) { injected = true; if (failure.status === 'disconnect') return req.socket.destroy(); if (failure.status === 'timeout') return; return send(failure.status, {}); }
-    return send(operation === 'create' ? 201 : 200, operation === 'create' && creation.responseOverride ? creation.responseOverride : result);
+    return send(operation === 'create' || operation === 'upload' ? 201 : 200, operation === 'create' && creation.responseOverride ? creation.responseOverride : operation === 'upload' && creation.assetResponseOverride ? creation.assetResponseOverride : result);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return { releases, runs, requests, authority, writes: () => writes, base: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => server.close(resolve)) };
 }
 
 for (const failure of [null, ...['create', 'upload', 'publish'].flatMap(operation => [
-  ...(operation === 'create' ? [] : [{ operation, after: false, status: 500 }]), { operation, after: true, status: 'disconnect' }, { operation, after: true, status: 422 },
+  ...(operation === 'publish' ? [{ operation, after: false, status: 500 }] : []), { operation, after: true, status: 'disconnect' }, { operation, after: true, status: 422 },
 ])]) {
   test(`HTTP publisher converges with ${JSON.stringify(failure)}, paginated readback and immutable no-op`, async () => {
     const f = await githubFixture(failure);
@@ -104,7 +110,7 @@ for (const operation of ['create', 'upload', 'publish']) {
     try {
       const { GitHub, publishRelease } = await import('../release.mjs');
       await assert.rejects(publishRelease({ github: new GitHub('synthetic-token', f.base, f.base), plan: { gitTag: 'v1.0.1', gitHead: 'a'.repeat(40), channel: null, notes: 'notes' }, assets: new Map([['one.dll', Buffer.from('dll')], ['one.zip', Buffer.from('zip')]]) }), operation === 'create' ? /creation.*uncertain/i : operation === 'publish' ? /Published release readback failed/ : /converge/);
-      assert.equal(f.writes(), operation === 'create' ? 1 : operation === 'upload' ? 4 : 6);
+      assert.equal(f.writes(), operation === 'create' ? 1 : operation === 'upload' ? 2 : 6);
       assert.equal(f.releases.length, operation === 'create' ? 0 : 1);
       if (f.releases.length) assert.equal(f.releases[0].draft, true);
     } finally { await f.close(); }
@@ -207,6 +213,79 @@ test('creation readback: restart reconciles an accepted ambiguous draft once its
   } finally { await f.close(); }
 });
 
+for (const scenario of [
+  { name: 'existing draft and delayed asset collection', staleAssetList: true },
+  { name: 'existing draft and delayed published release collection', stalePublishedList: true },
+  { name: 'accepted upload lost response and delayed asset collection', staleAssetList: true, failure: { operation: 'upload', after: true, status: 'disconnect' } },
+  { name: 'accepted publish lost response and delayed release collection', stalePublishedList: true, failure: { operation: 'publish', after: true, status: 'disconnect' } },
+]) {
+  test(`asset/publish readback: ${scenario.name} uses exact IDs without duplicate mutations`, async () => {
+    const f = await githubFixture(scenario.failure, scenario);
+    try {
+      const { GitHub, publishRelease } = await import('../release.mjs');
+      const plan = { gitTag: 'v1.0.1', gitHead: 'a'.repeat(40), channel: null, notes: 'notes' };
+      f.releases.push({ id: 901, tag_name: plan.gitTag, target_commitish: plan.gitHead, name: plan.gitTag, body: plan.notes, prerelease: false, draft: true, assets: [] });
+      const options = { github: new GitHub('synthetic-token', f.base, f.base), plan, assets: new Map([['one.dll', Buffer.from('dll')]]) };
+      await publishRelease(options);
+      assert.equal(f.requests.filter(r => r === 'POST /releases').length, 0);
+      assert.equal(f.requests.filter(r => r === 'POST /releases/901/assets').length, 1);
+      assert.equal(f.requests.filter(r => r === 'PATCH /releases/901').length, 1);
+      assert.equal(f.releases[0].draft, false); assert.equal(f.releases[0].assets.length, 1);
+      assert.deepEqual(f.releases[0].assets[0].bytes, options.assets.get('one.dll'));
+      assert.ok(f.requests.indexOf('GET /releases/901') < f.requests.indexOf('POST /releases/901/assets'), 'existing draft identity must be independently verified before upload');
+      if (!scenario.failure || scenario.failure.operation !== 'upload') assert.ok(f.requests.includes('GET /releases/assets/1'), 'accepted upload ID is only a locator for metadata and bytes');
+      const writes = f.writes();
+      await publishRelease(options);
+      assert.equal(f.writes(), writes, 'fresh exact-ID published state must remain an immutable no-op despite stale lists');
+    } finally { await f.close(); }
+  });
+}
+
+for (const scenario of [
+  ...[401, 403, 404].map(status => ({ name: `uploaded ID HTTP ${status}`, assetIdStatus: status })),
+  { name: 'uploaded ID without release membership', staleAssetList: true, idOverride: { assets: [] } },
+  { name: 'malformed upload response ID', assetResponseOverride: { id: '2' } },
+  ...Object.entries({ id: 99, name: 'foreign.dll', size: 0, state: 'starter', digest: 'sha256:foreign' }).map(([key, value]) => ({ name: `uploaded ID conflicting ${key}`, assetIdOverride: { [key]: value } })),
+]) {
+  test(`asset/publish readback: ${scenario.name} fails closed after one accepted upload`, async () => {
+    const f = await githubFixture(null, scenario);
+    try {
+      const { GitHub, publishRelease } = await import('../release.mjs');
+      await assert.rejects(publishRelease({ github: new GitHub('synthetic-token', f.base, f.base), plan: { gitTag: 'v1.0.1', gitHead: 'a'.repeat(40), channel: null, notes: 'notes' }, assets: new Map([['one.dll', Buffer.from('dll')]]) }));
+      assert.equal(f.requests.filter(r => r === 'POST /releases/1/assets').length, 1);
+      assert.equal(f.requests.filter(r => r === 'PATCH /releases/1').length, 0);
+      assert.equal(f.releases.length, 1); assert.equal(f.releases[0].draft, true); assert.equal(f.releases[0].assets.length, 1);
+      assert.ok(f.requests.filter(r => r === 'GET /releases/assets/2').length <= 3);
+    } finally { await f.close(); }
+  });
+}
+
+test('asset/publish readback: unaccepted upload 500 fails this invocation and recovers on restart', async () => {
+  const f = await githubFixture({ operation: 'upload', after: false, status: 500 });
+  try {
+    const { GitHub, publishRelease } = await import('../release.mjs');
+    const options = { github: new GitHub('synthetic-token', f.base, f.base), plan: { gitTag: 'v1.0.1', gitHead: 'a'.repeat(40), channel: null, notes: 'notes' }, assets: new Map([['one.dll', Buffer.from('dll')]]) };
+    await assert.rejects(publishRelease(options), /converge|uncertain/);
+    assert.equal(f.writes(), 2); assert.equal(f.releases[0].draft, true); assert.deepEqual(f.releases[0].assets, []);
+    await publishRelease(options);
+    assert.equal(f.requests.filter(r => r === 'POST /releases').length, 1);
+    assert.equal(f.requests.filter(r => r === 'POST /releases/1/assets').length, 2);
+    assert.equal(f.releases.length, 1); assert.equal(f.releases[0].draft, false); assert.equal(f.releases[0].assets.length, 1);
+  } finally { await f.close(); }
+});
+
+test('asset/publish readback: a listed release with missing exact ID never authorizes another create', async () => {
+  const f = await githubFixture(null, { missingIds: 99 });
+  try {
+    const { GitHub, publishRelease } = await import('../release.mjs');
+    const plan = { gitTag: 'v1.0.1', gitHead: 'a'.repeat(40), channel: null, notes: 'notes' };
+    f.releases.push({ id: 901, tag_name: plan.gitTag, target_commitish: plan.gitHead, name: plan.gitTag, body: plan.notes, prerelease: false, draft: true, assets: [] });
+    const before = JSON.stringify(f.releases);
+    await assert.rejects(publishRelease({ github: new GitHub('synthetic-token', f.base, f.base), plan, assets: new Map([['one.dll', Buffer.from('dll')]]) }), /uncertain/);
+    assert.equal(f.writes(), 0); assert.equal(JSON.stringify(f.releases), before);
+  } finally { await f.close(); }
+});
+
 for (const stop of [1, 2, 4]) {
   test(`source authority loss before write ${stop} stops publisher and remains restartable`, async () => {
     const f = await githubFixture();
@@ -224,7 +303,7 @@ for (const stop of [1, 2, 4]) {
   });
 }
 
-for (const mutation of ['sha', 'notes', 'channel', 'version', 'bytes', 'starter', 'empty', 'published-incomplete', 'duplicate', 'duplicate-release']) {
+for (const mutation of ['sha', 'notes', 'channel', 'version', 'bytes', 'starter', 'empty', 'published-incomplete', 'duplicate', 'duplicate-release', 'unknown-asset']) {
   test(`conflicting ${mutation} is fail-closed without changing assets`, async () => {
     const f = await githubFixture();
     try {
@@ -244,6 +323,7 @@ for (const mutation of ['sha', 'notes', 'channel', 'version', 'bytes', 'starter'
       if (mutation === 'published-incomplete') release.assets = [];
       if (mutation === 'duplicate') release.assets.push({ ...release.assets[0] });
       if (mutation === 'duplicate-release') f.releases.push({ ...release, id: 99, draft: true, assets: [] });
+      if (mutation === 'unknown-asset') release.assets.push({ ...release.assets[0], id: 99, name: 'foreign.dll' });
       const before = JSON.stringify(f.releases), writes = f.writes();
       await assert.rejects(publishRelease({ github, plan, assets }), /Conflicting|incomplete|[Dd]uplicate/);
       assert.equal(f.writes(), writes);
