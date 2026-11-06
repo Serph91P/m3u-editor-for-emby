@@ -64,10 +64,9 @@ export class GitHub {
     if (data.permissions?.push === true) return;
     requireState(cwd && env?.GITHUB_REPOSITORY === repository && ['main', 'develop'].includes(env.GITHUB_REF_NAME) &&
       git(cwd, 'rev-parse', 'HEAD') === env.GITHUB_SHA, 'Cannot prove installation token controller context');
-    // App tokens omit permissions or report push=false; prove token type and actual Git write access.
-    await this.request('/installation/repositories?per_page=1', { method: 'HEAD', binary: true });
+    // App tokens omit permissions or report push=false; prove write access with the same client token.
     await new Promise((resolve, reject) => execFile('git', ['push', '--dry-run', '--no-verify', '--', repositoryUrl, `HEAD:refs/heads/${env.GITHUB_REF_NAME}`],
-      { cwd, env: gitEnvironment({ ...env, GITHUB_TOKEN: this.token }) },
+      { cwd, env: gitEnvironment({ ...env, GITHUB_TOKEN: this.token }), timeout: 15000 },
       error => error ? reject(new Error('Cannot prove installation token repository push authority')) : resolve()));
   }
 }

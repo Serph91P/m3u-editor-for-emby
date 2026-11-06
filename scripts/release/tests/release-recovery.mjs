@@ -458,14 +458,14 @@ for (const [origin, trusted] of [
   });
 }
 
-for (const scenario of ['omitted', 'false', 'omitted-readonly', 'false-readonly', 'not-installation', 'false-not-installation', 'foreign', 'fork', 'invalid-token']) {
+for (const scenario of ['omitted', 'false', 'omitted-readonly', 'false-readonly', 'missing-context', 'controller-sha', 'foreign', 'fork', 'invalid-token']) {
   test(`installation token authority before writes: ${scenario}`, async () => {
     const f = await fixture();
     const authority = { full_name: 'Serph91P/m3u-editor-for-emby', fork: false, clone_url: 'https://github.com/Serph91P/m3u-editor-for-emby.git' };
     if (scenario.startsWith('false')) authority.permissions = { push: false };
     if (scenario === 'foreign') authority.full_name = 'foreign/repo';
     if (scenario === 'fork') authority.fork = true;
-    let writes = 0, gitRequests = 0, installationChecks = 0;
+    let writes = 0, gitRequests = 0;
     git(f.remote, 'config', 'http.receivepack', 'true');
     const server = createServer(async (req, res) => {
       const url = new URL(req.url, 'http://localhost');
@@ -484,9 +484,7 @@ for (const scenario of ['omitted', 'false', 'omitted-readonly', 'false-readonly'
         return;
       }
       if (req.headers.authorization !== 'Bearer synthetic-token' || scenario === 'invalid-token') { res.writeHead(401); return res.end('{}'); }
-      if (url.pathname === '/installation/repositories' && req.method === 'HEAD') {
-        installationChecks++; res.writeHead(scenario.endsWith('not-installation') ? 403 : 200); return res.end();
-      }
+      if (url.pathname !== '/repos/Serph91P/m3u-editor-for-emby' || req.method !== 'GET') { res.writeHead(404); return res.end('{}'); }
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(authority));
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -502,19 +500,20 @@ for (const scenario of ['omitted', 'false', 'omitted-readonly', 'false-readonly'
       const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
       await writeFile(join(bin, 'git'), `#!/usr/bin/env python3\nimport os,sys,json\nenv=dict(os.environ)\nfor key in env:\n if key.startswith('GIT_CONFIG_KEY_') and env[key]=='http.https://github.com/.extraheader': env[key]=${JSON.stringify(`http.${base}/.extraheader`)}\nif 'push' in sys.argv: open(${JSON.stringify(calls)},'a').write(json.dumps(sys.argv[1:])+'\\n')\nos.execve(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+sys.argv[1:],env)\n`);
       await chmod(join(bin, 'git'), 0o755);
-      const env = runnerEnv(f, { PATH: `${bin}:${process.env.PATH}`, GITHUB_TOKEN: 'different-env-token' });
+      const env = runnerEnv(f, { PATH: `${bin}:${process.env.PATH}`, GITHUB_TOKEN: 'different-env-token', GITHUB_ACTION: 'release' });
       const remoteRefs = git(f.remote, 'show-ref'), localRefs = git(f.cwd, 'show-ref');
       const github = new GitHub('synthetic-token', base, base);
       const boundary = new Error('stop after authenticated authority');
       github.list = async () => { throw boundary; };
       const trusted = ['omitted', 'false'].includes(scenario);
-      const rejection = scenario.endsWith('readonly') ? /Cannot prove installation token repository push authority/ : scenario.endsWith('not-installation') ? /GitHub HEAD .*HTTP 403/ : scenario === 'invalid-token' ? /GitHub GET .*HTTP 401/ : /Cannot prove repository identity/;
-      await assert.rejects(runRelease({ cwd: f.cwd, env, github }), trusted ? error => error === boundary : rejection);
+      const rejection = scenario.endsWith('readonly') ? /Cannot prove installation token repository push authority/ : ['missing-context', 'controller-sha'].includes(scenario) ? /Cannot prove installation token controller context/ : scenario === 'invalid-token' ? /GitHub GET .*HTTP 401/ : /Cannot prove repository identity/;
+      const attempt = scenario === 'missing-context' ? github.authenticate() : scenario === 'controller-sha' ? github.authenticate({ cwd: f.cwd, env: { ...env, GITHUB_SHA: f.stable } }) : runRelease({ cwd: f.cwd, env, github });
+      await assert.rejects(attempt, trusted ? error => error === boundary : rejection);
       if (trusted) await assert.rejects(publishRelease({ cwd: f.cwd, env, github, plan: { gitTag: 'v1.0.1-beta.1' } }), error => error === boundary);
       const pushes = (await readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
       if (trusted || scenario.endsWith('readonly')) {
         assert.deepEqual(pushes, Array.from({ length: trusted ? 2 : 1 }, () => ['push', '--dry-run', '--no-verify', '--', 'https://github.com/Serph91P/m3u-editor-for-emby.git', 'HEAD:refs/heads/develop']));
-        assert.equal(installationChecks, trusted ? 2 : 1); assert.ok(gitRequests > 0);
+        assert.ok(gitRequests > 0);
       } else assert.deepEqual(pushes, []);
       assert.equal(writes, 0, 'neither REST writes nor Git receive-pack POSTs');
       assert.equal(git(f.remote, 'show-ref'), remoteRefs);
