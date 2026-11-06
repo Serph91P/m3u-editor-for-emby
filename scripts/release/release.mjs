@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, symlink, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -58,9 +58,16 @@ export class GitHub {
     }
     return values;
   }
-  async authenticate() {
+  async authenticate({ cwd, env } = {}) {
     const { data } = await this.request(repoPath);
-    requireState(data.full_name === repository && data.fork === false && data.permissions?.push === true, 'Cannot prove authenticated draft visibility and repository push authority');
+    requireState(data.full_name === repository && data.fork === false, 'Cannot prove repository identity');
+    if (data.permissions?.push === true) return;
+    requireState(cwd && env?.GITHUB_REPOSITORY === repository && ['main', 'develop'].includes(env.GITHUB_REF_NAME) &&
+      git(cwd, 'rev-parse', 'HEAD') === env.GITHUB_SHA, 'Cannot prove installation token controller context');
+    // App tokens omit permissions or report push=false; prove write access with the same client token.
+    await new Promise((resolve, reject) => execFile('git', ['push', '--dry-run', '--no-verify', '--', repositoryUrl, `HEAD:refs/heads/${env.GITHUB_REF_NAME}`],
+      { cwd, env: gitEnvironment({ ...env, GITHUB_TOKEN: this.token }), timeout: 15000 },
+      error => error ? reject(new Error('Cannot prove installation token repository push authority')) : resolve()));
   }
 }
 
@@ -73,8 +80,8 @@ async function uncertainWrite(github, path, options) {
   }
 }
 
-export async function publishRelease({ github, plan, assets, publishedIdentity, beforeWrite }) {
-  await github.authenticate();
+export async function publishRelease({ github, plan, assets, publishedIdentity, beforeWrite, cwd, env }) {
+  await github.authenticate({ cwd, env });
   const expected = { tag_name: plan.gitTag, target_commitish: publishedIdentity?.target_commitish ?? plan.gitHead, name: plan.gitTag, body: publishedIdentity?.body ?? plan.notes, prerelease: plan.channel != null };
   const find = async () => {
     const matches = (await github.list(`${repoPath}/releases`)).filter(release => release.tag_name === plan.gitTag);
@@ -137,6 +144,7 @@ export function gitEnvironment(env) {
     const settings = [
       ['credential.helper', ''],
       ['http.followRedirects', 'false'],
+      ['http.https://github.com/.extraheader', ''],
       ['http.https://github.com/.extraheader', `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${env.GITHUB_TOKEN}`).toString('base64')}`],
     ];
     let count = Number(env.GIT_CONFIG_COUNT || 0);
@@ -366,10 +374,10 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
     execFileSync('bash', [join(root, 'scripts/release/verify-release-context.sh')], { cwd, env: gitEnvironment(env), stdio: ['ignore', 'pipe', 'pipe'] });
     requireState(git(cwd, 'rev-parse', 'HEAD') === controller, 'Controller HEAD differs from CI source');
     const origin = git(cwd, 'config', '--get', 'remote.origin.url');
-    requireState([repositoryUrl, `git@github.com:${repository}.git`, `ssh://git@github.com/${repository}.git`].includes(origin), 'Untrusted origin repository');
+    requireState([repositoryUrl, `https://github.com/${repository}`, `git@github.com:${repository}.git`, `ssh://git@github.com/${repository}.git`].includes(origin), 'Untrusted origin repository');
   };
   authority();
-  await github.authenticate();
+  await github.authenticate({ cwd, env });
   git(cwd, 'fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', 'refs/heads/develop:refs/remotes/origin/develop', 'refs/tags/*:refs/tags/*', 'refs/notes/*:refs/notes/*');
   const releases = await github.list(`${repoPath}/releases`);
   const tags = git(cwd, 'tag', '--merged', controller).split('\n').filter(tag => {
@@ -442,7 +450,7 @@ export async function runRelease({ cwd = process.cwd(), env = process.env, githu
     requireState(tag.split('\n').at(-1)?.split(/\s+/)[0] === plan.gitHead, 'Remote tag source changed');
     requireState(await remoteNotes(cwd, plan), 'Remote channel notes changed');
   };
-  const release = await publishRelease({ github, plan, assets, publishedIdentity, beforeWrite });
+  const release = await publishRelease({ github, plan, assets, publishedIdentity, beforeWrite, cwd, env });
   authority();
   console.log(`Verified published ${plan.gitTag} at ${plan.gitHead} (release ${release.id}); controller ${controller}`);
   return { plan, release };
