@@ -87,6 +87,11 @@ python3 -m unittest discover -s scripts/release/tests
 node --test scripts/release/tests/release-recovery.mjs
 ```
 
+The unittest driver gives the complete native Node matrix a bounded 600-second
+budget for hosted-runner variation and real builds. This is not a release deadline:
+HTTP requests still expire after 15 seconds, with at most three read attempts;
+per-case deadlines, assertions and all source/CI/version/asset gates are unchanged.
+
 Tests use disposable bare Git remotes, real native planning/builds, synthetic HTTP
 Git/GitHub servers and synthetic credentials. They verify durable refs/assets and
 zero-write conflict boundaries. They do not publish to GitHub, update live manifests,
