@@ -815,6 +815,45 @@ namespace Emby.M3uEditor.Plugin.Tests
             }
         }
 
+        [Fact]
+        public async System.Threading.Tasks.Task Issue150_M3uNormalizationLeavesNativeTypedChannelsUnchanged()
+        {
+            const string name = "Télé \"quoted\", 日本\r\nline\u2028next";
+            const string number = "2\" injected=\"yes";
+            const string logo = "https://images.example.test/logo.png?a=1&b=2";
+            var config = new PluginConfiguration { BaseUrl = "https://editor.example.test", Username = "user", Password = "pass", IncludeAdultChannels = true };
+            using (var env = new PluginTestEnvironment(config, new LiveTvOptions()))
+            {
+                var plugin = env.CreatePlugin();
+                var handler = new FakeHttpHandler();
+                handler.RespondWithSequence("get_live_streams", Enumerable.Repeat(JsonSerializer.Serialize(new[] {
+                    new { stream_id = 42, name, num = number, stream_icon = logo, epg_channel_id = "guide\"id" }
+                }), 3));
+                handler.RespondWithSequence("get_live_categories", Enumerable.Repeat("[]", 3));
+                using (var service = new LiveTvService(DispatchProxy.Create<ILogger, TestLogger>(),
+                    _ => new System.Net.Http.HttpClient(handler, false), () => plugin.Configuration, () => { }))
+                {
+                    typeof(Plugin).GetField("_liveTvService", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(plugin, service);
+                    var host = MakeBareHost();
+                    typeof(BaseTunerHost).GetField("Logger", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(host, DispatchProxy.Create<ILogger, TestLogger>());
+                    var method = typeof(M3uEditorTunerHost).GetMethod("GetChannelsInternal", BindingFlags.Instance | BindingFlags.NonPublic);
+                    async System.Threading.Tasks.Task VerifyNative()
+                    {
+                        var channel = Assert.Single(await (System.Threading.Tasks.Task<List<ChannelInfo>>)method.Invoke(host,
+                            new object[] { new TunerHostInfo { Id = "synthetic-tuner" }, System.Threading.CancellationToken.None }));
+                        Assert.Equal(name, channel.Name);
+                        Assert.Equal(number, channel.Number);
+                        Assert.Equal(logo, channel.ImageUrl);
+                    }
+                    await VerifyNative();
+                    await service.GetM3UPlaylistAsync(System.Threading.CancellationToken.None);
+                    host.ClearCaches();
+                    await VerifyNative();
+                    handler.AssertNoUnhandledRequests();
+                }
+            }
+        }
+
         private sealed class TunerBarrierHandler : System.Net.Http.HttpMessageHandler
         {
             public bool Block;

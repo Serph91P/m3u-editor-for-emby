@@ -8,6 +8,10 @@ CONFIG = Path(__file__).resolve().parents[3] / ".releaserc.json"
 
 
 class ReleaseConfigTests(unittest.TestCase):
+    def test_native_cli_is_planning_only_and_controller_is_the_only_writer(self):
+        config = json.loads(CONFIG.read_text())
+        self.assertIs(config.get("dryRun"), True)
+
     def test_beta_version_floor_guard_runs_in_verify_release(self):
         config = json.loads(CONFIG.read_text())
         plugins = [plugin for plugin, *_ in config["plugins"]]
