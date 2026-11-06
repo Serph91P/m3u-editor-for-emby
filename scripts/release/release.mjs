@@ -72,7 +72,7 @@ export class GitHub {
 }
 
 async function uncertainWrite(github, path, options) {
-  try { await github.request(path, options); }
+  try { return await github.request(path, options); }
   catch (error) {
     // A write may already have taken effect. Only readback, never its response, decides progress.
     if (error.status && error.status !== 422 && error.status < 500) throw error;
@@ -83,26 +83,44 @@ async function uncertainWrite(github, path, options) {
 export async function publishRelease({ github, plan, assets, publishedIdentity, beforeWrite, cwd, env }) {
   await github.authenticate({ cwd, env });
   const expected = { tag_name: plan.gitTag, target_commitish: publishedIdentity?.target_commitish ?? plan.gitHead, name: plan.gitTag, body: publishedIdentity?.body ?? plan.notes, prerelease: plan.channel != null };
+  let createdId;
+  const validate = release => {
+    requireState(release && Number.isSafeInteger(release.id) && release.id > 0 && typeof release.draft === 'boolean', 'Malformed release identity');
+    requireState(createdId === undefined || release.id === createdId, 'Conflicting created release ID');
+    requireState(!publishedIdentity || release.draft === false, 'Published release changed state; refusing mutation');
+    for (const [key, value] of Object.entries(expected)) requireState(release[key] === value, `Conflicting release ${key} for ${plan.gitTag}`);
+    return release;
+  };
   const find = async () => {
     const matches = (await github.list(`${repoPath}/releases`)).filter(release => release.tag_name === plan.gitTag);
     requireState(matches.length <= 1, `Duplicate releases for ${plan.gitTag}`);
     const release = matches[0];
-    if (release) {
-      requireState(Number.isSafeInteger(release.id) && typeof release.draft === 'boolean', 'Malformed release identity');
-      requireState(!publishedIdentity || release.draft === false, 'Published release changed state; refusing mutation');
-      for (const [key, value] of Object.entries(expected)) requireState(release[key] === value, `Conflicting release ${key} for ${plan.gitTag}`);
+    if (release) validate(release);
+    if (createdId !== undefined) {
+      // A create response only locates the effect; authenticate and verify it independently.
+      let result;
+      try { result = await github.request(`${repoPath}/releases/${createdId}`); }
+      catch (error) { if (error.status === 404) return undefined; throw error; }
+      return validate(result.data);
     }
     return release;
   };
-  let release;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    release = await find();
-    if (release) break;
+  let release = await find();
+  if (!release) {
     await beforeWrite?.();
-    await uncertainWrite(github, `${repoPath}/releases`, { method: 'POST', body: { ...expected, draft: true } });
+    const response = await uncertainWrite(github, `${repoPath}/releases`, { method: 'POST', body: { ...expected, draft: true } });
+    if (response) {
+      requireState(Number.isSafeInteger(response.data?.id) && response.data.id > 0, 'Malformed created release ID');
+      createdId = response.data.id;
+    }
+    // Never repeat an uncertain create within this invocation, even after a successful empty list.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+      release = await find();
+      if (release) break;
+    }
+    requireState(release, 'Release creation remains uncertain after three readbacks; refusing another create or asset writes');
   }
-  release = await find();
-  requireState(release, 'Release creation did not converge after three attempts');
   const verify = async () => {
     const remote = await github.list(`${repoPath}/releases/${release.id}/assets`);
     const names = new Set();
