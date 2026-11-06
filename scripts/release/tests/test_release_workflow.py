@@ -22,7 +22,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_release_guard_precedes_publish_and_no_concurrent_release(self):
         release = CI[CI.index("  release:"):]
-        self.assertLess(release.index("verify-release-context.sh"), release.index("pnpm exec semantic-release"))
+        self.assertIn("node scripts/release/release.mjs", release)
+        self.assertLess(release.index("verify-release-context.sh"), release.index("node scripts/release/release.mjs"))
+        self.assertNotIn("pnpm exec semantic-release", release)
+        release_job = release.split("  update-manifests:", 1)[0]
+        permissions = release_job.split("    permissions:", 1)[1].split("    steps:", 1)[0]
+        self.assertIn("actions: read", permissions)
+        step = release_job.split("      - name: Release\n", 1)[1]
+        self.assertIn("RELEASE_BUILD_RESULT: ${{ needs.build-and-test.result }}", step)
+        self.assertIn("RELEASE_CODEQL_RESULT: ${{ needs.codeql.result }}", step)
         self.assertIn("cancel-in-progress: false", CI)
 
     def test_release_uses_locked_install_and_fixed_compatible_node(self):
