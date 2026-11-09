@@ -124,7 +124,8 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal("Admin", GetAuthenticationRoles<GetSanitizedLogs>());
             Assert.Equal("Admin", GetAuthenticationRoles<InstallUpdate>());
             Assert.Equal("Admin", GetAuthenticationRoles<RestartEmby>());
-            Assert.Empty(typeof(GetM3UPlaylist).GetCustomAttributes(typeof(AuthenticatedAttribute), true));
+            Assert.Equal("Admin", GetAuthenticationRoles<GetEpgXml>());
+            Assert.Equal("Admin", GetAuthenticationRoles<GetM3UPlaylist>());
 
             Assert.Equal(
                 typeof(object),
