@@ -98,14 +98,18 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Fact]
         public async Task CancellationDuringPagingLeavesNoPartialPerChannelCache()
         {
-            var handler=new GuideHandler { Block=true, BlockAt=2, Incomplete=true }; var config=Config();
+            var handler=new GuideHandler { Block=true, BlockAt=2, Incomplete=true, Large=true }; var config=Config();
+            config.EpgDaysToFetch=15;
             using var service=Service(handler,()=>config); using var cts=new CancellationTokenSource();
             var first=service.FetchEpgForChannelCachedAsync(1,cts.Token);
             await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cts.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>first);
             Assert.Equal(0,service.PerChannelEpgCacheCount);
-            handler.Incomplete=false; handler.Block=false;
+            Assert.Equal(100,handler.QueryPayloads[0].GetProperty("stream_ids").GetArrayLength());
+            Assert.Equal(14*86400,handler.QueryPayloads[0].GetProperty("stop_timestamp").GetInt64()-handler.QueryPayloads[0].GetProperty("start_timestamp").GetInt64());
+            handler.Incomplete=false; handler.Block=false; handler.Large=false;
+            config=Config(); service.RefreshConfiguration();
             Assert.NotNull(Assert.Single(await service.FetchEpgForChannelCachedAsync(1,CancellationToken.None)).PreservedPrimaryUrl);
             Assert.Equal(3,handler.QueryRequests);
         }
@@ -114,8 +118,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         private static LiveTvService Service(GuideHandler handler,Func<PluginConfiguration> config)=>new LiveTvService(System.Reflection.DispatchProxy.Create<ILogger,LiveTvGenerationTests.SilentLogger>(),_=>new HttpClient(handler,false),config,()=>{});
         private sealed class GuideHandler : HttpMessageHandler
         {
-            internal bool Json,Incomplete,Block; internal int QueryRequests,Status=200,BlockAt=1;
+            internal bool Json,Incomplete,Block,Large; internal int QueryRequests,Status=200,BlockAt=1;
             internal List<string> Requests=new List<string>();
+            internal List<JsonElement> QueryPayloads=new List<JsonElement>();
             internal TaskCompletionSource<bool> Entered=new(TaskCreationOptions.RunContinuationsAsynchronously),Release=new(TaskCreationOptions.RunContinuationsAsynchronously);
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
             {
@@ -123,6 +128,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                 string body;
                 if(request.Method==HttpMethod.Post)
                 {
+                    using var payload=JsonDocument.Parse(PreservedPrimaryClientTests.ParseForm(await request.Content.ReadAsStringAsync())["payload"]);
+                    QueryPayloads.Add(payload.RootElement.Clone());
                     var count=Interlocked.Increment(ref QueryRequests);
                     if(Block && count==BlockAt) { Entered.TrySetResult(true); await Release.Task.WaitAsync(token); }
                     if(Status!=200) return new HttpResponseMessage((HttpStatusCode)Status) { Content=new StringContent("{}") };
@@ -130,9 +137,10 @@ namespace Emby.M3uEditor.Plugin.Tests
                     var entries=fixture.RootElement.GetProperty((Json ? "json" : "xmltv")+"_projection").EnumerateArray().Select(e=>e.GetRawText()).ToArray();
                     var first=entries[0].Replace("1893499200",Start.ToString()).Replace("1893502800",Stop.ToString());
                     var second=first.Replace("\"stream_id\": 1","\"stream_id\": 2");
-                    body=Incomplete ? PreservedPrimaryClientTests.Page(2,"["+first+"]",new string('a',64),count==1 ? "snapshot" : "changed") : PreservedPrimaryClientTests.Page(2,"["+first+","+second+"]");
+                    var page=Large ? string.Join(",",Enumerable.Range(0,256).Select(i=>first.Replace(Start.ToString(),(Start+i).ToString()).Replace(Stop.ToString(),(Stop+i).ToString()))) : first;
+                    body=Incomplete ? PreservedPrimaryClientTests.Page(Large ? 257 : 2,"["+page+"]",new string('a',64),count==1 ? "snapshot" : "changed") : PreservedPrimaryClientTests.Page(2,"["+first+","+second+"]");
                 }
-                else if(url.Contains("get_live_streams")) body="[{\"stream_id\":1,\"name\":\"One\",\"epg_channel_id\":\"synthetic-output\"},{\"stream_id\":2,\"name\":\"Two\",\"epg_channel_id\":\"synthetic-output\"}]";
+                else if(url.Contains("get_live_streams")) body=JsonSerializer.Serialize(Enumerable.Range(1,Large ? 101 : 2).Select(id=>new { stream_id=id,name="Synthetic "+id,epg_channel_id="synthetic-output" }));
                 else if(url.Contains("xmltv.php")||url.Contains("guide.xml"))
                 {
                     if(Json) return new HttpResponseMessage(HttpStatusCode.NotFound);
