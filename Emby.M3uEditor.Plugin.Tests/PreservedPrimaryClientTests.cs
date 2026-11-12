@@ -16,7 +16,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         internal static string Page(int total = 0, string entries = "[]", string cursor = null, string snapshot = "snapshot") =>
             JsonSerializer.Serialize(new { api_version = 1, plugin_id = "epg-enricher", query = "preserved_primary_v1", data = new { snapshot_id = snapshot, total, next_cursor = cursor, entries = JsonSerializer.Deserialize<JsonElement>(entries) } });
         internal static string Entry(int stream = 1, long start = 100, long stop = 200) =>
-            JsonSerializer.Serialize(new { stream_id = stream, start_timestamp = start, stop_timestamp = stop, title = "Synthetic", subtitle = (string)null, guide = new { primary_icon_url = (string)null, poster_url = (string)null, poster_width = 0, poster_height = 0, backdrop_url = (string)null, still_url = (string)null, still_width = 0, still_height = 0 }, primary = new { url = "https://example.invalid/primary.jpg", width = 0, height = 0 } });
+            JsonSerializer.Serialize(new { stream_id = stream, start_timestamp = start, stop_timestamp = stop, title = "Synthetic", subtitle = default(string), guide = new { primary_icon_url = default(string), poster_url = default(string), poster_width = 0, poster_height = 0, backdrop_url = default(string), still_url = default(string), still_width = 0, still_height = 0 }, primary = new { url = "https://example.invalid/primary.jpg", width = 0, height = 0 } });
         internal static PluginConfiguration Config() => new PluginConfiguration { BaseUrl = "https://editor.example.invalid", Username = "synthetic+user", Password = "synthetic&password" };
         private static PreservedPrimaryClient Client(FakeHttpHandler handler) => new PreservedPrimaryClient(_ => new HttpClient(handler, false));
 
@@ -144,32 +144,37 @@ namespace Emby.M3uEditor.Plugin.Tests
         public async Task UnknownLengthBodyHonorsInclusiveByteLimitAndPostMethod(int bytes,bool accepted)
         {
             var text=Page(); text+=new string(' ',bytes-System.Text.Encoding.UTF8.GetByteCount(text));
-            var content=new StreamBody(System.Text.Encoding.UTF8.GetBytes(text));
-            var client=new PreservedPrimaryClient(_=>new HttpClient(new BodyHandler(content)));
+            using var stream=new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+            using var content=new StreamBody(stream);
+            using var response=new HttpResponseMessage(HttpStatusCode.OK){Content=content};
+            var client=new PreservedPrimaryClient(_=>new HttpClient(new BodyHandler(response)));
             var result=await client.FetchAsync(Config(),new[]{1},100,300,"json",CancellationToken.None);
             if(accepted) Assert.Empty(result); else Assert.Null(result);
         }
 
-        private sealed class BodyHandler(HttpContent content) : HttpMessageHandler
+        private sealed class BodyHandler(HttpResponseMessage response) : HttpMessageHandler
         {
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
             {
                 Assert.Equal(HttpMethod.Post,request.Method);
                 Assert.Equal("application/x-www-form-urlencoded",request.Content.Headers.ContentType.MediaType);
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=content});
+                return Task.FromResult(response);
             }
         }
-        private sealed class StreamBody(byte[] bytes) : HttpContent
+        private sealed class StreamBody(System.IO.Stream stream) : HttpContent
         {
             protected override bool TryComputeLength(out long length) { length=0; return false; }
-            protected override Task<System.IO.Stream> CreateContentReadStreamAsync()=>Task.FromResult<System.IO.Stream>(new System.IO.MemoryStream(bytes));
+            protected override Task<System.IO.Stream> CreateContentReadStreamAsync()=>Task.FromResult(stream);
             protected override Task SerializeToStreamAsync(System.IO.Stream stream,System.Net.TransportContext context)=>throw new InvalidOperationException("Do not buffer the whole response");
         }
 
         private sealed class CancelHandler(CancellationTokenSource source, bool caller) : HttpMessageHandler
         {
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
-            { if(caller) source.Cancel(); throw new TaskCanceledException(); }
+            {
+                if(caller) { source.Cancel(); }
+                throw new TaskCanceledException();
+            }
         }
         internal static System.Collections.Generic.Dictionary<string,string> ParseForm(string body) => body.Split('&').Select(p=>p.Split('=',2)).ToDictionary(p=>Uri.UnescapeDataString(p[0]),p=>Uri.UnescapeDataString(p[1].Replace('+',' ')));
     }

@@ -18,7 +18,7 @@ namespace Emby.M3uEditor.Plugin.Tests
 {
     public class PreservedPrimaryContractTests
     {
-        internal static JsonDocument Fixture() => JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"Fixtures","preserved-primary-v1.json")));
+        internal static JsonDocument Fixture() => JsonDocument.Parse(File.ReadAllText(Path.Join(AppContext.BaseDirectory,"Fixtures","preserved-primary-v1.json")));
         internal static EpgProgram Parse(JsonElement root, string format)
         {
             if(format=="json") return JsonSerializer.Deserialize<EpgProgram>(root.GetProperty("json").GetRawText(),new JsonSerializerOptions { NumberHandling=JsonNumberHandling.AllowReadingFromString });
@@ -53,7 +53,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         [Theory][MemberData(nameof(VariantCases))]
         public async Task ActualProxyAliasAndMidnightShiftOutputsReachNativeArtwork(int index,string format)
         {
-            using var fixture=JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"Fixtures","preserved-primary-variants-v1.json")));
+            using var fixture=JsonDocument.Parse(File.ReadAllText(Path.Join(AppContext.BaseDirectory,"Fixtures","preserved-primary-variants-v1.json")));
             var root=fixture.RootElement[index]; var p=Parse(root,format);
             var rawStart=DateTimeOffset.Parse("2030-01-01T23:30:00Z").ToUnixTimeSeconds();
             var expectedStart=rawStart+root.GetProperty("shift_hours").GetInt32()*3600L;

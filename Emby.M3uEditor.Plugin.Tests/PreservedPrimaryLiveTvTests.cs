@@ -193,9 +193,9 @@ namespace Emby.M3uEditor.Plugin.Tests
         private sealed class GuideHandler : HttpMessageHandler
         {
             internal bool Json,Incomplete,Block,Large; internal int QueryRequests,Status=200,BlockAt=1;
-            internal List<string> Requests=new List<string>();
-            internal List<JsonElement> QueryPayloads=new List<JsonElement>();
-            internal TaskCompletionSource<bool> Entered=new(TaskCreationOptions.RunContinuationsAsynchronously),Release=new(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal readonly List<string> Requests=new List<string>();
+            internal readonly List<JsonElement> QueryPayloads=new List<JsonElement>();
+            internal readonly TaskCompletionSource<bool> Entered=new(TaskCreationOptions.RunContinuationsAsynchronously),Release=new(TaskCreationOptions.RunContinuationsAsynchronously);
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
             {
                 var url=request.RequestUri.ToString(); lock(Requests) Requests.Add(url);
