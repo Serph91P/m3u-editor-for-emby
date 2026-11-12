@@ -79,11 +79,42 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.NotNull(Assert.Single(await service.FetchEpgForChannelCachedAsync(1,CancellationToken.None)).PreservedPrimaryUrl);
         }
 
+        [Fact]
+        public async Task WaitingCallerCancelsWithoutCancellingTheSharedLoader()
+        {
+            var handler=new GuideHandler { Block=true }; var config=Config();
+            using var service=Service(handler,()=>config); using var cts=new CancellationTokenSource();
+            var loader=service.FetchEpgForChannelCachedAsync(1,CancellationToken.None);
+            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var waiter=service.FetchEpgForChannelCachedAsync(2,cts.Token);
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>waiter);
+            handler.Release.TrySetResult(true);
+            Assert.NotNull(Assert.Single(await loader).PreservedPrimaryUrl);
+            Assert.NotNull(Assert.Single(await service.FetchEpgForChannelCachedAsync(2,CancellationToken.None)).PreservedPrimaryUrl);
+            Assert.Equal(1,handler.QueryRequests);
+        }
+
+        [Fact]
+        public async Task CancellationDuringPagingLeavesNoPartialPerChannelCache()
+        {
+            var handler=new GuideHandler { Block=true, BlockAt=2, Incomplete=true }; var config=Config();
+            using var service=Service(handler,()=>config); using var cts=new CancellationTokenSource();
+            var first=service.FetchEpgForChannelCachedAsync(1,cts.Token);
+            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>first);
+            Assert.Equal(0,service.PerChannelEpgCacheCount);
+            handler.Incomplete=false; handler.Block=false;
+            Assert.NotNull(Assert.Single(await service.FetchEpgForChannelCachedAsync(1,CancellationToken.None)).PreservedPrimaryUrl);
+            Assert.Equal(3,handler.QueryRequests);
+        }
+
         private static PluginConfiguration Config()=>new PluginConfiguration { BaseUrl="https://editor.example.invalid",Username="synthetic",Password="synthetic",IncludeAdultChannels=true };
         private static LiveTvService Service(GuideHandler handler,Func<PluginConfiguration> config)=>new LiveTvService(System.Reflection.DispatchProxy.Create<ILogger,LiveTvGenerationTests.SilentLogger>(),_=>new HttpClient(handler,false),config,()=>{});
         private sealed class GuideHandler : HttpMessageHandler
         {
-            internal bool Json,Incomplete,Block; internal int QueryRequests,Status=200;
+            internal bool Json,Incomplete,Block; internal int QueryRequests,Status=200,BlockAt=1;
             internal List<string> Requests=new List<string>();
             internal TaskCompletionSource<bool> Entered=new(TaskCreationOptions.RunContinuationsAsynchronously),Release=new(TaskCreationOptions.RunContinuationsAsynchronously);
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
@@ -93,7 +124,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 if(request.Method==HttpMethod.Post)
                 {
                     var count=Interlocked.Increment(ref QueryRequests);
-                    if(Block && count==1) { Entered.TrySetResult(true); await Release.Task.WaitAsync(token); }
+                    if(Block && count==BlockAt) { Entered.TrySetResult(true); await Release.Task.WaitAsync(token); }
                     if(Status!=200) return new HttpResponseMessage((HttpStatusCode)Status) { Content=new StringContent("{}") };
                     using var fixture=PreservedPrimaryContractTests.Fixture();
                     var entries=fixture.RootElement.GetProperty((Json ? "json" : "xmltv")+"_projection").EnumerateArray().Select(e=>e.GetRawText()).ToArray();
