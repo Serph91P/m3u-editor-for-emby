@@ -113,8 +113,8 @@ namespace Emby.M3uEditor.Plugin.Client
                                 if (entry == null || !ids.Contains(entry.StreamId) || entry.StartTimestamp < 0
                                     || entry.StopTimestamp <= entry.StartTimestamp || entry.StopTimestamp <= start || entry.StartTimestamp >= stop
                                     || entry.Title == null || entry.Guide == null || entry.Primary == null
-                                    || !ExactHttpUrl(entry.Primary.Url) || entry.Primary.Width < 0 || entry.Primary.Height < 0
-                                    || !seenEntries.Add(JsonSerializer.Serialize(entry))) return null;
+                                    || !ExactHttpUrl(entry.Primary.Url) || !ValidGeometry(entry.Primary.Url, entry.Primary.Width, entry.Primary.Height)
+                                    || !ValidGuide(entry.Guide) || !seenEntries.Add(JsonSerializer.Serialize(entry))) return null;
                                 entries.Add(entry);
                             }
                             if (entries.Count > total) return null;
@@ -126,6 +126,19 @@ namespace Emby.M3uEditor.Plugin.Client
                 }
             } while (cursor != null);
             return entries.Count == total ? entries : null;
+        }
+
+        private static bool ValidGuide(PreservedPrimaryGuide guide)
+        {
+            return new[] { guide.PrimaryIconUrl, guide.PosterUrl, guide.BackdropUrl, guide.StillUrl }
+                .All(url => url == null || ExactHttpUrl(url))
+                && ValidGeometry(guide.PosterUrl, guide.PosterWidth, guide.PosterHeight)
+                && ValidGeometry(guide.StillUrl, guide.StillWidth, guide.StillHeight);
+        }
+
+        private static bool ValidGeometry(string url, int width, int height)
+        {
+            return (width == 0 && height == 0) || (url != null && width > 0 && height > 0);
         }
 
         private static bool HasFields(JsonElement value, params string[] names)
