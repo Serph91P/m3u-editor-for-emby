@@ -128,6 +128,32 @@ namespace Emby.M3uEditor.Plugin.Tests
             if (caller) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.FetchAsync(Config(), new[]{1},100,300,"json",cts.Token));
             else Assert.Null(await client.FetchAsync(Config(),new[]{1},100,300,"json",cts.Token));
         }
+        [Theory][InlineData(524288,true)][InlineData(524289,false)]
+        public async Task UnknownLengthBodyHonorsInclusiveByteLimitAndPostMethod(int bytes,bool accepted)
+        {
+            var text=Page(); text+=new string(' ',bytes-System.Text.Encoding.UTF8.GetByteCount(text));
+            var content=new StreamBody(System.Text.Encoding.UTF8.GetBytes(text));
+            var client=new PreservedPrimaryClient(_=>new HttpClient(new BodyHandler(content)));
+            var result=await client.FetchAsync(Config(),new[]{1},100,300,"json",CancellationToken.None);
+            if(accepted) Assert.Empty(result); else Assert.Null(result);
+        }
+
+        private sealed class BodyHandler(HttpContent content) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
+            {
+                Assert.Equal(HttpMethod.Post,request.Method);
+                Assert.Equal("application/x-www-form-urlencoded",request.Content.Headers.ContentType.MediaType);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=content});
+            }
+        }
+        private sealed class StreamBody(byte[] bytes) : HttpContent
+        {
+            protected override bool TryComputeLength(out long length) { length=0; return false; }
+            protected override Task<System.IO.Stream> CreateContentReadStreamAsync()=>Task.FromResult<System.IO.Stream>(new System.IO.MemoryStream(bytes));
+            protected override Task SerializeToStreamAsync(System.IO.Stream stream,System.Net.TransportContext context)=>throw new InvalidOperationException("Do not buffer the whole response");
+        }
+
         private sealed class CancelHandler(CancellationTokenSource source, bool caller) : HttpMessageHandler
         {
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
