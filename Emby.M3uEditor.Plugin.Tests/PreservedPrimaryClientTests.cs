@@ -105,6 +105,20 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(100+15*86400,payloads[1].RootElement.GetProperty("stop_timestamp").GetInt64());
         }
 
+        [Fact]
+        public async Task MultiPageMetadataAndLaterBatchFailureAreAtomic()
+        {
+            var first="["+string.Join(",",Enumerable.Range(0,256).Select(i=>Entry(start:100+i,stop:101+i)))+"]";
+            foreach(var fail in new[]{false,true})
+            {
+                var handler=new FakeHttpHandler();
+                handler.RespondWithSequence("player_api.php",new[]{Page(257,first,new string('a',64)),Page(257,"["+Entry(start:356,stop:357)+"]"),Page(),Page(),fail ? "{}" : Page()});
+                var result=await Client(handler).FetchAsync(Config(),Enumerable.Range(1,101).ToArray(),100,100+15*86400,"xmltv",CancellationToken.None);
+                if(fail) Assert.Null(result); else Assert.Equal(257,result.Count);
+                Assert.Equal(5,handler.ReceivedBodies.Count);
+            }
+        }
+
         [Theory]
         [InlineData(false)][InlineData(true)]
         public async Task TimeoutFailsOpenButCallerCancellationPropagates(bool caller)

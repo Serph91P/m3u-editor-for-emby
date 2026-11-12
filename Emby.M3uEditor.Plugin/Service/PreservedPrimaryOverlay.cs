@@ -10,7 +10,7 @@ namespace Emby.M3uEditor.Plugin.Service
     internal static class PreservedPrimaryOverlay
     {
         internal static List<EpgProgram> Apply(IEnumerable<EpgProgram> programs, int streamId,
-            IEnumerable<PreservedPrimaryEntry> entries, string format)
+            IEnumerable<PreservedPrimaryEntry> entries, string format, Action onLegacyConflict = null)
         {
             var source = programs.ToList();
             if (entries == null) return source;
@@ -25,9 +25,14 @@ namespace Emby.M3uEditor.Plugin.Service
                 var entry = matches.FirstOrDefault();
                 // Compare every rival, not just the first matching artwork tuple.
                 if (entry == null || matches.Select(e => JsonSerializer.Serialize(e)).Distinct(StringComparer.Ordinal).Count() != 1
-                    || programmes[key].Any(other => !SameEvidence(p, other, format)) || !Matches(p, entry, format)
-                    || (p.PreservedPrimaryUrl != null && p.PreservedPrimaryUrl != entry.Primary.Url))
+                    || programmes[key].Any(other => !SameEvidence(p, other)) || !Matches(p, entry, format))
                 {
+                    result.Add(p);
+                    continue;
+                }
+                if (p.PreservedPrimaryUrl != null && p.PreservedPrimaryUrl != entry.Primary.Url)
+                {
+                    onLegacyConflict?.Invoke();
                     result.Add(p);
                     continue;
                 }
@@ -43,7 +48,7 @@ namespace Emby.M3uEditor.Plugin.Service
 
         private static string Title(EpgProgram p) => p.IsPlainText ? p.Title : LiveTvService.DecodeBase64(p.Title);
 
-        private static bool SameEvidence(EpgProgram a, EpgProgram b, string format)
+        private static bool SameEvidence(EpgProgram a, EpgProgram b)
         {
             return a.SubTitle == b.SubTitle && a.SourcePrimaryIconUrl == b.SourcePrimaryIconUrl
                 && a.SourcePrimaryIconWidth == b.SourcePrimaryIconWidth && a.SourcePrimaryIconHeight == b.SourcePrimaryIconHeight
