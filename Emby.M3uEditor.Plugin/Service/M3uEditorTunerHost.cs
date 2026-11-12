@@ -380,7 +380,12 @@ namespace Emby.M3uEditor.Plugin.Service
                     imageWidth = candidate.Width;
                     imageHeight = candidate.Height;
                 }
-                if (conflictingGeometry)
+                if (p.ProjectedPrimaryWidth.HasValue && p.ProjectedPrimaryHeight.HasValue)
+                {
+                    imageWidth = p.ProjectedPrimaryWidth.Value;
+                    imageHeight = p.ProjectedPrimaryHeight.Value;
+                }
+                else if (conflictingGeometry)
                 {
                     imageWidth = 0;
                     imageHeight = 0;

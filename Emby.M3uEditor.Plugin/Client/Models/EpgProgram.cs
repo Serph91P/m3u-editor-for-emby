@@ -70,6 +70,10 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonIgnore] public string SourcePrimaryIconUrl { get; set; }
         [JsonIgnore] public int SourcePrimaryIconWidth { get; set; }
         [JsonIgnore] public int SourcePrimaryIconHeight { get; set; }
+        [JsonIgnore] public int? ProjectedPrimaryWidth { get; set; }
+        [JsonIgnore] public int? ProjectedPrimaryHeight { get; set; }
+
+        internal EpgProgram Copy() => (EpgProgram)MemberwiseClone();
 
         // Not from JSON - populated by XMLTV parser only
         [JsonIgnore] public bool IsLive { get; set; }
