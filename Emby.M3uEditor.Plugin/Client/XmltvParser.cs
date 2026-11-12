@@ -375,6 +375,11 @@ namespace Emby.M3uEditor.Plugin.Client
                 standardThumbCandidates,
                 conflictingArtworkUrls)
                 ?? SelectLastNonConflictingArtwork(legacyThumbCandidates, conflictingArtworkUrls);
+            if (program.ThumbImageUrl != null && artworkByUrl.TryGetValue(program.ThumbImageUrl, out var thumbEvidence))
+            {
+                program.ThumbWidth = thumbEvidence.Width;
+                program.ThumbHeight = thumbEvidence.Height;
+            }
             program.LogoImageUrl = SelectLastNonConflictingArtwork(legacyLogoCandidates, conflictingArtworkUrls);
             if (program.PosterUrl != null)
             {
