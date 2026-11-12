@@ -16,7 +16,7 @@ namespace Emby.M3uEditor.Plugin.Tests
         internal static string Page(int total = 0, string entries = "[]", string cursor = null, string snapshot = "snapshot") =>
             JsonSerializer.Serialize(new { api_version = 1, plugin_id = "epg-enricher", query = "preserved_primary_v1", data = new { snapshot_id = snapshot, total, next_cursor = cursor, entries = JsonSerializer.Deserialize<JsonElement>(entries) } });
         internal static string Entry(int stream = 1, long start = 100, long stop = 200) =>
-            JsonSerializer.Serialize(new { stream_id = stream, start_timestamp = start, stop_timestamp = stop, title = "Synthetic", subtitle = (string)null, guide = new { primary_icon_url = (string)null }, primary = new { url = "https://example.invalid/primary.jpg", width = 0, height = 0 } });
+            JsonSerializer.Serialize(new { stream_id = stream, start_timestamp = start, stop_timestamp = stop, title = "Synthetic", subtitle = (string)null, guide = new { primary_icon_url = (string)null, poster_url = (string)null, poster_width = 0, poster_height = 0, backdrop_url = (string)null, still_url = (string)null, still_width = 0, still_height = 0 }, primary = new { url = "https://example.invalid/primary.jpg", width = 0, height = 0 } });
         internal static PluginConfiguration Config() => new PluginConfiguration { BaseUrl = "https://editor.example.invalid", Username = "synthetic+user", Password = "synthetic&password" };
         private static PreservedPrimaryClient Client(FakeHttpHandler handler) => new PreservedPrimaryClient(_ => new HttpClient(handler, false));
 
@@ -70,6 +70,20 @@ namespace Emby.M3uEditor.Plugin.Tests
         {
             var handler = new FakeHttpHandler(); handler.RespondWith("player_api.php", "{}", (HttpStatusCode)status);
             Assert.Null(await Client(handler).FetchAsync(Config(), new[] {1}, 100, 300, "json", CancellationToken.None));
+        }
+
+        [Theory]
+        [InlineData("subtitle")][InlineData("guide.poster_url")][InlineData("guide.poster_width")]
+        [InlineData("guide.poster_height")][InlineData("guide.primary_icon_url")][InlineData("guide.still_width")]
+        [InlineData("guide.still_height")][InlineData("guide.still_url")][InlineData("guide.backdrop_url")]
+        [InlineData("primary.width")][InlineData("primary.height")]
+        public async Task TruncatedEntryMetadataInvalidatesWholeSnapshot(string field)
+        {
+            var entry=System.Text.Json.Nodes.JsonNode.Parse(Entry()); var parts=field.Split('.');
+            if(parts.Length==1) entry.AsObject().Remove(field);
+            else entry[parts[0]].AsObject().Remove(parts[1]);
+            var handler=new FakeHttpHandler(); handler.RespondWith("player_api.php",Page(1,"["+entry.ToJsonString()+"]"));
+            Assert.Null(await Client(handler).FetchAsync(Config(),new[]{1},100,300,"json",CancellationToken.None));
         }
 
         [Fact]

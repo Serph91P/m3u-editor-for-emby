@@ -93,6 +93,15 @@ namespace Emby.M3uEditor.Plugin.Client
                                 || data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("total", out var count)
                                 || !count.TryGetInt32(out var pageTotal) || pageTotal < 0
                                 || !data.TryGetProperty("next_cursor", out _)) return null;
+                            if (!HasFields(data, "snapshot_id", "total", "next_cursor", "entries")
+                                || data.GetProperty("entries").ValueKind != JsonValueKind.Array) return null;
+                            foreach (var row in data.GetProperty("entries").EnumerateArray())
+                            {
+                                if (!HasFields(row, "stream_id", "start_timestamp", "stop_timestamp", "title", "subtitle", "guide", "primary")
+                                    || !HasFields(row.GetProperty("guide"), "primary_icon_url", "poster_url", "poster_width", "poster_height",
+                                        "backdrop_url", "still_url", "still_width", "still_height")
+                                    || !HasFields(row.GetProperty("primary"), "url", "width", "height")) return null;
+                            }
                             var envelope = JsonSerializer.Deserialize<PreservedPrimaryProjection>(root.GetRawText());
                             var page = envelope.Data;
                             if (envelope.ApiVersion != 1 || envelope.PluginId != "epg-enricher" || envelope.Query != "preserved_primary_v1"
@@ -117,6 +126,11 @@ namespace Emby.M3uEditor.Plugin.Client
                 }
             } while (cursor != null);
             return entries.Count == total ? entries : null;
+        }
+
+        private static bool HasFields(JsonElement value, params string[] names)
+        {
+            return value.ValueKind == JsonValueKind.Object && names.All(name => value.TryGetProperty(name, out _));
         }
 
         internal static bool ExactHttpUrl(string value)
