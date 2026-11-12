@@ -495,9 +495,10 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
-        public async Task TestConnectionAsync_PublicHttpOrigin_FailsBeforeRequest()
+        public async Task TestConnectionAsync_ConfiguredPublicHttpOrigin_Authenticates()
         {
             var handler = new FakeHttpHandler();
+            handler.RespondWith("player_api.php?username=", "{\"user_info\":{\"auth\":1}}");
             using (var httpClient = new HttpClient(handler))
             {
                 var result = await M3uEditorApi.TestConnectionAsync(
@@ -511,8 +512,8 @@ namespace Emby.M3uEditor.Plugin.Tests
                     httpClient,
                     CancellationToken.None);
 
-                Assert.False(result.Success);
-                Assert.Empty(handler.ReceivedUrls);
+                Assert.True(result.Success);
+                Assert.StartsWith("http://198.51.100.10/player_api.php?", Assert.Single(handler.ReceivedUrls));
                 Assert.DoesNotContain("credential", result.Message);
             }
         }
@@ -993,6 +994,12 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("https://editor.example?next=https://other.example")]
         [InlineData("https://editor.example/#fragment")]
         [InlineData("https://account@editor.example")]
+        [InlineData("https://editor.example/subpath")]
+        [InlineData("http://editor.example?next=http://other.example")]
+        [InlineData("http://editor.example/#fragment")]
+        [InlineData("http://account:credential@editor.example")]
+        [InlineData("http://editor.example/subpath")]
+        [InlineData("ftp://editor.example")]
         public async Task ManagedRequests_NonConfinedOrigin_FailBeforeSendingCredentials(string baseUrl)
         {
             var handler = new FakeHttpHandler();
@@ -1018,7 +1025,10 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("http://[fd12:3456::1]:8080")]
         [InlineData("http://[fe80::1]:8080")]
         [InlineData("http://m3u-editor:8080")]
-        public async Task ManagedRequests_TrustedHttpOrigin_IsAccepted(string baseUrl)
+        [InlineData("http://203.0.113.10:8080")]
+        [InlineData("http://[2001:db8::1]:8080")]
+        [InlineData("http://editor.example:8080")]
+        public async Task ManagedRequests_ConfiguredHttpOrigin_IsAccepted(string baseUrl)
         {
             var handler = new FakeHttpHandler();
             handler.RespondWith("player_api.php?username=", CapabilityJson);
@@ -1037,53 +1047,49 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Theory]
-        [InlineData("http://8.8.8.8:8080")]
-        [InlineData("http://93.184.216.34:8080")]
+        [InlineData("http://203.0.113.10:8080")]
         [InlineData("http://editor.example:8080")]
-        public async Task ManagedRequests_PublicHttpOrigin_FailsBeforeSendingCredentials(string baseUrl)
+        public async Task GetCatalogAsync_ConfiguredHttpOrigin_ReturnsCatalog(string baseUrl)
         {
             var handler = new FakeHttpHandler();
-            using (var httpClient = new HttpClient(handler))
-            {
-                var client = new M3uEditorClient(httpClient);
-
-                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetCatalogAsync(
-                    baseUrl, "account", "credential", CancellationToken.None));
-
-                Assert.Contains("base URL", error.Message);
-                Assert.DoesNotContain(baseUrl, error.ToString());
-                Assert.DoesNotContain("account", error.ToString());
-                Assert.DoesNotContain("credential", error.ToString());
-                Assert.Empty(handler.ReceivedUrls);
-            }
-        }
-
-        [Fact]
-        public async Task ManagedRequests_DnsHostWithPublicAddress_FailsBeforeSendingCredentials()
-        {
-            var handler = new FakeHttpHandler();
-            handler.RespondWith("player_api.php?username=", CapabilityJson);
+            handler.RespondWith("action=m3u_editor_catalog", CatalogJson);
             using (var httpClient = new HttpClient(handler))
             {
                 var client = new M3uEditorClient(
                     httpClient,
-                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }));
+                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Parse("203.0.113.10") }));
 
-                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DiscoverCapabilityAsync(
-                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None));
+                var catalog = await client.GetCatalogAsync(
+                    baseUrl, "account", "credential", CancellationToken.None);
 
-                Assert.Contains("base URL", error.Message);
-                Assert.DoesNotContain("account", error.ToString());
-                Assert.DoesNotContain("credential", error.ToString());
-                Assert.Empty(handler.ReceivedUrls);
+                Assert.Equal(Revision, catalog.Revision);
+                Assert.StartsWith("http://203.0.113.10:8080/player_api.php?", Assert.Single(handler.ReceivedUrls));
             }
         }
 
         [Fact]
-        public async Task ManagedRequests_DnsHostWithMixedAddresses_FailsBeforeSendingCredentials()
+        public async Task ManagedRequests_DnsHostWithPublicAddress_UsesConfiguredHostAndResolvedAddress()
         {
-            var handler = new FakeHttpHandler();
-            handler.RespondWith("player_api.php?username=", CapabilityJson);
+            var handler = new ConnectionCaptureHandler(CapabilityJson);
+            using (var httpClient = new HttpClient(handler))
+            {
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Parse("203.0.113.10") }));
+
+                var capability = await client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None);
+
+                Assert.NotNull(capability);
+                Assert.Equal("203.0.113.10", handler.RequestUri.Host);
+                Assert.Equal("m3u-editor:8080", handler.Host);
+            }
+        }
+
+        [Fact]
+        public async Task ManagedRequests_DnsHostWithMixedAddresses_UsesFirstResolvedAddress()
+        {
+            var handler = new ConnectionCaptureHandler(CapabilityJson);
             using (var httpClient = new HttpClient(handler))
             {
                 var client = new M3uEditorClient(
@@ -1091,14 +1097,89 @@ namespace Emby.M3uEditor.Plugin.Tests
                     (host, cancellationToken) => Task.FromResult(new[]
                     {
                         IPAddress.Parse("172.20.0.2"),
-                        IPAddress.Parse("93.184.216.34")
+                        IPAddress.Parse("203.0.113.10")
                     }));
 
-                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DiscoverCapabilityAsync(
-                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None));
+                var capability = await client.DiscoverCapabilityAsync(
+                    "http://m3u-editor:8080", "account", "credential", CancellationToken.None);
 
-                Assert.Contains("base URL", error.Message);
-                Assert.Empty(handler.ReceivedUrls);
+                Assert.NotNull(capability);
+                Assert.Equal("172.20.0.2", handler.RequestUri.Host);
+                Assert.Equal("m3u-editor:8080", handler.Host);
+            }
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task ManagedRequests_ConfiguredHttpHostname_UsesRealHttpTransport(bool catalogRequest)
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var requestLine = string.Empty;
+            var headers = new List<string>();
+            var serverTask = Task.Run(async () =>
+            {
+                TcpClient connection;
+                try
+                {
+                    connection = await listener.AcceptTcpClientAsync();
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+                catch (SocketException)
+                {
+                    return;
+                }
+
+                using (connection)
+                using (var stream = connection.GetStream())
+                using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
+                {
+                    requestLine = await reader.ReadLineAsync();
+                    string line;
+                    while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
+                        headers.Add(line);
+
+                    var body = catalogRequest ? CatalogJson : CapabilityJson;
+                    var response = Encoding.UTF8.GetBytes(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                        Encoding.UTF8.GetByteCount(body) + "\r\nConnection: close\r\n\r\n" + body);
+                    await stream.WriteAsync(response, 0, response.Length);
+                }
+            });
+
+            try
+            {
+                using var httpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var client = new M3uEditorClient(
+                    httpClient,
+                    (host, cancellationToken) => Task.FromResult(new[] { IPAddress.Loopback }));
+                var baseUrl = "http://editor.example:" + port;
+
+                if (catalogRequest)
+                {
+                    var catalog = await client.GetCatalogAsync(baseUrl, "account", "credential", timeout.Token);
+                    Assert.Equal(Revision, catalog.Revision);
+                }
+                else
+                {
+                    var capability = await client.DiscoverCapabilityAsync(baseUrl, "account", "credential", timeout.Token);
+                    Assert.NotNull(capability);
+                }
+
+                await serverTask;
+                Assert.StartsWith("GET /player_api.php?username=account&password=credential", requestLine);
+                Assert.Contains("Host: editor.example:" + port, headers);
+            }
+            finally
+            {
+                listener.Stop();
+                await serverTask;
             }
         }
 
@@ -1156,6 +1237,8 @@ namespace Emby.M3uEditor.Plugin.Tests
         [InlineData("https://editor.example:8443", "http://editor.example:8443/player_api.php")]
         [InlineData("http://m3u-editor:8080", "http://other-service:8080/player_api.php")]
         [InlineData("http://m3u-editor:8080", "http://m3u-editor:8081/player_api.php")]
+        [InlineData("http://editor.example:8080", "https://editor.example:8080/player_api.php")]
+        [InlineData("http://203.0.113.10:8080", "http://203.0.113.11:8080/player_api.php")]
         public async Task ManagedRequests_ResponseOriginChanged_FailsClosed(
             string baseUrl,
             string responseUrl)

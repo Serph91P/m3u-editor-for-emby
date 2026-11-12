@@ -809,7 +809,7 @@ namespace Emby.M3uEditor.Plugin.Client
 
             for (var index = 0; index < addresses.Length; index++)
             {
-                if (addresses[index] == null || !IsTrustedHttpAddress(addresses[index]))
+                if (addresses[index] == null)
                 {
                     throw CreateInvalidBaseUrlException();
                 }
@@ -848,8 +848,7 @@ namespace Emby.M3uEditor.Plugin.Client
             Uri uri;
             if (string.IsNullOrWhiteSpace(baseUrl) ||
                 !Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out uri) ||
-                (uri.Scheme != Uri.UriSchemeHttps &&
-                 (uri.Scheme != Uri.UriSchemeHttp || !IsTrustedHttpHost(uri.Host))) ||
+                (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) ||
                  !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
                  !string.IsNullOrEmpty(uri.Fragment) || uri.AbsolutePath != "/")
             {
@@ -859,55 +858,10 @@ namespace Emby.M3uEditor.Plugin.Client
             return baseUrl.Trim().TrimEnd('/');
         }
 
-        private static bool IsTrustedHttpHost(string host)
-        {
-            IPAddress address;
-            if (IPAddress.TryParse(host, out address))
-            {
-                return IsTrustedHttpAddress(address);
-            }
-
-            return host.IndexOf('.') < 0 &&
-                   Uri.CheckHostName(host) == UriHostNameType.Dns;
-        }
-
-        private static bool IsTrustedHttpAddress(IPAddress address)
-        {
-            if (IPAddress.IsLoopback(address))
-            {
-                return true;
-            }
-
-            var bytes = address.GetAddressBytes();
-            if (address.AddressFamily == AddressFamily.InterNetwork)
-            {
-                if (bytes[0] == 10)
-                {
-                    return true;
-                }
-
-                if (bytes[0] == 172)
-                {
-                    return bytes[1] >= 16 && bytes[1] <= 31;
-                }
-
-                if (bytes[0] == 192)
-                {
-                    return bytes[1] == 168;
-                }
-
-                return bytes[0] == 169 && bytes[1] == 254;
-            }
-
-            return address.AddressFamily == AddressFamily.InterNetworkV6 &&
-                   ((bytes[0] & 0xfe) == 0xfc ||
-                    (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80));
-        }
-
         private static InvalidOperationException CreateInvalidBaseUrlException()
         {
             return new InvalidOperationException(
-                "The managed backend base URL is not an allowed explicit origin.");
+                "The managed backend base URL must be an HTTP or HTTPS origin without user information, a path, query or fragment.");
         }
 
         private static void EnsureConfinedResponse(HttpResponseMessage response, string requestUrl)

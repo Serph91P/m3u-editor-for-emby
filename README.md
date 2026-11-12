@@ -123,8 +123,11 @@ The DLL is written to
 5. Enter the connection details under **m3u-editor Connection**.
 6. Select **Test Connection**, confirm authentication succeeds, and save.
 
-Use HTTPS when available. Plain HTTP is accepted only for a confined private or
-internal m3u-editor origin; public HTTP origins are rejected.
+Use HTTPS when available. Both HTTP and HTTPS are accepted for the explicitly
+configured m3u-editor origin, including routed IP addresses and fully qualified
+hostnames. HTTP sends credentials and backend data without encryption, so use it
+only over a trusted network. URL user information, subpaths, queries, fragments
+and managed-backend redirects remain disallowed.
 
 ### Configure Live TV
 
