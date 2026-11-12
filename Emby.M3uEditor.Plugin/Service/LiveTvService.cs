@@ -1000,6 +1000,11 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         if (generation != _cacheGeneration) return (false, generation);
+                        // The producer filters programme starts; the normal guide also keeps already-running programmes.
+                        var firstStart = xmltvData.Values.SelectMany(p => p).Select(p => p.StartTimestamp)
+                            .DefaultIfEmpty(now.ToUnixTimeSeconds()).Min();
+                        _primaryScope = new PrimaryGuideScope(config, channels.Select(c => c.StreamId).ToArray(),
+                            Math.Min(now.ToUnixTimeSeconds(), firstStart), filterEndUnix);
                         _xmltvCache = xmltvData;
                         _epgChannelIdByStreamId = mapping;
                         _xmltvCacheTime = DateTime.UtcNow;
@@ -1038,6 +1043,7 @@ namespace Emby.M3uEditor.Plugin.Service
             internal readonly int[] StreamIds;
             internal readonly long Start, Stop;
             internal readonly Dictionary<string, List<PreservedPrimaryEntry>> Projections = new Dictionary<string, List<PreservedPrimaryEntry>>();
+            internal readonly Dictionary<string, long> ProjectionStarts = new Dictionary<string, long>();
             internal PrimaryGuideScope(PluginConfiguration config, int[] streams, long start, long stop)
             {
                 Configuration = new PluginConfiguration { BaseUrl = config.BaseUrl, Username = config.Username,
@@ -1067,16 +1073,24 @@ namespace Emby.M3uEditor.Plugin.Service
                     GetConfiguration();
                     lock (_perChannelEpgLock)
                         if (generation != _cacheGeneration || scope != _primaryScope) return new List<EpgProgram>();
-                    if (!scope.Projections.TryGetValue(format, out entries))
+                    var neededStart = Math.Min(scope.Start, programs
+                        .Where(p => p.StopTimestamp > scope.Start && p.StartTimestamp < scope.Stop)
+                        .Select(p => p.StartTimestamp).DefaultIfEmpty(scope.Start).Min());
+                    var loaded = scope.Projections.TryGetValue(format, out entries);
+                    if (!loaded || (entries != null && neededStart < scope.ProjectionStarts[format]))
                     {
-                        entries = await new PreservedPrimaryClient(_httpClientFactory).FetchAsync(scope.Configuration,
-                            scope.StreamIds, scope.Start, scope.Stop, format, cancellationToken).ConfigureAwait(false);
+                        // Lazy JSON channels may reveal earlier starts; fetch only the missing interval for all streams.
+                        var stop = loaded ? scope.ProjectionStarts[format] : scope.Stop;
+                        var additional = await new PreservedPrimaryClient(_httpClientFactory).FetchAsync(scope.Configuration,
+                            scope.StreamIds, neededStart, stop, format, cancellationToken).ConfigureAwait(false);
+                        entries = additional == null ? null : (loaded ? entries.Concat(additional).ToList() : additional);
                         GetConfiguration();
                         lock (_perChannelEpgLock)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
                             if (generation != _cacheGeneration || scope != _primaryScope) return new List<EpgProgram>();
                             scope.Projections[format] = entries;
+                            scope.ProjectionStarts[format] = neededStart;
                         }
                     }
                 }

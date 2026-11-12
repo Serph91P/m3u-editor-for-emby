@@ -15,6 +15,34 @@ namespace Emby.M3uEditor.Plugin.Tests
 {
     public class PreservedPrimaryLiveTvTests
     {
+        [Theory]
+        [InlineData(false, false)][InlineData(true, false)]
+        [InlineData(false, true)][InlineData(true, true)]
+        public async Task OngoingProgrammeKeepsPrimaryOnInitialAndRepeatedGuideRefresh(bool json, bool midnight)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var start = midnight ? new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero).AddMinutes(-30).ToUnixTimeSeconds() : now.ToUnixTimeSeconds() - 1800;
+            var handler = new GuideHandler { Json = json, Start = start, Stop = now.ToUnixTimeSeconds() + 1800 };
+            var config = Config();
+            using var service = Service(handler, () => config);
+            for (var refresh = 0; refresh < 2; refresh++)
+            {
+                var calls = await Task.WhenAll(Enumerable.Range(0, 6).Select(i => service.FetchEpgForChannelCachedAsync(i % 2 + 1, CancellationToken.None)));
+                Assert.All(calls, list => {
+                    var p = Assert.Single(list);
+                    Assert.Equal(start, p.StartTimestamp);
+                    var native = M3uEditorTunerHost.BuildProgramInfo(p, 1, "channel", "Synthetic Harbour", "");
+                    Assert.Equal("https://example.invalid/primary.jpg", native.ImageUrl);
+                    Assert.Equal("https://example.invalid/backdrop.jpg", native.BackdropImageUrl);
+                    Assert.Equal(1920, native.ImageWidth);
+                    Assert.Equal(1080, native.ImageHeight);
+                });
+                Assert.Equal(refresh + 1, handler.QueryRequests);
+                Assert.Equal(start, handler.QueryPayloads[refresh].GetProperty("start_timestamp").GetInt64());
+                service.InvalidateCache();
+            }
+        }
+
         [Theory][InlineData(false)][InlineData(true)]
         public async Task NormalGuideSharesProjectionAndCopiesSharedXmltvInstances(bool json)
         {
@@ -25,6 +53,52 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Equal(1,handler.QueryRequests);
             Assert.NotSame(calls[0][0],calls[1][0]);
             Assert.Equal("https://example.invalid/poster.jpg",calls[0][0].PosterUrl);
+        }
+
+        [Theory][InlineData("success")][InlineData("incomplete")][InlineData("cancel")][InlineData("invalidate")]
+        public async Task EarlierJsonChannelExtendsSharedWindowWithoutRefetchingCoveredStarts(string outcome)
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var handler = new GuideHandler { Json = true, Start = now - 1800, SecondStart = now - 90000, Stop = now + 1800 };
+            var config = Config();
+            using var service = Service(handler, () => config);
+            var first = Assert.Single(await service.FetchEpgForChannelCachedAsync(1, CancellationToken.None));
+            Assert.Equal("https://example.invalid/primary.jpg", M3uEditorTunerHost.BuildProgramInfo(first, 1, "channel", "Synthetic Harbour", "").ImageUrl);
+            handler.Incomplete = outcome == "incomplete";
+            handler.Block = outcome == "cancel" || outcome == "invalidate";
+            handler.BlockAt = 2;
+            using var cts = new CancellationTokenSource();
+            var second = service.FetchEpgForChannelCachedAsync(2, cts.Token);
+            if (handler.Block)
+            {
+                await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (outcome == "cancel") cts.Cancel();
+                else { service.InvalidateCache(); handler.Release.TrySetResult(true); }
+            }
+            if (outcome == "cancel") await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
+            else if (outcome == "invalidate") Assert.Empty(await second);
+            else
+            {
+                var p = Assert.Single(await second);
+                Assert.Equal(outcome == "success" ? "https://example.invalid/primary.jpg" : "https://example.invalid/poster.jpg",
+                    M3uEditorTunerHost.BuildProgramInfo(p, 2, "channel", "Synthetic Harbour", "").ImageUrl);
+                Assert.Equal(outcome == "success" ? 2 : 3, handler.QueryRequests);
+            }
+            Assert.Equal(handler.Start, handler.QueryPayloads[0].GetProperty("start_timestamp").GetInt64());
+            Assert.Equal(handler.SecondStart, handler.QueryPayloads[1].GetProperty("start_timestamp").GetInt64());
+            Assert.Equal(handler.Start, handler.QueryPayloads[1].GetProperty("stop_timestamp").GetInt64());
+            if (outcome == "success")
+            {
+                Assert.NotNull(Assert.Single(await service.FetchEpgForChannelCachedAsync(2, CancellationToken.None)).PreservedPrimaryUrl);
+                Assert.Equal(2, handler.QueryRequests);
+            }
+            else if (outcome == "cancel" || outcome == "invalidate")
+            {
+                Assert.Equal(outcome == "cancel" ? 1 : 0, service.PerChannelEpgCacheCount);
+                handler.Block = false;
+                service.InvalidateCache();
+                Assert.NotNull(Assert.Single(await service.FetchEpgForChannelCachedAsync(2, CancellationToken.None)).PreservedPrimaryUrl);
+            }
         }
 
         [Theory][InlineData(EpgSourceMode.CustomUrl)][InlineData(EpgSourceMode.Disabled)]
@@ -137,8 +211,17 @@ namespace Emby.M3uEditor.Plugin.Tests
                     var entries=fixture.RootElement.GetProperty((Json ? "json" : "xmltv")+"_projection").EnumerateArray().Select(e=>e.GetRawText()).ToArray();
                     var first=entries[0].Replace("1893499200",Start.ToString()).Replace("1893502800",Stop.ToString());
                     var second=first.Replace("\"stream_id\": 1","\"stream_id\": 2");
+                    if (SecondStart.HasValue) second = second.Replace(Start.ToString(), SecondStart.Value.ToString());
                     var page=Large ? string.Join(",",Enumerable.Range(0,256).Select(i=>first.Replace(Start.ToString(),(Start+i).ToString()).Replace(Stop.ToString(),(Stop+i).ToString()))) : first;
-                    body=Incomplete ? PreservedPrimaryClientTests.Page(Large ? 257 : 2,"["+page+"]",new string('a',64),count==1 ? "snapshot" : "changed") : PreservedPrimaryClientTests.Page(2,"["+first+","+second+"]");
+                    if (Incomplete && SecondStart.HasValue) page = second;
+                    var matching = new[] { first, second }.Where(raw => {
+                        using var row = JsonDocument.Parse(raw);
+                        var start = row.RootElement.GetProperty("start_timestamp").GetInt64();
+                        // Confirmed producer c595a39 filters starts, not programme overlap.
+                        return start >= payload.RootElement.GetProperty("start_timestamp").GetInt64()
+                            && start < payload.RootElement.GetProperty("stop_timestamp").GetInt64();
+                    }).ToArray();
+                    body=Incomplete ? PreservedPrimaryClientTests.Page(Large ? 257 : 2,"["+page+"]",new string('a',64),count==1 ? "snapshot" : "changed") : PreservedPrimaryClientTests.Page(matching.Length,"["+string.Join(",",matching)+"]");
                 }
                 else if(url.Contains("get_live_streams")) body=JsonSerializer.Serialize(Enumerable.Range(1,Large ? 101 : 2).Select(id=>new { stream_id=id,name="Synthetic "+id,epg_channel_id="synthetic-output" }));
                 else if(url.Contains("xmltv.php")||url.Contains("guide.xml"))
@@ -150,12 +233,16 @@ namespace Emby.M3uEditor.Plugin.Tests
                 else if(url.Contains("get_simple_data_table"))
                 {
                     using var fixture=PreservedPrimaryContractTests.Fixture();
-                    body="{\"epg_listings\":["+fixture.RootElement.GetProperty("json").GetRawText().Replace("1893499200",Start.ToString()).Replace("1893502800",Stop.ToString())+"]}";
+                    var json = fixture.RootElement.GetProperty("json").GetRawText().Replace("1893499200",Start.ToString()).Replace("1893502800",Stop.ToString());
+                    if (SecondStart.HasValue && url.Contains("stream_id=2")) json = json.Replace(Start.ToString(), SecondStart.Value.ToString());
+                    body="{\"epg_listings\":["+json+"]}";
                 }
                 else throw new InvalidOperationException("Unexpected synthetic request");
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content=new StringContent(body,Encoding.UTF8,"application/json") };
             }
-            private static readonly long Start=DateTimeOffset.UtcNow.ToUnixTimeSeconds()+60, Stop=Start+3600;
+            internal long? SecondStart;
+            internal long Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 60;
+            internal long Stop = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 3660;
         }
     }
 }
