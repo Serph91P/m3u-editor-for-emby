@@ -1082,7 +1082,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 }
                 finally { _primaryLock.Release(); }
             }
-            var result = PreservedPrimaryOverlay.Apply(programs, streamId, entries, format);
+            var result = PreservedPrimaryOverlay.Apply(programs, streamId, entries, format,
+                () => _logger.Warn("Primary projection conflicts with a legacy marker; keeping the normal guide record."));
             lock (_perChannelEpgLock)
             {
                 cancellationToken.ThrowIfCancellationRequested();

@@ -27,7 +27,7 @@ namespace Emby.M3uEditor.Plugin.Client
             long? filterStartUnix,
             long? filterEndUnix)
         {
-            var result = new Dictionary<string, List<EpgProgram>>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, List<EpgProgram>>(StringComparer.Ordinal);
 
             var settings = new XmlReaderSettings
             {
@@ -219,7 +219,7 @@ namespace Emby.M3uEditor.Plugin.Client
                     if (!sawNormalIcon)
                     {
                         sawNormalIcon = true;
-                        program.SourcePrimaryIconUrl = sanitized;
+                        program.SourcePrimaryIconUrl = src == sanitized ? sanitized : null;
                     }
                     if (sanitized == null)
                         continue;

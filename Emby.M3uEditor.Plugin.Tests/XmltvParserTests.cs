@@ -29,6 +29,16 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.DoesNotContain("SourcePrimary", System.Text.Json.JsonSerializer.Serialize(p));
         }
 
+        [Fact]
+        public void SourceIdsAndUrlsAreNotNormalizedForProtection()
+        {
+            using var stream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes("<tv><programme channel='Synthetic' start='20300101120000 +0000' stop='20300101130000 +0000'><icon src=' https://example.invalid/a.jpg '/></programme><programme channel='synthetic' start='20300101120000 +0000' stop='20300101130000 +0000'><icon src='https://example.invalid/b.jpg'/></programme></tv>"));
+            var parsed=XmltvParser.Parse(stream,null,null);
+            Assert.Equal(2,parsed.Count);
+            Assert.Null(Assert.Single(parsed["Synthetic"]).SourcePrimaryIconUrl);
+            Assert.Equal("https://example.invalid/b.jpg",Assert.Single(parsed["synthetic"]).SourcePrimaryIconUrl);
+        }
+
         private static Dictionary<string, List<EpgProgram>> Parse(string xml)
         {
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml)))

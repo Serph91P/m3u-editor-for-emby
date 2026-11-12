@@ -67,7 +67,9 @@ namespace Emby.M3uEditor.Plugin.Tests
                 case "conflicting": var rival=Entry(); rival.Primary.Width=100; entries.Add(rival); break;
                 case "legacy": p.PreservedPrimaryUrl="https://example.invalid/legacy.jpg"; break;
             }
-            Assert.Same(p,Assert.Single(PreservedPrimaryOverlay.Apply(new[]{p},1,entries,"xmltv")));
+            var conflicts=0;
+            Assert.Same(p,Assert.Single(PreservedPrimaryOverlay.Apply(new[]{p},1,entries,"xmltv",()=>conflicts++)));
+            Assert.Equal(change=="legacy" ? 1 : 0,conflicts);
         }
 
         [Theory][InlineData(false)][InlineData(true)]
