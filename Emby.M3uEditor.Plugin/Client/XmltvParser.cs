@@ -110,6 +110,7 @@ namespace Emby.M3uEditor.Plugin.Client
             var typedPosterCandidates = new List<ArtworkCandidate>();
             var artworkByUrl = new Dictionary<string, ArtworkEvidence>(StringComparer.Ordinal);
             var preserveNextIcon = false;
+            var sawNormalIcon = false;
             var preservationMarkers = 0;
             string preservedPrimaryUrl = null;
             while (reader.Read())
@@ -215,6 +216,11 @@ namespace Emby.M3uEditor.Plugin.Client
 
                     var src = reader.GetAttribute("src");
                     var sanitized = Util.UrlValidator.SanitizeHttpUrl(src);
+                    if (!sawNormalIcon)
+                    {
+                        sawNormalIcon = true;
+                        program.SourcePrimaryIconUrl = sanitized;
+                    }
                     if (sanitized == null)
                         continue;
                     if (isPreservedIcon)
@@ -317,6 +323,11 @@ namespace Emby.M3uEditor.Plugin.Client
             }
 
             var conflictingArtworkUrls = FindConflictingArtworkUrls(artworkByUrl);
+            if (program.SourcePrimaryIconUrl != null && artworkByUrl.TryGetValue(program.SourcePrimaryIconUrl, out var sourceEvidence))
+            {
+                program.SourcePrimaryIconWidth = sourceEvidence.Width;
+                program.SourcePrimaryIconHeight = sourceEvidence.Height;
+            }
             var pairedPosters = new List<ArtworkCandidate>();
             foreach (var standardPoster in standardPosterCandidates)
             {

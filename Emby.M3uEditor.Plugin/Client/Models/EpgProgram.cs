@@ -67,6 +67,10 @@ namespace Emby.M3uEditor.Plugin.Client.Models
         [JsonPropertyName("still_height")]
         public int ThumbHeight { get; set; }
 
+        [JsonIgnore] public string SourcePrimaryIconUrl { get; set; }
+        [JsonIgnore] public int SourcePrimaryIconWidth { get; set; }
+        [JsonIgnore] public int SourcePrimaryIconHeight { get; set; }
+
         // Not from JSON - populated by XMLTV parser only
         [JsonIgnore] public bool IsLive { get; set; }
         [JsonIgnore] public bool IsNew { get; set; }
