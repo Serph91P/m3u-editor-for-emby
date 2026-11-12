@@ -86,6 +86,18 @@ namespace Emby.M3uEditor.Plugin.Tests
             Assert.Null(await Client(handler).FetchAsync(Config(),new[]{1},100,300,"json",CancellationToken.None));
         }
 
+        [Theory]
+        [InlineData("poster_url","file:///poster")][InlineData("still_url","javascript:bad")]
+        [InlineData("backdrop_url"," https://example.invalid/a.jpg ")][InlineData("primary_icon_url","not-a-url")]
+        [InlineData("poster_width",-1)][InlineData("still_height",-1)][InlineData("still_width",1920)]
+        public async Task InvalidGuideMetadataDiscardsAlsoOtherValidEntries(string field,object value)
+        {
+            var entry=System.Text.Json.Nodes.JsonNode.Parse(Entry(start:200,stop:300));
+            entry["guide"][field]=System.Text.Json.Nodes.JsonValue.Create(value);
+            var handler=new FakeHttpHandler(); handler.RespondWith("player_api.php",Page(2,"["+Entry()+","+entry.ToJsonString()+"]"));
+            Assert.Null(await Client(handler).FetchAsync(Config(),new[]{1},100,300,"json",CancellationToken.None));
+        }
+
         [Fact]
         public async Task EmptyCompleteSnapshotIsValid()
         {
