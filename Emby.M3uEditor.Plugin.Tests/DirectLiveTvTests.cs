@@ -180,6 +180,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             handler.RespondWith("/xmltv.php?", xmltvAvailable ? sourceXml : "unavailable",
                 xmltvAvailable ? System.Net.HttpStatusCode.OK : System.Net.HttpStatusCode.ServiceUnavailable);
             handler.RespondWith("action=get_simple_data_table&stream_id=42", json);
+            handler.RespondWith("/player_api.php", "{}", System.Net.HttpStatusCode.NotFound);
             var configuration = new PluginConfiguration
             {
                 BaseUrl = "https://editor.example.test",
@@ -219,6 +220,7 @@ namespace Emby.M3uEditor.Plugin.Tests
                 Assert.Equal(backdrop, native.BackdropImageUrl);
                 Assert.Equal(xmltvAvailable ? still : null, native.ThumbImageUrl);
                 Assert.Equal(requestCount, handler.ReceivedUrls.Count);
+                Assert.Single(System.Linq.Enumerable.Where(handler.ReceivedBodies, body => body.Contains("action=plugin_query")));
                 Assert.Single(System.Linq.Enumerable.Where(handler.ReceivedUrls, url => url.Contains("/xmltv.php?")));
                 Assert.Equal(xmltvAvailable ? 0 : 1, System.Linq.Enumerable.Count(handler.ReceivedUrls,
                     url => url.Contains("action=get_simple_data_table")));

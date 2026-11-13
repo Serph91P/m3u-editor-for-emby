@@ -33,6 +33,8 @@ namespace Emby.M3uEditor.Plugin.Service
         private readonly SemaphoreSlim _m3uLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _epgLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _xmltvLock = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _primaryLock = new SemaphoreSlim(1, 1);
+        private PrimaryGuideScope _primaryScope;
         private readonly object _perChannelEpgLock = new object();
         private long _cacheGeneration;
         private string _effectiveConfigurationKey;
@@ -295,6 +297,7 @@ namespace Emby.M3uEditor.Plugin.Service
             {
                 _cacheGeneration++;
                 _cachedM3U = null;
+                _primaryScope = null;
                 _cachedEpgXml = null;
                 _m3uCacheTime = DateTime.MinValue;
                 _epgCacheTime = DateTime.MinValue;
@@ -393,6 +396,7 @@ namespace Emby.M3uEditor.Plugin.Service
                         }
                         _cacheGeneration++;
                         generation = _cacheGeneration;
+                        _primaryScope = null;
                         config.LastChannelListHash = newHash;
                         _saveConfiguration();
 
@@ -836,7 +840,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 {
                     _logger.Info("[livetv-diag] stream={0} xmltv-cache-hit programs={1}", streamId, programs != null ? programs.Count : 0);
                 }
-                if (programs != null) return programs;
+                if (programs != null) return await OverlayAndCacheAsync(programs, streamId, generation, "xmltv", cancellationToken).ConfigureAwait(false);
             }
 
             // 3. If XMLTV cache is stale and either hasn't failed or the failure is old enough
@@ -857,7 +861,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 if (xmltvOk.Success)
                 {
                     var programs = PopulateFromXmltvCache(streamId, generation, cancellationToken);
-                    if (programs != null) return programs;
+                    if (programs != null) return await OverlayAndCacheAsync(programs, streamId, generation, "xmltv", cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -879,14 +883,7 @@ namespace Emby.M3uEditor.Plugin.Service
                 _logger.Info("[livetv-diag] stream={0} json-fallback programs={1}", streamId, jsonPrograms.Count);
             }
 
-            lock (_perChannelEpgLock)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (generation == _cacheGeneration)
-                    _perChannelEpgCache[streamId] = (jsonPrograms, DateTime.UtcNow);
-            }
-
-            return jsonPrograms;
+            return await OverlayAndCacheAsync(jsonPrograms, streamId, generation, "json", cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -917,8 +914,6 @@ namespace Emby.M3uEditor.Plugin.Service
                     return null;
                 }
 
-                _perChannelEpgCache[streamId] = (xmltvPrograms, DateTime.UtcNow);
-
                 return xmltvPrograms;
             }
         }
@@ -941,6 +936,8 @@ namespace Emby.M3uEditor.Plugin.Service
                 // Already fresh?
                 if (_xmltvCache != null && DateTime.UtcNow - _xmltvCacheTime < cacheTtl)
                     return (true, generation);
+                if (_xmltvFailed && DateTime.UtcNow - _xmltvFailedTime < TimeSpan.FromMinutes(5))
+                    return (false, generation);
 
                 try
                 {
@@ -979,6 +976,13 @@ namespace Emby.M3uEditor.Plugin.Service
 
                     var now = DateTimeOffset.UtcNow;
                     var filterEndUnix = now.AddDays(config.EpgDaysToFetch).ToUnixTimeSeconds();
+                    lock (_perChannelEpgLock)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (generation != _cacheGeneration) return (false, generation);
+                        _primaryScope = new PrimaryGuideScope(config, channels.Select(c => c.StreamId).ToArray(),
+                            now.ToUnixTimeSeconds(), filterEndUnix);
+                    }
 
                     Dictionary<string, List<EpgProgram>> xmltvData;
                     using (var httpClient = _httpClientFactory(180))
@@ -996,6 +1000,11 @@ namespace Emby.M3uEditor.Plugin.Service
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         if (generation != _cacheGeneration) return (false, generation);
+                        // The producer filters programme starts; the normal guide also keeps already-running programmes.
+                        var firstStart = xmltvData.Values.SelectMany(p => p).Select(p => p.StartTimestamp)
+                            .DefaultIfEmpty(now.ToUnixTimeSeconds()).Min();
+                        _primaryScope = new PrimaryGuideScope(config, channels.Select(c => c.StreamId).ToArray(),
+                            Math.Min(now.ToUnixTimeSeconds(), firstStart), filterEndUnix);
                         _xmltvCache = xmltvData;
                         _epgChannelIdByStreamId = mapping;
                         _xmltvCacheTime = DateTime.UtcNow;
@@ -1025,6 +1034,76 @@ namespace Emby.M3uEditor.Plugin.Service
             finally
             {
                 _xmltvLock.Release();
+            }
+        }
+
+        private sealed class PrimaryGuideScope
+        {
+            internal readonly PluginConfiguration Configuration;
+            internal readonly int[] StreamIds;
+            internal readonly long Start, Stop;
+            internal readonly Dictionary<string, List<PreservedPrimaryEntry>> Projections = new Dictionary<string, List<PreservedPrimaryEntry>>();
+            internal readonly Dictionary<string, long> ProjectionStarts = new Dictionary<string, long>();
+            internal PrimaryGuideScope(PluginConfiguration config, int[] streams, long start, long stop)
+            {
+                Configuration = new PluginConfiguration { BaseUrl = config.BaseUrl, Username = config.Username,
+                    Password = config.Password, EpgSource = config.EpgSource };
+                StreamIds = streams; Start = start; Stop = stop;
+            }
+        }
+
+        private async Task<List<EpgProgram>> OverlayAndCacheAsync(List<EpgProgram> programs, int streamId,
+            long generation, string format, CancellationToken cancellationToken)
+        {
+            GetConfiguration();
+            PrimaryGuideScope scope;
+            lock (_perChannelEpgLock)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (generation != _cacheGeneration) return new List<EpgProgram>();
+                scope = _primaryScope;
+            }
+            List<PreservedPrimaryEntry> entries = null;
+            if (scope != null && scope.Configuration.EpgSource == EpgSourceMode.XtreamServer)
+            {
+                // Serialize loaders outside the state gate; waiters can independently cancel.
+                await _primaryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    GetConfiguration();
+                    lock (_perChannelEpgLock)
+                        if (generation != _cacheGeneration || scope != _primaryScope) return new List<EpgProgram>();
+                    var neededStart = Math.Min(scope.Start, programs
+                        .Where(p => p.StopTimestamp > scope.Start && p.StartTimestamp < scope.Stop)
+                        .Select(p => p.StartTimestamp).DefaultIfEmpty(scope.Start).Min());
+                    var loaded = scope.Projections.TryGetValue(format, out entries);
+                    if (!loaded || (entries != null && neededStart < scope.ProjectionStarts[format]))
+                    {
+                        // Lazy JSON channels may reveal earlier starts; fetch only the missing interval for all streams.
+                        var stop = loaded ? scope.ProjectionStarts[format] : scope.Stop;
+                        var additional = await new PreservedPrimaryClient(_httpClientFactory).FetchAsync(scope.Configuration,
+                            scope.StreamIds, neededStart, stop, format, cancellationToken).ConfigureAwait(false);
+                        entries = additional == null ? null : (loaded ? entries.Concat(additional).ToList() : additional);
+                        GetConfiguration();
+                        lock (_perChannelEpgLock)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (generation != _cacheGeneration || scope != _primaryScope) return new List<EpgProgram>();
+                            scope.Projections[format] = entries;
+                            scope.ProjectionStarts[format] = neededStart;
+                        }
+                    }
+                }
+                finally { _primaryLock.Release(); }
+            }
+            var result = PreservedPrimaryOverlay.Apply(programs, streamId, entries, format,
+                () => _logger.Warn("Primary projection conflicts with a legacy marker; keeping the normal guide record."));
+            lock (_perChannelEpgLock)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (generation != _cacheGeneration || scope != _primaryScope) return new List<EpgProgram>();
+                _perChannelEpgCache[streamId] = (result, DateTime.UtcNow);
+                return result;
             }
         }
 
@@ -1178,6 +1257,7 @@ namespace Emby.M3uEditor.Plugin.Service
                     _m3uLock.Dispose();
                     _epgLock.Dispose();
                     _xmltvLock.Dispose();
+                    _primaryLock.Dispose();
                 }
                 _disposed = true;
             }

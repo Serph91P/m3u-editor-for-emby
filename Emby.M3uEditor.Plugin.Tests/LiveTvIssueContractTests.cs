@@ -30,6 +30,7 @@ namespace Emby.M3uEditor.Plugin.Tests
             handler.RespondWith("action=get_live_categories", "[]");
             handler.RespondWith("/xmltv.php?", "unavailable", HttpStatusCode.ServiceUnavailable);
             handler.RespondWith("action=get_simple_data_table", "{\"epg_listings\":[]}");
+            handler.RespondWith("/player_api.php", "{}", HttpStatusCode.NotFound);
             using (var service = new LiveTvService(new NullLogger(), _ => new HttpClient(handler, false), () => config, () => { }))
             {
                 var playlist = await service.GetM3UPlaylistAsync(CancellationToken.None);
@@ -39,6 +40,11 @@ namespace Emby.M3uEditor.Plugin.Tests
                 foreach (var uri in handler.ReceivedUrls.Select(url => new Uri(url)))
                 {
                     Assert.Empty(uri.Fragment);
+                    if (uri.Query.Length == 0)
+                    {
+                        Assert.Equal("/player_api.php", uri.AbsolutePath);
+                        continue;
+                    }
                     var query = uri.Query.TrimStart('?').Split('&').Select(part => part.Split(new[] { '=' }, 2))
                         .ToDictionary(pair => pair[0], pair => Uri.UnescapeDataString(pair[1].Replace("+", " ")));
                     Assert.Equal(User, query["username"]);
@@ -46,6 +52,9 @@ namespace Emby.M3uEditor.Plugin.Tests
                 }
                 Assert.Contains(handler.ReceivedUrls, url => url.Contains("/xmltv.php?"));
                 Assert.Contains(handler.ReceivedUrls, url => url.Contains("action=get_simple_data_table"));
+                var form = PreservedPrimaryClientTests.ParseForm(Assert.Single(handler.ReceivedBodies.Where(body => body.Contains("action=plugin_query"))));
+                Assert.Equal(User, form["username"]);
+                Assert.Equal(Password, form["password"]);
                 handler.AssertNoUnhandledRequests();
             }
         }

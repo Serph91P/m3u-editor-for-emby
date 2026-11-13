@@ -12,6 +12,33 @@ namespace Emby.M3uEditor.Plugin.Tests
 {
     public class XmltvParserTests
     {
+        [Theory]
+        [InlineData("<icon src='https://example.invalid/first.jpg' type='still' width='1920' height='1080'/><icon src='https://example.invalid/poster.jpg' type='poster' width='500' height='750'/>", "https://example.invalid/first.jpg", 1920, 1080)]
+        [InlineData("<icon src='https://example.invalid/first.jpg'/><icon src='https://example.invalid/second.jpg'/>", "https://example.invalid/first.jpg", 0, 0)]
+        [InlineData("<icon src='javascript:bad'/><icon src='https://example.invalid/second.jpg'/>", null, 0, 0)]
+        [InlineData("", null, 0, 0)]
+        [InlineData("<icon src='https://example.invalid/first.jpg' width='1920' height='1080'/><icon src='https://example.invalid/first.jpg' width='1280' height='720'/>", "https://example.invalid/first.jpg", 0, 0)]
+        public void FirstNormalIconIsEvidenceNotProtection(string icons, string expected, int width, int height)
+        {
+            using var stream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes("<tv><programme channel='synthetic' start='20300101120000 +0000' stop='20300101130000 +0000'><title>Synthetic</title>" + icons + "</programme></tv>"));
+            var p = Assert.Single(XmltvParser.Parse(stream, null, null)["synthetic"]);
+            Assert.Equal(expected, p.SourcePrimaryIconUrl);
+            Assert.Equal(width, p.SourcePrimaryIconWidth);
+            Assert.Equal(height, p.SourcePrimaryIconHeight);
+            Assert.Null(p.PreservedPrimaryUrl);
+            Assert.DoesNotContain("SourcePrimary", System.Text.Json.JsonSerializer.Serialize(p));
+        }
+
+        [Fact]
+        public void SourceIdsAndUrlsAreNotNormalizedForProtection()
+        {
+            using var stream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes("<tv><programme channel='Synthetic' start='20300101120000 +0000' stop='20300101130000 +0000'><icon src=' https://example.invalid/a.jpg '/></programme><programme channel='synthetic' start='20300101120000 +0000' stop='20300101130000 +0000'><icon src='https://example.invalid/b.jpg'/></programme></tv>"));
+            var parsed=XmltvParser.Parse(stream,null,null);
+            Assert.Equal(2,parsed.Count);
+            Assert.Null(Assert.Single(parsed["Synthetic"]).SourcePrimaryIconUrl);
+            Assert.Equal("https://example.invalid/b.jpg",Assert.Single(parsed["synthetic"]).SourcePrimaryIconUrl);
+        }
+
         private static Dictionary<string, List<EpgProgram>> Parse(string xml)
         {
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml)))
