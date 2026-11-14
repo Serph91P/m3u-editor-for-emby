@@ -25,6 +25,7 @@ namespace Emby.M3uEditor.Plugin.Service
         private bool _needsReconnect;
         private readonly object _consumerLock = new object();
         private readonly List<string> _consumers = new List<string>();
+        private readonly HashSet<string> _releasedRecordingConsumers = new HashSet<string>(StringComparer.Ordinal);
         private int _consumerCount;
         private SessionInfo _playbackSession;
         private string _playbackConsumerId;
@@ -115,8 +116,18 @@ namespace Emby.M3uEditor.Plugin.Service
         {
             lock (_consumerLock)
             {
-                if (_consumers.Remove(consumerId) && _consumerCount > 0)
-                    _consumerCount--;
+                var recording = consumerId != null && consumerId.Length > "Recording_".Length &&
+                    consumerId.StartsWith("Recording_", StringComparison.Ordinal);
+                var removed = _consumers.Remove(consumerId);
+                // Emby 4.10 DVR opens with null PlaySessionId but closes with Recording_<id>.
+                // Honor that native close once, without releasing any named playback/recording owner.
+                if (!removed && recording && !_releasedRecordingConsumers.Contains(consumerId))
+                    removed = _consumers.Remove(null);
+                if (removed)
+                {
+                    if (recording) _releasedRecordingConsumers.Add(consumerId);
+                    if (_consumerCount > 0) _consumerCount--;
+                }
             }
         }
 
