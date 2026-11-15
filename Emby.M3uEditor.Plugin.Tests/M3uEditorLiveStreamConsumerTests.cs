@@ -69,6 +69,72 @@ namespace Emby.M3uEditor.Plugin.Tests
         }
 
         [Fact]
+        public void DvrClose_ReleasesAnonymousOpenWithoutReleasingNamedOwners()
+        {
+            using (var stream = CreateLiveStream(new TrackingHttpHandler()))
+            {
+                stream.AddConsumer(null); // Native DVR open ignores request.ConsumerId.
+                stream.AddConsumer("playback");
+                stream.AddConsumer("Recording_other");
+                stream.RemoveConsumer("Recording_completed");
+                Assert.Equal(2, stream.ConsumerCount);
+                stream.RemoveConsumer("Recording_completed");
+                Assert.Equal(2, stream.ConsumerCount);
+                stream.RemoveConsumer("playback");
+                Assert.Equal(1, stream.ConsumerCount);
+                stream.RemoveConsumer("Recording_other");
+                Assert.Equal(0, stream.ConsumerCount);
+            }
+        }
+
+        [Fact]
+        public void DvrClose_DuplicateCannotConsumeAnotherAnonymousRegistration()
+        {
+            using (var stream = CreateLiveStream(new TrackingHttpHandler()))
+            {
+                stream.AddConsumer(null);
+                stream.AddConsumer(null);
+                stream.RemoveConsumer("Recording_first");
+                Assert.Equal(1, stream.ConsumerCount);
+                stream.RemoveConsumer("Recording_first");
+                Assert.Equal(1, stream.ConsumerCount);
+                stream.RemoveConsumer("Recording_second");
+                Assert.Equal(0, stream.ConsumerCount);
+            }
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("foreign")]
+        [InlineData("Recording_")]
+        [InlineData("recording_wrong-case")]
+        public void DvrClose_UnrelatedStopDoesNotAcquireAnonymousOwnership(string consumerId)
+        {
+            using (var stream = CreateLiveStream(new TrackingHttpHandler()))
+            {
+                stream.AddConsumer(null);
+                stream.RemoveConsumer(consumerId);
+                Assert.Equal(consumerId == null ? 0 : 1, stream.ConsumerCount);
+            }
+        }
+
+        [Fact]
+        public void DvrClose_ExactNamedStopCannotLaterConsumeAnonymousOwner()
+        {
+            using (var stream = CreateLiveStream(new TrackingHttpHandler()))
+            {
+                stream.AddConsumer("Recording_named");
+                stream.AddConsumer(null);
+                stream.RemoveConsumer("Recording_named");
+                stream.RemoveConsumer("Recording_named");
+                Assert.Equal(1, stream.ConsumerCount);
+                stream.RemoveConsumer(null);
+                Assert.Equal(0, stream.ConsumerCount);
+            }
+        }
+
+        [Fact]
         public void ConsumerCallbacks_ConcurrentStopsPreserveRemainingMemberships()
         {
             using (var stream = CreateLiveStream(new TrackingHttpHandler()))

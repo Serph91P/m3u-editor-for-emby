@@ -25,11 +25,50 @@ The official server assemblies show this call path:
 - The native `Emby.LiveTV.TunerHosts.LiveStream` increments/decrements a count per
   callback, not an idempotent set. The plugin therefore preserves multiple
   registrations for the same ID, including null/empty, but releases only a
-  matching registration. IDs are not normalized or collapsed. A repeated removal
-  after all registrations for that ID are gone has no effect on another ID.
+  matching registration (except the native DVR alias described below). IDs are not
+  normalized or collapsed. A repeated removal after all registrations for that ID
+  are gone has no effect on another named ID.
 - `MediaSourceManager.CloseLiveStream` invokes `RemoveConsumer`, retains the
   registry entry while the count is positive, and removes/closes it on the last
   stop. Server disposal has a separate explicit close-all path.
+
+### DVR uses a different close identity (#164)
+
+The official 4.10.2.0 `EmbyTV.RecordStream` sets
+`LiveStreamRequest.ConsumerId = "Recording_" + activeRecordingInfo.Id`, leaves
+`PlaySessionId` null, then closes with that recording consumer ID after completion,
+cancellation or error. `MediaSourceManager.OpenLiveStreamInternal` uses only
+`request.PlaySessionId`, not `request.ConsumerId`. Consequently the plugin receives
+`AddConsumer(null)` and later `RemoveConsumer("Recording_<id>")`. Strict matching
+previously retained the anonymous registration and the native tuner slot.
+
+`RemoveConsumer` now honors a native, nonempty `Recording_` close against one null
+registration when there is no exact match. It never removes another named owner.
+A per-stream set remembers released recording IDs so a duplicate close cannot
+consume a second anonymous registration. Exact matches still take precedence and
+repeated opens still count separately. No recording/session polling, timeout,
+copy-completion cleanup, limit change, global close or new public API is involved.
+The native manager remains responsible for final registry removal and transport
+closure; a cancelled probe alone still cannot close a registered playback owner.
+
+`DvrLifecycleTests` executes the official 4.10.2.0
+`MediaSourceManager.OpenLiveStreamInternal`, `EmbyTV.GetChannelStreamWithDirectStreamProvider`,
+`DirectRecorder.Record` and `MediaSourceManager.CloseLiveStream`. Configuration,
+tuner discovery/provider routing and filesystem are synthetic peripheral seams;
+the request interpretation, consumer callbacks, recording copy, registry and close
+are real. The full `EmbyTV.RecordStream` timer/metadata scheduler is inspected, not
+executed. Twelve repeated cycles cover finite output/EOF, cancellation during the
+upstream request, and upstream I/O failure. Each reaches the real `TunerCount=3`
+limit, rejects a fourth open, then frees a slot and admits a new plugin stream at
+the unchanged limit. Same-channel playback and another recording registration
+remain registered and undisposed, and duplicate final closes are harmless.
+Existing copy tests separately exercise mid-read cancellation and probe reconnect.
+
+Before the fix, this test fails after the first native recorder completion with
+`DVR completion/cancellation/error retained native registry entry and tuner slot`.
+After the fix all twelve cycles pass. This is an offline native lifecycle
+reproduction, not a running authenticated DVR server, MPEG-TS decoder, scheduled
+timer, active peer decoder or physical-device acceptance test.
 
 ### PlaybackInfo replacement is not another open
 

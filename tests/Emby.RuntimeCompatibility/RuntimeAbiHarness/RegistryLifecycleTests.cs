@@ -58,6 +58,7 @@ namespace Emby.RuntimeCompatibility
             var tests = new RegistryLifecycleTests(context, plugin);
             try
             {
+                tests.DvrLifecycle(context, plugin);
                 tests.StopOrder(false);
                 tests.StopOrder(true);
                 tests.RestartAndLateStop();
